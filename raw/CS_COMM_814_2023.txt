@@ -1,0 +1,642 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_814_2023
+case_status: DISPOSED
+n_orders: 7
+
+$~33 to 36
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 811/2023, I.A. 22357/2023, I.A. 22358/2023, I.A.
+22359/2023, I.A. 22360/2023, I.A. 22361/2023 & I.A.
+22362/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Ankur Sangal, Mr. Tejveer
+Singh Bhatia, Ms. Sucheta Roy, Mr. Raghu
+Vinayak Sinha and Mr. Shaurya Pandey,
+Advs.
+versus
+PREMIUM LIFESTYLE AND FASHION INDIA PRIVATE
+LIMITED & ORS. ..... Defendants
+Through:
++ CS(COMM) 812/2023, I.A. 22363/2023, I.A. 22364/2023, I.A.
+22365/2023, I.A. 22366/2023, I.A. 22367/2023 & I.A.
+22368/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Ankur Sangal, Mr. Tejveer
+Singh Bhatia, Ms. Sucheta Roy, Mr. Raghu
+Vinayak Sinha and Mr. Shaurya Pandey,
+Advs.
+versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED & ORS.
+..... Defendants
+Through:
++ CS(COMM) 813/2023, I.A. 22369/2023, I.A. 22370/2023, I.A.
+22371/2023, I.A. 22372/2023, I.A. 22373/2023 & I.A.
+22374/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Ankur Sangal, Mr. Tejveer
+Singh Bhatia, Ms. Sucheta Roy, Mr. Raghu
+Vinayak Sinha and Mr. Shaurya Pandey,
+Advs.
+versus
+CS(COMM) 811/2023 and other connected matters Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:54
+STR8UP HOSPITALITY PRIVATE LIMITED & ORS.
+..... Defendants
+Through:
++ CS(COMM) 814/2023, I.A. 22375/2023, I.A. 22376/2023, I.A.
+22377/2023, I.A. 22378/2023, I.A. 22379/2023 & I.A.
+22380/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Ankur Sangal, Mr. Tejveer
+Singh Bhatia, Ms. Sucheta Roy, Mr. Raghu
+Vinayak Sinha and Mr. Shaurya Pandey,
+Advs.
+versus
+CORNERSTONE SPORT AND ENTERTAINMENT
+PRIVATE LIMITED & ORS. ..... Defendants
+Through:
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 08.11.2023
+1. The Hon’ble Judge is not holding Court today.
+2. Re-notify on 9 November 2023.
+BY ORDER
+(COURT MASTER)
+NOVEMBER 8, 2023
+ar
+Click here to check corrigendum, if any
+CS(COMM) 811/2023 and other connected matters Page 2 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:54
+
+===== ORDER =====
+
+$~57 to 60
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 811/2023 & I.As. 22357-22362/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Ankur Sangal, Mr. Tejveer
+Singh Bhatia, Ms. Sucheta Roy, Mr. Raghav
+Vinayak Sinha and Mr. Shaurya Pandey,
+Advs.
+versus
+PREMIUM LIFESTYLE AND FASHION INDIA
+PRIVATE LIMITED & ORS. ..... Defendants
+Through: None
++ CS(COMM) 812/2023 & I.As. 22363-22368/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Ankur Sangal, Mr. Tejveer
+Singh Bhatia, Ms. Sucheta Roy, Mr. Raghav
+Vinayak Sinha and Mr. Shaurya Pandey,
+Advs.
+versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED & ORS.
+..... Defendants
+Through: None
++ CS(COMM) 813/2023 & I.As. 22369-22374/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Akhil Sibal, Sr. Adv. with
+Mr. Ankur Sangal, Mr. Tejveer Singh
+Bhatia, Ms. Sucheta Roy, Mr. Raghav
+Vinayak Sinha and Mr. Shaurya Pandey,
+Advs.
+versus
+STR8UP HOSPITALITY PRIVATE LIMITED & ORS.
+CS(COMM) 811/2023, CS(COMM) 812/2023,
+CS(COMM) 813/2023 & CS(COMM) 814/2023 Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:54
+..... Defendants
+Through: None
++ CS(COMM) 814/2023 & I.As. 22375-22380/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Ankur Sangal, Mr. Tejveer
+Singh Bhatia, Ms. Sucheta Roy, Mr. Raghav
+Vinayak Sinha and Mr. Shaurya Pandey,
+Advs.
+versus
+CORNERSTONE SPORT AND ENTERTAINMENT
+PRIVATE LIMITED & ORS. ..... Defendants
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE C. HARI SHANKAR
+O R D E R
+% 09.11.2023
+As Courts are sitting today only for half an hour in view of
+elevation of Hon’ble the Chief Justice as a Judge of the Supreme
+Court of India, re-notify these matters on 10 November 2023 for
+preliminary hearing.
+C. HARI SHANKAR, J.
+NOVEMBER 9, 2023
+dsn
+Click here to check corrigendum, if any
+CS(COMM) 811/2023, CS(COMM) 812/2023,
+CS(COMM) 813/2023 & CS(COMM) 814/2023 Page 2 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:54
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 814/2023
+PHONOGRAPHIC PERFORMANCE LIMITED..... Plaintiff
+Through: Mr. Chander M. Lall, Sr.
+Advocate with Mr. Ankur Sangal, Ms.
+Sucheta Roy, Mr. Raghu Vinayak Sinha, Mr.
+Shaurya Pandey and Ms.Yashi Aggarwal,
+Advs
+versus
+CORNERSTONE SPORT AND
+ENTERTAINMENT PRIVATE LIMITED & ORS. Defendants
+Through: Mr. Pawan Bindra, Sr.
+Advocate with Mr. Rahul Dhawan and Ms.
+Vaishali Singh, Advs. for Defendants 1 to 3
+Mr. Sahil Solanki, Adv. for Defendant 4
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 10.11.2023
+CS(COMM) 814/2023
+1. The issue in controversy in this suit as well as other connected
+suits i.e. CS (Comm) 811/2023, CS (Comm) 812/2023 and CS
+(Comm) 813/2023 is the same. The defendants in this suit are
+represented. Mr. Bindra, learned Senior Counsel appears for
+Defendants 1 to 3. Defendant 4 has been impleaded as ONE8
+COMMUNE, Worldmark‐2, 8, Aerocity, New Delhi – 110037. Mr.
+Sibal, learned Senior Counsel for the plaintiff in CS (Comm)
+813/2023 submits that Defendant 4 was thus impleaded in view of the
+CS(COMM) 814/2023 Page 1 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:53
+advertisement which figures at page 219 of the documents which
+reflected the mark ONE8 COMMUNE, and purported to be owned by
+Defendant 1.
+2. Mr. Sahil Solanki, learned Counsel appears on behalf of
+Defendant 4 in this suit i.e. CS (Comm) 814/2023 and submits that
+Defendant 4 is actually Café which operates under the name of ONE8
+COMMUNE, but is owned by True Palate Café Pvt Ltd. The learned
+Counsel for the plaintiff undertakes to file an amended memo of
+parties properly impleading Defendant 4.
+3. In all these matters, the grievance of the plaintiff is that song
+and other recordings, in which the plaintiff holds copyright, are being
+played in the outlets of the defendants without obtaining a license
+from the plaintiff. The documents evidencing the copyright held by
+the plaintiff in the said records have been placed on record.
+4. Mr. Sahil Solanki, learned Counsel for Defendant 4 in this suit
+undertakes that he would not play any of the copyrighted recordings
+forming subject matter of the present suit, in which the plaintiff holds
+copyright without obtaining a license from the plaintiff prior thereto.
+The statement is taken on record and they shall remain bound by the
+said statement.
+5. The plaintiff claims that the repertoire of the recordings in
+which the plaintiff holds copyright is available on its website
+https://www.pplindia.org/songs. The plaint also provides the tariffs at
+which the plaintiff permits playing of the said recordings, which is
+CS(COMM) 814/2023 Page 2 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:53
+dependent on the area over which recordings would be played. The
+tariffs read thus:
+Transnational Brands Stores
+Area Annual Fee/Per Outlet (`)
+Up to 200 Sq. Ft ` 10,500
+201 – 500 Sq. Ft. ` 10,500 Plus Rs 21 per sq. ft. p.a for
+every sq. ft. more than 200 Sq. Ft.
+501 – 1000 Sq. Ft. ` 16,800 Plus Rs 17 per sq. ft. p.a for
+every sq. ft. more than 500 Sq. Ft.
+1001 – 5000 Sq. Ft. ` 25,300 Plus Rs 15 per sq. ft. p.a for
+every sq. ft. more than 1000 Sq. Ft.
+More than 5000 Sq. Ft. ` 85,300 Plus Rs 13 per sq. ft. p.a for
+every sq. ft. more than 5000 Sq. Ft.
+6. The plaint avers that the plaintiff has addressed notices to the
+defendants, calling upon them to desist from playing of the
+copyrighted recordings of the plaintiff without obtaining a license
+from the plaintiff. However, despite the notices, the defendants
+continued to play the copyrighted recordings. In some cases, these
+recordings have been played for merely two years as on date.
+7. In such circumstances, Mr. Sibal, learned Senior Counsel for
+the plaintiff in one of the connected suits i.e. CS (Comm) 813/2023,
+submits that there would be no purpose in relegating the plaintiff to
+the exercise of pre-institution mediation either.
+8. This is not a first instance when such a dispute has come up
+before this Court, a batch of suits had earlier, come up before this
+Bench. The said suits were taken up and the prayer for interim
+injunction was disposed of by order dated 20 October 2023,
+restraining the defendants from playing the copyrighted recordings of
+the plaintiff without obtaining a license from the plaintiff.
+CS(COMM) 814/2023 Page 3 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:53
+9. The learned Senior Counsel for the plaintiff has pointed out that
+this Court has already held in its judgment in CS (Comm) 671/2021
+(Phonographic Performance Limited v. Canvas Communication)
+that, before playing recordings in which the plaintiff holds copyright,
+any third party would necessarily have to obtain a license from the
+plaintiff and the requirement of the plaintiff being a copyright society
+would not apply in such case.
+10. The position in law is prima facie clear. The plaintiff being the
+owner of copyright in the recordings, which form the part of its
+repertoire and which find place on the website
+https://www.pplindia.org/songs, it would not permissible to anyone to
+play the said recordings without obtaining a prior license from the
+plaintiff, especially where the recordings are being played for
+commercial benefit.
+11. In view thereof, let the plaint be registered as a suit. Issue
+summons in the suit. Summons are accepted on behalf of Defendants
+1 to 3 by Ms. Vaishali Singh and on behalf of Defendant 4 by Mr.
+Sahil Solanki in this suit.
+12. Written statement, accompanied by affidavit of admission and
+denial of the documents filed by the plaintiff be filed within 30 days
+with advance copy to learned Counsel for the plaintiff who may file
+replication thereto, accompanied by affidavit of admission and denial
+of the documents filed by the defendants within 30 days thereof.
+CS(COMM) 814/2023 Page 4 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:53
+13. List before the learned Joint Registrar (Judicial) for completion
+of pleadings, admission and denial of documents and marking of
+exhibits on 15 January 2024, whereafter the matter would be placed
+before the Court for case management hearing and further
+proceedings.
+I.A. 22375/2023 (Order XXXIX Rules 1 and 2 of the CPC)
+14. Inasmuch as the allegations in this plaint are of violation of
+the plaintiff’s copyright, by the exploitation, by the defendants, of
+recordings in which copyright is held by the plaintiff without
+obtaining a license in that regard, and as the exercise of such
+infringement in copyright has been continuing for some time, a clear
+prima facie case for grant of interlocutory injunction is made out.
+Failure to grant such injunction is bound to result in continued
+infringement of copyright. Accordingly, the principles of balance of
+convenience and irreparable loss would also justify grant of interim
+injunction as sought.
+15. As such, issue notice, returnable before the Court on 7 February
+2024.
+16. Notice is accepted on behalf of Defendants 1 to 3 by Ms.
+Vaishali Singh and on behalf of Defendant 4 by Mr. Sahil Solanki.
+17. Till the next date of hearing, the defendants as well as all other
+acting on their behalf shall stand restrained from playing any of the
+recordings forming subject matter of the plaintiff’s copyright and
+figuring on the website https://www.pplindia.org/songs, without
+CS(COMM) 814/2023 Page 5 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:53
+obtaining a prior license from the plaintiff.
+I.A. 22376/2023 (Section 12A of the Commercial Courts Act, 2015)
+18. The allegation against the defendants is of continued
+infringement of the plaintiff’s copyright by exploiting recordings in
+which such copyright is held, without obtaining a license from the
+plaintiff. Unlike cases of infringement of trade mark, copyright held
+in music recordings is infringed by playing such recordings in closed
+spaces, so that it would not normally be possible for the plaintiff to
+acquire knowledge of such infringement, unless it is brought to its
+notice. Notably, in some cases, such infringement has continued by
+almost two years as on date.
+19. As such, relegating the plaintiff to the remedy of pre-litigation
+mediation, in my view, would serve no purpose. Clearly, the plaintiff
+is entitled to urgent reliefs as sought in the plaints, in order to ensure
+that continued infringement of copyright does not take place. A clear
+case for exemption from pre-litigation mediation under Section 12A of
+the Commercial Courts Act, 2015 is, therefore, made out.
+20. The application is allowed.
+I.A. 22377/2023 (Order XI Rule 1(4) of the CPC)
+21. This application seeks permission to file additional documents.
+The plaintiff is permitted to place additional documents on record in
+accordance with Order XI Rule 1(4) of the CPC as amended by the
+Commercial Courts Act within four weeks from today.
+CS(COMM) 814/2023 Page 6 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:53
+22. The application stands disposed of accordingly.
+I.A. 22378/2023 (Section 149 of the CPC)
+23. The plaintiff is permitted to make the deficient court fee, if any,
+good within two weeks from today.
+24. The application is allowed.
+I.A. 22379/2023 (Exemption)
+25. Subject to the plaintiff filing legible copies of any dim or
+illegible documents within 30 days, exemption is granted for the
+present.
+26. The application is disposed of.
+I.A. 22380/2023 (Permission to file a CD)
+27. Permission to file compact disc/pen drive is granted, subject to
+provide a copy thereof to the opposite sides.
+28. The application is disposed of.
+C.HARI SHANKAR, J
+NOVEMBER 10, 2023
+rb
+Click here to check corrigendum, if any
+CS(COMM) 814/2023 Page 7 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:53
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 814/2023
+PHONOGRAPHIC PERFORMANCE LIMITED
+..... Plaintiff
+Through: Mr. Shaurya Pandey, Adv.
+versus
+CORNERSTONE SPORT AND ENTERTAINMENT
+PRIVATE LIMITED & ORS.
+..... Defendant
+Through: Mr. Saurav Vig, Adv. for
+D-4 through VC, Ms.
+Krishna P. for D-4.
+(M- 7709872128).
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 15.01.2024
+The service reports of defendant no. 1 to 3 are awaited.
+The defendant no. 4, having been served vide ordinary
+means on 18.12.2023, is yet to file the written statement.
+List the matter for completion of service and pleadings on
+22.03.2024.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 15, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:53
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 814/2023
+PHONOGRAPHIC PERFORMANCE LIMITED
+..... Plaintiff
+Through: Mr. Shaurya Pandey, Adv.
+versus
+CORNERSTONE SPORT AND ENTERTAINMENT
+PRIVATE LIMITED & ORS.
+..... Defendant
+Through: Ms. Vaishali Singh, Adv. for
+D-1to 3.
+(M-9899565830).
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 25.01.2024
+List the matter for the purpose fixed on the date fixed i.e.
+22.03.2024.
+IA No. 1892/2024 (By defendant nos. 1 to 3 u/o 1 Rule 10(2) r/w
+151 CPC for deletion the name of defendant nos. 1 to 3 from
+memorandum of parties)
+Issue notice. Accepted.
+The plaintiff shall file the reply within four weeks,
+whereafter the rejoinder shall be filed in due course.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 25, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:52
+
+===== ORDER =====
+
+$~69
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 814/2023
+PHONOGRAPHIC PERFORMANCE LIMITED
+..... Plaintiff
+Through: Mr. Raghu Vinayak Sinha,
+Advocate
+versus
+CORNERSTONE SPORT AND ENTERTAINMENT
+PRIVATE LIMITED & ORS.
+..... Defendant
+Through: Ms. Vaishali Singh (VC),
+Advocate for D-1, 2 & 3.
+Mr. Arjun Minocha (VC),
+Advocate for D-4.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 22.03.2024
+I.A No. 1892/2024 filed by defendant nos. 1 to 3 for their
+deletion from the memo of parties.
+Ld. Counsel for the plaintiff prays for some more time to
+file a response to the present IA. Let the same be done as a
+measure of final opportunity within four weeks.
+CS(COMM) 814/2023:
+Plaintiff and defendant no. 4 are trying to settle the matter
+and are hopeful of arriving at a settlement soon.
+Maximum permissible period for defendant nos. 1 to 3 to
+file a written statement is over. Right to file the written statement
+consequently stands closed.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:51
+Ld. Counsel for defendant no. 4 submits that since parties
+are hopeful of arriving at a settlement, no written statement is
+likely to be filed.
+Amended memo had been filed. A copy of the same be
+circulated by ld. Counsel for the plaintiff with ld. Counsels for
+the defendants.
+Since the parties are trying to settle the matter, put up
+before the Hon’ble Court on the date already fixed i.e.
+21.05.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 22, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:51
+
+===== ORDER =====
+
+$~34
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 814/2023, I.A. 22375/2023, I.A. 1892/2024 & I.A.
+46457/2024
+PHONOGRAPHIC PERFORMANCE LIMITED .....Plaintiff
+Through: Mr. Raghu Vinayak Sinha, Adv.
+M: 9051263570
+versus
+CORNERSTONE SPORT AND ENTERTAINMENT PRIVATE
+LIMITED & ORS. .....Defendants
+Through: Ms. Vaishali Singh, Advocate for D-
+1, 2 & 3.
+Mr. Arjun Minocha, Adv. for D-4.
+M: 9971818401
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 28.11.2024
+I.A. 46457/2024
+1. The present application has been filed under Order XXIII Rule 3 read
+with Section 151 of the Code of Civil Procedure, 1908 (“CPC”), filed
+jointlybythe plaintiff and defendant no. 4.
+2. The present suit has been filed for infringement of the plaintiff’s
+copyright and damages against the defendants.
+3. Learned counsel appearing for the plaintiff and defendant no. 4
+submits that the defendant no. 4 has already made a statement before this
+Court on 10th November, 2023, that the defendant no. 4 shall not play any of
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:51
+the copyrighted recordings forming subject matter of the present suit, in
+which the plaintiff holds copyright, without obtaining a license from the
+plaintiff, prior thereto.
+4. It is submitted that in order to end litigation and settle the present
+dispute, the plaintiff and defendant no. 4 have now amicably settled the
+present dispute, terms of which are contained in Para 3 of the present
+application.
+5. Learned counsel appearing for the parties confirm the terms of
+settlement and submit that the suit be decreed in terms of the settlement
+arrived at between the plaintiff and defendant no. 4.
+6. Learned counsel appearing for the plaintiff further submits that he
+does not press for any relief against defendant nos. 1 to 3, in light of the
+statement as recorded in the order dated 10th November, 2023.
+7. The aforesaid statement is taken note of and the parties are held bound
+bythe said terms of settlement.
+8. Accordingly, the present suit is decreed in favour of the plaintiff and
+against defendant no. 4, in terms of the settlement between the parties,
+which shall form part of the decree.
+9. Considering the fact that parties have arrived at a settlement, Registry
+of this Court is directed to issue a certificate for refund of full court fees in
+favour of the plaintiff.
+10. The present suit along with the pending applications, stands disposed
+of.
+MINI PUSHKARNA, J
+NOVEMBER 28, 2024/ak
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:51

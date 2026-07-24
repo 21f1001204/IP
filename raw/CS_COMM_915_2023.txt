@@ -1,0 +1,874 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_915_2023
+case_status: DISPOSED
+n_orders: 15
+
+$~47
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 915/2023, I.As. 25717/2023, 25718/2023, 25719/2023
+& 25720/2023
+ALKEM LABORATORIES LTD. ...... Plaintiff
+Through: Mr. Sagar Chandra, Ms. Ishani
+Chandra, Ms. Srijan Uppal, Mr.
+Abhishek Bhati, Mr. Sanket Singh
+Sengar, Advs. (M. 9873559827)
+versus
+MS VOLANT PHARMACEUTICALS & ORS ..... Defendants
+Through: None.
+CORAM:
+JUSTICE PRATHIBAM. SINGH
+O R D E R
+% 20.12.2023
+1. This hearing has been done through hybrid mode.
+I.A. 25718/2023 (for additional documents)
+2. This is an application filed by the Plaintiffs seeking leave to file
+additional documents under the Commercial Courts, Commercial Division and
+Commercial Appellate Division of High Courts Act, 2015 (hereinafter,
+‘Commercial Courts Act’). The Plaintiff, if it wishes to file additional
+documents at a later stage, shall do so strictly as per the provisions of the
+Commercial CourtsAct and the DHC (Original Side) Rules, 2018.
+3. The application is disposed of.
+I.A. 25719/2023 (for exemption)
+4. This is an application seeking exemption from filing
+originals/certified/cleared/typed or translated copies of documents, proper
+margins, electronic documents, etc. Original documents shall be produced/filed
+CS(COMM)915/2023 Page1of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:09
+at the time of Admission/Denial, if sought, strictly as per the provisions of the
+Commercial CourtsAct and the DHC (Original Side) Rules, 2018.
+5. Exemption is allowed, subject to all just exceptions. Accordingly,
+application is disposed of.
+I.A. 25720/2023 (u/S 12A)
+6. This is an application filed by the Plaintiffs seeking exemption instituting
+pre-litigation mediation under Section 12Aof the Commercial CourtsAct.
+7. Considering the facts and circumstances of the case, which shows that
+the Defendants are repeated infringers, the Court is satisfied that in terms of the
+judgment of the Hon’ble Supreme Court in Yamini Manohar v. T.K.D Keerthi,
+(2023 LiveLaw (SC) 906), that the present suit contemplates urgent interim
+relief.
+8. Accordingly, the exemption is allowed and application is disposed of.
+CS(COMM) 915/2023
+9. Let the plaint be registered as a suit.
+10. Issue summons to the Defendants through all modes upon filing of
+Process Fee.
+11. The summons to the Defendants shall indicate that the written statement
+to the plaint shall be positively filed within 30 days from date of receipt of
+summons. Along with the written statement, the Defendants shall also file an
+affidavit of admission/denial of the documents of the Plaintiff, without which
+the written statement shall not be taken on record.
+12. Liberty is given to the Plaintiff to file a replication within 15 days of the
+receipt of the written statement(s). Along with the replication, if any, filed by
+CS(COMM)915/2023 Page2of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:09
+the Plaintiff, an affidavit of admission/denial of documents of the Defendants,
+be filed by the Plaintiff, without which the replication shall not be taken on
+record. If any of the parties wish to seek inspection of any documents, the
+same shall be sought and given within the timelines.
+13. List before the Joint Registrar for marking of exhibits on 15th February,
+2024. It is made clear that any party unjustifiably denying documents would be
+liable to be burdened with costs.
+14. List before Court on 10th May, 2024 before the Roster Bench.
+I.A.25717/2023 (u/O XXXIX Rule 1 and 2 CPC)
+15. Issue notice.
+16. The matter has been received on transfer in typed supplementary list
+owing to non-availability of the Coordinate Bench.
+17. The Plaintiff - Alkem Laboratories Ltd. has filed the present suit against
+Defendant No.1 – M/s. Volant Pharmaceuticals Partnership Firm its partners i.e.
+Defendant No.2 - Ms. Vaishaliben Vipulbhai Patel and Defendant No.3 Mr.
+Vipulbhai R. Patel as also its manufacturers and distributors i.e. Defendant
+No.4 - M/s. Plethico Laboratories Pvt. Ltd, Defendant No.5 - M/s. Makin
+Laboratories Pvt. Ltd. and Defendant No.6 - M/s. Shree Hari Pharma
+Distributors seeking enforcement and protection of its mark ‘A TO Z’ used in
+respect of pharmaceutical and nutraceuticals preparations.
+18. The case of the Plaintiff is that it was established in the year 1973 and is
+one of the leading pharmaceutical companies in India with a global presence. It
+manufactures a large range of pharmaceutical and nutraceutical products in
+various segments. It is stated that the Plaintiff has a portfolio of over 800+
+CS(COMM)915/2023 Page3of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:09
+brands, covering all major therapeutic segments with 6 of the brands featuring
+among the top 100 pharmaceutical brands in India. It is also stated that the
+Plaintiff employs more than 500 scientists who work across 6 globally located
+R&D Facilities. It is also averred that the Plaintiff has been in the business of
+Pharmaceuticals for almost 5 decades and is known for the quality of its goods.
+One of Plaintiff’s range of pharmaceutical preparations are sold under the
+brand ‘ATO Z’which was adopted in 1997 along with a distinctive logo which
+is set out below:
+19. The mark is used by the Plaintiff is in respect of multi-vitamin health
+supplements in tablets, capsules and in syrup form. The ‘A TO Z’ family of
+marks has been used by the Plaintiff in different variant forms and with various
+suffixes, some of which are as under:
+CS(COMM)915/2023 Page4of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:09
+20. The Plaintiff is the registered proprietor of the mark ‘ATO Z’, both as a
+device mark and in word form. The details of the registrations are set out in
+paragraph 9 of the plaint. The earliest registration of the mark ‘A TO Z’ dates
+back to 2007.
+21. The sales of the Plaintiff of the ‘ATO Z’branded products is to the tune
+of Rs.326 crores in the year 2022-23 and almost 10% of the same to the tune of
+Rs.34 crores is being spent on sales and advertisements as promotional
+expenses.
+22. The grievance in the present suit is that the Defendants have adopted the
+mark ‘Avol Z’in an almost identical fashion with the same colour combination
+and for the same formulation.
+23. Mr. Sagar Chandra, ld. Counsel for the Plaintiff has handed over to the
+Court the physical products and submits that in the manner in which ‘A vol Z’
+is used on the packaging itself proves that the entire emphasis is on ‘A’and ‘Z’
+in a manner so as to cause deception. The comparative chart of the two
+products is set out below:
+CS(COMM)915/2023 Page5of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:09
+CS(COMM)915/2023 Page6of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:09
+24. The Plaintiff has issued a legal notice to the Defendants on 10th August,
+2023. In response thereto, the Defendants did not comply with the requisitions
+which were sought.
+25. The Court has perused the comparative packaging.Aperusal of the same
+would show that the addition of `vol’ may be from the trade name of the
+Defendant No.1 namely, M/s Volant Pharmaceuticals but the intention to cause
+deception is evident from the comparative names and packaging of the two
+products. The difference is almost miniscule and is not discernible at all.
+26. The Defendants’ adoption of the mark ‘A vol Z’ is not merely violative
+of the Plaintiff’s rights but is likely to cause confusion amongst not only the
+consumers but as also with the doctors and chemists. Further, in the foil
+packaging which is the manner in which the patient would be seeing the
+medicine without the outer carton, the term ‘vol’is smaller in size than ‘A’and
+‘Z’. The shaded manner in which the black printing is put on the packaging is
+also quite deceptive in nature. Thus, for any unwary patients, the Defendants’
+product would be clearly deceiving.
+27. Especially in pharmaceutical preparations, such confusion is to be
+avoided. The test and the threshold in such products are much higher as held in
+the decision of Cadila Healthcare vs. Cadila Pharma, (2001) 5 SCC 73. In the
+said case, the Hon’ble Supreme Court specifically observed that strict measures
+need to be taken to ensure that similarity of marks of medicines is avoided,
+particularly due to the varying medical infrastructure in the country. The
+relevant extract of the said judgement is set out below:
+CS(COMM)915/2023 Page7of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:09
+“34. As far as present case is concerned, although both the
+drugs are sold under prescription but this fact alone is not
+sufficient to prevent confusion which is otherwise likely to
+occur. In view of the varying infrastructure for supervision
+of physicians and pharmacists of medical profession in our
+country due to linguistic, urban, semi-urban and rural
+divide across the country and with high degree of
+possibility of even accidental negligence, strict measurers
+to prevent any confusion arising from similarity of marks
+among medicines are required to be taken.”
+28. Further, in Cadila Healthcare (supra), it was held that, confusion in the
+case of drugs could even be dangerous to the customers and patients. In the said
+case, the Hon’ble Supreme Court also held as under:
+38. Trade mark is essentially adopted to advertise one's
+product and to make it known to the purchaser. It attempts
+to portray the nature and, if possible, the quality of the
+product and over a period of time the mark may become
+popular. It is usually at that stage that other people are
+tempted to pass off their products as that of the original
+owner of the mark. That is why it is said that in a passing
+off action, the plaintiff's right is "against the conduct of the
+defendant which leads to or is intended or calculated to
+lead to deception. Passing off is said to be a species of
+unfair trade competition or of actionable unfair trading by
+which one person, through deception, attempts to obtain an
+economic benefit of the reputation which other has
+established for himself in a particular trade or business.
+The action is regarded as an action for deceit." (See
+Wander Ltd. Vs. Antox India Pvt Ltd., 1990 Suppl. SCC
+727.
+39. Public interest would support lesser degree of proof
+showing confusing similarity in the case of trade mark in
+respect of medicinal product as against other non-
+CS(COMM)915/2023 Page8of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:09
+medicinal products. Drugs are poisons, not sweets.
+Confusion between medicinal products may, therefore, be
+life threatening, not merely inconvenient. Noting the frailty
+of human nature and the pressures placed by society on
+doctors, there should be as many clear indicators as
+possible to distinguish two medicinal products from each
+other. It is not uncommon that in hospitals, drugs can be
+requested verbally and/or under critical/pressure
+situations. Many patients may be elderly, infirm or
+illiterate. They may not be in a position to differentiate
+between the medicine prescribed and bought which is
+ultimately handed over to them. This view finds support
+from McCarthy on Trade Marks, 3rd Edition, para 23.12 of
+which reads as under:
+"The tests of confusing similarity are modified when
+the goods involved are medicinal products. Confusion
+of source or product between medicinal products may
+produce physically harmful results to purchasers and
+greater protection is required than in the ordinary
+case. If the goods involved are medicinal products
+each with different effects and designed for even
+subtly different uses, confusion among the products
+caused by similar marks could have disastrous effects.
+For these reasons, it is proper to require a lesser
+quantum of proof of confusing similarity for drugs
+and medicinal preparations. The same standard has
+been applied to medical products such as surgical
+sutures and clavicle splints."
+29. Under such circumstances, the Plaintiff has made out a prima facie case
+in its favour for grant of an ex parte ad interim injunction, as there is a
+complete possibility of the Defendants’ products being mistaken as that of
+Plaintiff. Considering the products in question are pharmaceutical and
+nutraceutical products, the balance of convenience is also clearly in favour of
+CS(COMM)915/2023 Page9of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:09
+the Plaintiff. Further, irreparable injury shall be caused not just to the Plaintiff,
+but to the public at large as well, in case products with a deceptively similar
+mark as that of the Plaintiff are allowed to continue in the market.
+30. Accordingly, till the next date of hearing, the Defendants and everyone
+acting on their behalf shall stand restrained from using the impugned marks ‘A
+Vol Z’/ and impugned trade dress i.e. the red
+coloured strip and get up or any other mark, which is identical or deceptively
+similar to the Plaintiff’s mark ‘A TO Z’ as also the accompanying packaging
+thereof, in respect of pharmaceutical, nutraceutical, medicinal supplements or
+any other allied or cognate goods or services.
+31. The Defendants shall also stand restrained from using any identical or
+imitative colour combination and packaging as that of the Plaintiff’s ‘A to Z’
+product.
+32. Compliance of order XXXIX Rule 3 CPC be done within one week.
+33. Reply to this application be filed within four weeks of service of the
+present order and the complete paper books.
+34. List before the Joint Registrar on 15th February, 2024.
+35. List before the Roster Bench on 10th May, 2024.
+PRATHIBAM. SINGH, J.
+DECEMBER 20, 2023
+Rahul/kt
+CS(COMM)915/2023 Page10of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:09
+
+===== ORDER =====
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 915/2023
+ALKEM LABORATORIES LTD
+..... Plaintiff
+Through: Mr. Abhishek Bhati, Adv.
+(M-9654041529).
+versus
+M S VOLANT PHARMACEUTICALS & ORS.
+..... Defendant
+Through: None.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 15.02.2024
+Learned P.O is on leave today.
+Put up the matter on 19.03.2024 for purpose already fixed.
+Reader a/w
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 15, 2024
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:08
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 915/2023
+ALKEM LABORATORIES LTD ..... Plaintiff
+Through: Mr. Abhishek Bhati, Advocate
+versus
+M S VOLANT PHARMACEUTICALS & ORS.
+..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 19.03.2024
+All the defendants have been served. However, there is no
+appearance on behalf of defendants.
+Defendant nos. 1 & 4 have been served through the
+ordinary mode on 06.02.2024 whereas the other defendants have
+been served through speed post and courier on 17.01.2024 and
+18.01.2024 respectively.
+Neither any written statement has been filed on behalf of
+any of the defendants nor reply to the application under Order
+XXXIX Rule 1 & 2 CPC has been filed.
+Put up for completion of pleadings on 25.04.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 19, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:07
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 915/2023
+ALKEM LABORATORIES LTD .... Plaintiff
+Through: Mr. Abhishek Bhati, Mr. Sanket
+Singh, Advocates
+versus
+M S VOLANT PHARMACEUTICALS & ORS.
+..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 25.04.2024
+There is no appearance on behalf of any of the defendants
+although all of them have been served on 06.02.2024. However,
+the maximum permissible period to file the written statement is
+yet to expire for the defendants.
+Vide order dated 20.12.2023, Hon’ble Court had directed
+filing of reply to IA No. 25717/2023 within four weeks of notice
+being served. However, none of the defendants have filed reply
+to this IA even though the period to file the same, as granted by
+the Hon’ble Court, has expired. Defendants are granted final
+opportunity to file reply within ten days failing which their
+respective right to file a reply shall stand closed.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 10.05.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 25, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:07
+
+===== ORDER =====
+
+$~47
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 915/2023 &
+ALKEM LABORATORIES LTD ..... Plaintiff
+Through: Mr. Sagar Chandra, Ms. Ishani
+Chandra, Ms. Srijan Uppal, Mr.
+Abhishek Bhati, Mr. Sanket Singh
+Sengar, Advs. (M. 9873559827)
+versus
+M S VOLANT PHARMACEUTICALS & ORS. ..... Defendant
+Through:
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 30.04.2024
+I.A. 9564/2024(Application under Order XI Rule 1(5) of CPC).
+1. This application has been filed on behalf of plaintiff, under Order XI
+Rule 1(5) of the Code of Civil Procedure, 1908 (“CPC”) by plaintiff.
+2. Notice and summons have been issued by this Court on 20th December,
+2023, however, no one has since appeared on behalf of defendants, although all
+of them have been served, as noted in the Joint Registrar’s order dated 25th
+April, 2024.
+3. Plaintiff seeks to file documents, which are certificates for use in legal
+proceedings in various trademarks which have been registered in favour of
+plaintiff.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:06
+4. They had applied for certificates on 14th December 2023; however,
+documents were received recently and, therefore, are being filed now.
+5. In these facts and circumstances, the application is allowed. The said
+documents be taken on record.
+6. Application is accordingly, disposed of.
+7. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+APRIL 30, 2024/RK/na
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:06
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 915/2023 & I.A. 25717/2023
+ALKEM LABORATORIES LTD ..... Plaintiff
+Through: Mr. Sagar Chandra and Mr. Abhishek
+Bhati, Advocates.
+versus
+M S VOLANT PHARMACEUTICALS & ORS. ..... Defendants
+Through:
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 10.05.2024
+1. This Court has passed an ad interim injunction on 20th December,
+2023 in favour of the plaintiff. Thereafter it is noted by the Joint Registrar
+in the order dated 25th April, 2024 that there is no appearance on behalf of
+any of the defendants although they were served on 06th February, 2024.
+Maximum period for filing written statement is stated to be expiring in this
+month.
+2. Accordingly, list before the Joint Registrar for futher proceedings on
+27th May, 2024.
+3. Interim orders to continue.
+4. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+MAY 10, 2024/ssc
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:06
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 915/2023
+ALKEM LABORATORIES LTD ..... Plaintiff
+Through: Mr. Abhishek Bhati, Advocate
+versus
+M S VOLANT PHARMACEUTICALS & ORS.
+..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 27.05.2024
+Defendant nos. 2, 3, 5 & 6 have been served with
+summons through speed post on 17.01.2024 and through courier
+on 18.01.2024. Despite lapse of maximum permissible period to
+file the written statement, no written statement has been filed on
+behalf of defendant nos. 2, 3, 5 & 6. Consequently, their
+respective rights to file written statement stand closed. It needs a
+highlight that inadvertently, in the order dated 25.04.2024, passed
+by this Court, it has been recorded that all the defendants were
+served on 06.02.2024. Infact, only defendant nos. 1 & 4 were
+served through the ordinary mode on 06.02.2024 and
+consequently, today is the 111th day from the date of service of
+summons on defendant nos. 1 & 4. Further , in view of the order
+dated 25.04.2024 vide which final opportunity was granted to the
+defendants to file reply to IA No. 25717/2023 within ten days,
+since no reply has been filed by any of the defendants to this IA,
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:05
+the respective rights to file a reply stand closed.
+Put up for completion of pleadings on 28.08.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 27, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:05
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 915/2023
+ALKEM LABORATORIES LTD
+.....Plaintiff
+Through: Mr. Abhishek Bhati, Advocate
+versus
+M S VOLANT PHARMACEUTICALS & ORS.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 28.08.2024
+1. Defendant nos. 1 & 4 were served with summons on
+06.02.2024 through the ordinary mode but no written statement
+has been filed till date. The maximum permissible period to file
+the same has expired. Consequently, right to file the written
+statement for defendant nos. 1 & 4 thus stands closed. Rights of
+defendant nos. 2, 3, 5 & 6 to file written statement have already
+been closed.
+2. In view of the above, put up before the Hon’ble Court on
+15.10.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 28, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:04
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 915/2023&I.A. 25717/2023
+ALKEM LABORATORIES LTD .....Plaintiff
+Through: Mr Sagar Chandra and Mr Abhishek
+Bhati, Advocates.
+versus
+M S VOLANT PHARMACEUTICALS & ORS. .....Defendants
+Through: Mr PriankAdhyaru, Advocate D-1 to
+D-3.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 15.10.2024
+1. Mr PriankAdhyaru, counsel appearing on behalf of the defendant Nos.
+1, 2 and 3 submits that the aforesaid defendants have stopped using the
+impugned trademark. Further,the aforesaid defendantswould have no
+objection if a decree of permanent injunction is passed against the aforesaid
+defendants.
+2. Mr Sagar Chandra, counsel appearing on behalf of the plaintiff prays
+for reasonable costs.
+3. Mr. Adhyaru seeks time to take instructionswith regard to costs.
+4. List on 24th October, 2024.
+AMIT BANSAL, J
+OCTOBER 15, 2024/PB
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:04
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 915/2023 & I.A. 25717/2023
+ALKEM LABORATORIES LTD .....Plaintiff
+Through: Ms. Srijan Uppal, Mr. Abhishek
+Bhati, Advs.
+versus
+M S VOLANT PHARMACEUTICALS & ORS. .....Defendants
+Through: Mr PriankAdhyaru, Advocate D-1 to
+D-3.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 24.10.2024
+1. Counsel for the defendants seek further time to take instructions in
+terms of the order passed by this Court on 15th October, 2024.
+2. Re-notify on 26th November, 2024.
+AMIT BANSAL, J
+OCTOBER 24, 2024
+ak
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:03
+
+===== ORDER =====
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 915/2023 & I.A. 25717/2023
+ALKEM LABORATORIES LTD .....Plaintiff
+Through: Mr. Srijan Uppal and Mr. Abhishek
+Bhati, Advocates.
+versus
+M S VOLANT PHARMACEUTICALS & ORS. .....Defendants
+Through: Ms. Pari Bharadwaj and Mr. Vivek
+Ranja, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 26.11.2024
+1. Counsel for the plaintiff submits that the plaintiff is in settlement talks
+with the defendants.
+2. At joint request, renotify on 21st February, 2025.
+AMIT BANSAL, J
+NOVEMBER 26, 2024
+Vivek/-
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:03
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 915/2023 with I.A. 25717/2023
+ALKEM LABORATORIES LTD .....Plaintiff
+Through: Mr. Abhishek Bhati, Advocate.
+versus
+M S VOLANT PHARMACEUTICALS & ORS. .....Defendants
+Through: Mr. Vivek Ranjan and Mr. Rinku,
+Advocates.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 21.02.2025
+1. Counsel for the parties submit that they require further time to finalize
+the terms of settlement.
+2. Renotify on 30th July, 2025.
+AMIT BANSAL, J
+FEBRUARY 21, 2025
+Vivek/-
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:02
+
+===== ORDER =====
+
+$~28
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 915/2023 & I.A. 25717/2023
+ALKEM LABORATORIES LTD .....Plaintiff
+Through: Mr. Srijan Uppal, Mr. Abhishek
+Bhati and Mr. Subhadeep Das, Advs.
+versus
+M S VOLANT PHARMACEUTICALS
+& ORS. .....Defendants
+Through: Mr. Vivek Ranjan and Mr. Rinku,
+Advs.
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 30.07.2025
+Learned counsel for the parties state that the parties have arrived at a
+settlement and will be filing their agreement shortly.
+At joint request, list on 29.08.2025.
+Interim orders to continue.
+MANMEET PRITAM SINGH ARORA, J
+JULY 30, 2025/msh
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:02
+
+===== ORDER =====
+
+$~232
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 915/2023
+ALKEM LABORATORIES LTD
+.....Plaintiff
+Through: Ms. Mehek Dua, Adv. (VC)
+versus
+M S VOLANT PHARMACEUTICALS & ORS.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the defendant when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:01
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 915/2023 & I.A. 25717/2023 I.A. 21321/2025
+ALKEM LABORATORIES LTD .....Plaintiff
+Through: Mr Sagar Chandra, Mr. Srijan Uppal,
+Mr. Abhishek Bhati and Mr.
+Subhadeep Das, Advs.
+versus
+M S VOLANT PHARMACEUTICALS & ORS. .....Defendants
+Through: Mr. Vivek Ranjan, Mr. Rinku, and
+Mr. Sarath Prakash, Advs.
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 29.08.2025
+I.A. 21321/2025 (Order XXIII Rule 3 CPC)
+1. The present application has been filed jointly by the parties under
+Order XXIII Rule 3 of the Code of Civil Procedure, 1908 (CPC), seeking
+disposal of the suit in terms of the Settlement arrived at between the parties.
+2. The underlying suit has been filed by the Plaintiff against the
+Defendants seeking permanent injunction restraining infringement of
+Trademark, Copyright, passing off, etc.
+3. Learned counsel for the parties’ state that the Plaintiff and the
+Defendants decided to settle their dispute amicably and to avoid any further
+litigation.
+3.1. They state that the terms of the settlement are more specifically
+recorded in paragraph ‘5’ of the captioned application.
+CS(COMM) 915/2023 Page 1 of 3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:59
+3.2. They state that the suit may be decreed and disposed of in terms of the
+captioned application.
+3.3. They state that as pleaded in the captioned application at paragraph 5
+(r) the suit may be decreed against the defendant in terms of the paragraph
+54 (i) to (vi) of the plaint. They state that Plaintiff has given up all other
+reliefs.
+3.4. They state that cost of Rs. 1,50,000/- stands paid by the Defendants to
+the Plaintiffs and there is no further executory obligation which are to be
+performed by the parties.
+4. This Court is satisfied that the compromise between the parties as
+contained in the captioned application satisfies the requirement of the Order
+XXIII Rule 3 CPC; the agreement is lawful and therefore, this Court does
+not find any impediment in disposing of the underlying suit in terms of the
+aforenoted settlement.
+5. The statement and undertakings given by the learned counsel for the
+parties are accepted by this Court and the parties are held bound by the
+same.
+6. Consequently, the captioned suit is hereby decreed in terms of the
+paragraph 54 (i) to (vi) of the plaint as well as in terms of the conditions
+agreed between the parties as recorded in the captioned application. The
+remaining reliefs in the plaint are dismissed as not pressed.
+7. The Registry of this Court is directed to draw a decree in terms of this
+order. The settlement terms set out in the captioned application shall also
+form part of the decree.
+Refund of Court fees
+8. The Plaintiff has also requested for refund of court fees.
+CS(COMM) 915/2023 Page 2 of 3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:59
+9. Keeping in view the aforesaid facts, the registry is directed to refund
+100% Court Fee in favour of Plaintiff within six (6) weeks, in accordance
+with law. The said direction has been passed having regard to Section 16
+and 16A of the Court Fees Act, 1870, and the judgment of the Supreme
+Court in High Court of Judicature at Madras v. M.C. Subramaniam &
+Ors1.
+10. Interim orders, if any, stand merged into the final decree.
+11. Pending applications, if any, stands disposed of.
+12. All future dates stand cancelled.
+13. The digitally signed copy of this order, duly uploaded on the official
+website of the Delhi High Court, www.delhihighcourt.nic.in, shall be treated
+as a certified copy of the order for the purpose of ensuring compliance. No
+physical copy of order shall be insisted by any authority/entity or litigant.
+MANMEET PRITAM SINGH ARORA, J
+AUGUST 29, 2025/hp
+1 (2021) 3SCC 560.
+CS(COMM) 915/2023 Page 3 of 3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:59

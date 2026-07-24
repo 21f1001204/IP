@@ -1,0 +1,571 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_827_2023
+case_status: DISPOSED
+n_orders: 5
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 827/2023, I.A. 22846/2023, I.A. 22847/2023, I.A.
+22848/2023 & I.A. 22849/2023
+KERZNER INTERNATIONAL LIMITED ..... Plaintiff
+Through: Mr. Chander M Lall, Ms.
+Nancy Roy, Ms. Prakriti Varshney, Mr. Lalit
+Alley, Mr. Prashant, Ms. Nida Khanam, Ms.
+Aastha Kakkar and Mr. Abhinav Bhalla,
+Advs.
+versus
+NARESH SADHWANI & ORS. ..... Defendants
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 17.11.2023
+CS(COMM) 827/2023
+1. The plaintiff is aggrieved by the use, by the defendants of the
+mark ROYAL ATLANTIS which, according to the plaintiff, infringes
+its registered trademarks.
+2. Let the plaint be registered as a suit.
+3. Issue summons in the suit.
+4. Written statement, accompanied by affidavit of
+admission/denial of the documents filed by the plaintiff be filed within
+CS(COMM) 827/2023 Page 1 of 4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:50
+30 days with advance copy to learned Counsel for the plaintiff who
+may file replication thereto, accompanied by affidavit of
+admission/denial of the documents filed by the defendant within 30
+days thereof.
+5. List before the learned Joint Registrar (Judicial) for completion
+of pleadings, admission and denial of documents and marking of
+exhibits on 18 January 2024, whereafter the matter would be placed
+before the Court for case management hearing and further
+proceedings.
+I.A. 22846/2023 [under Order XXXIX Rules 1 and 2 of the CPC]
+6. This is an application by the plaintiff under Order XXXIX
+Rules 1 and 2 of the Code of Civil Procedure, 1908 (CPC). Mr. Lall,
+learned Senior Counsel for the plaintiff is agreeable to the defendant
+being granted a short notice before taking up this application for
+hearing and disposal.
+7. Accordingly, issue notice to the defendants by all modes
+including WhatsApp.
+8. Reply, if any, be filed within three weeks with advance copy to
+learned Counsel for the plaintiff who may file rejoinder thereto within
+one week thereof.
+9. Re-notify for hearing and disposal of this application on 19
+December 2023.
+CS(COMM) 827/2023 Page 2 of 4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:50
+10. No extension of time for filing reply or rejoinder shall be
+granted.
+I.A. 22847/2023 [under Section 12A of the Commercial Courts
+Act, 2015]
+11. Mr. Lall submits that, despite three notices having been issued
+to the defendants calling on it to cease and desist from using the
+impugned mark, there is no response. Accordingly, there would be no
+purpose in requiring the plaintiff to undergo any exercise of pre-
+litigation mediation.
+12. The application is accordingly allowed.
+I.A. 22848/2023 [under Section 151 of the CPC]
+13. Subject to the plaintiff filing legible copies of any dim or
+illegible documents on which it may seek to place reliance within four
+weeks from today, exemption is granted for the present.
+14. The application is disposed of.
+I.A. 22849/2023 [under Order XI Rule 1(4) of the CPC]
+15. By this application, the plaintiff seeks permission to file
+additional documents.
+16. The plaintiff is permitted to place additional documents on
+record in accordance with Order XI Rule 1(4) of the CPC as amended
+by the Commercial Courts Act, 2015 within 30 days from today.
+CS(COMM) 827/2023 Page 3 of 4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:50
+17. The application stands disposed of accordingly.
+C.HARI SHANKAR, J
+NOVEMBER 17, 2023
+ar
+Click here to check corrigendum, if any
+CS(COMM) 827/2023 Page 4 of 4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:50
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 827/2023
+KERZNER INTERNATIONAL LIMITED ..... Plaintiff
+Through: Mr. C.M. Lall, Sr. Advocate
+with Ms. Nancy Roy and Mr. Lalit, Advs.
+versus
+NARESH SADHWANI & ORS. ..... Defendants
+Through: Mr. kautilya Kaushik, Adv. D-1
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 19.12.2023
+I.A. 22846/2023 (Order XXXIX Rules 1 and 2 of the CPC)
+In order for Mr. Kaushik to obtain instructions as to the
+longevity of the user by the defendants of the impugned mark, renotify
+on 21 December 2023.
+C. HARI SHANKAR, J.
+DECEMBER 19, 2023
+rb
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:49
+
+===== ORDER =====
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 827/2023
+KERZNER INTERNATIONAL LIMITED ..... Plaintiff
+Through: Mr. Chander M. Lall, Sr.
+Advocate with Ms. Nancy Roy, Mr. Lalit
+Alley, Ms. Ananya Chug and Ms. Yashi
+Agrawal, Advs.
+versus
+NARESH SADHWANI & ORS. ..... Defendants
+Through: Defendant 1 in person (through
+VC)
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 21.12.2023
+As Defendant 1 is not audible, renotify on 22 December 2023.
+C.HARI SHANKAR, J
+DECEMBER 21, 2023
+rb
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:49
+
+===== ORDER =====
+
+$~36
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 827/2023 and I.A. 22846/2023
+KERZNER INTERNATIONAL LIMITED ..... Plaintiff
+Through: Mr. Chander M. Lall, Senior
+Advocate with Mr. Ankur Sangal,
+Ms.Pragya Mishra, Mr. Shaurya Pandey and
+Ms. Yashi Aggarwal, Advocates.
+versus
+NARESH SADHWANI & ORS. ..... Defendants
+Through: Mr. Kautilya Kaushik and
+Ms.Purvi Khandelwal, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 22.12.2023
+1. The plaintiff is the proprietor of the following registered trade
+marks:
+“TradeMark Registration Registration Class User
+No. Date Claim
+ATLANTIS 1416283 January 24, 36 October,
+2006 1994
+Services: Leasing of real estate property for a complex, containing malls, bars,
+nightclubs, casinos, restaurants, theaters, and retail shops; real estate
+management services
+ATLANTIS 1416282 January 24, 39 October,
+2006 1994
+services: marina services, including rental of berths for marine craft, boat
+storage,marinarental services; arrangingtours andcruises, charteringofmarine
+vessels; provision of information relating to marinas; provision of tie-up
+assistance; dock assistance for transfer of luggage and provisions, transportation
+between marina and resort; tour operation, namely arranging and conducting
+travel tours and providing information in the field of travel tours; travel agency
+services, namely making reservations and bookings for transportation; air
+transportation services, namely chart and scheduled passenger and cargo air
+CS(COMM)827/2023 Page1of7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:48
+transport services; arranging excursions for tourists in the fields of underwater
+divingandsnorkeling,andboat cruises andboat chartering.
+ATLANTIS 1416281 January 24, 41 October,
+2006 1994
+Services: Entertainment services in the nature of an aquarium, marine habitat
+and associated exhibits; health club services, providing instruction and
+equipment in the field of physical exercise; providing sports facilities and tennis
+court facilities; entertainment in the nature of golf and tennis tournaments; golf
+club services; golf caddie services; entertainment services in the nature of a
+theme park featuring water sports, speed boat rides and shows, amusement park
+attractions and rides; entertainment in the nature of night clubs; providing
+casino services and casino facilities; entertainment services provided by hotels;
+providingchildren's campservices.
+ATLANTIS 1416284 January 24, 42 October,
+2006 1994
+Services: Providing temporary accommodation; providing, hotel
+accommodation, hotel services, resort hotel services; arrangement of
+accommodation m resorts; providing convention facilities and services; travel
+agency services, accommodation bookings and making reservations and
+bookings fordining; providingrestaurant andbar services.
+ATLANTIS 4237848 July17,2019 37 Proposed
+tobeused
+Services: Real estatedevelopment.
+ROYAL 4168657 May6,2019 35 Proposed
+ATLANTIS tobeused
+Services: Real estate marketing, advertising, management, administration
+services in relation to sale condominium resident units and villas, complex
+containing malls, bars, Services: Real estate marketing, advertising,
+management nightclubs, casinos, restaurants, theaters, management of vacation
+homes, andmanagement ofcondominium properties; homeowners association.
+ROYAL 4168656 May6,2019 36 Proposed
+ATLANTIS tobeused
+Services: Leasing of real estate property for a complex containing malls, bars,
+nightclubs, casinos, restaurants, theaters, and retail shops; real estate
+management services; real estate services, namely, listing leasing, brokerage,
+management and operation of condominium resident units and villas; real estate
+financing; real estate and property management services; real estate services,
+namely, leasing, renting and management of vacation homes, condominiums
+and villas, and management of condominium properties; home owners
+association services, namely, community compliance management in the nature
+ofmanagement ofcommongrounds andamenities.
+ROYAL 4168655 May6,2019 37 Proposed
+ATLANTIS tobeused
+Services: Real estatedevelopment
+ROYAL 4168660 May6,2019 39 Proposed
+ATLANTIS tobeused
+Services: Marina services, including rental of berths for marine craft, boat
+storage,marinarental services; arrangingtours andcruises, charteringofmarine
+CS(COMM)827/2023 Page2of7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:48
+vessels; provision of information relating to marinas; provision of tie-up
+assistance; dock assistance for transfer of luggage and provisions, transportation
+between marina and resort; tour operation, namely arranging and conducting
+travel tours and providing information in the field of travel tours; travel agency
+services, namely making reservations and bookings for transportation; air
+transportation services, namely chart and scheduled passenger and cargo air
+transport services; arranging excursions for tourists in the fields of underwater
+divingandsnorkeling,andboat cruises andboat chartering.
+ROYAL 4168659 May6,2019 41 Proposed
+ATLANTIS tobeused
+Services: Entertainment services in the nature of an aquarium, marine habitat
+and associated exhibits; Health club services, providing instruction and
+equipment in the field of physical exercise; providing sports facilities and tennis
+court facilities; entertainment in the nature of golf and tennis tournaments; golf
+club services; golf caddie services; entertainment services in the nature of a
+theme park featuring water sports, speed boat rides and shows, amusement park
+attractions and rides; entertainment in the nature of night clubs; providing
+casino services and casino facilities; entertainment services provided by hotels;
+providingchildren's campservices.
+ATLANTIS, 4608386 August 13, 41 Proposed
+THEROYAL 2020 tobeused
+Services: Entertainment services in the nature of an aquarium, marine habitat
+and associated exhibits; health club services, namely, providing instruction and
+equipment in the field of physical exercise; health clubs for physical exercise;
+physical fitness consultation; physical fitness instruction; providing fitness and
+exercise facilities; physical fitness training of individuals and groups; providing
+sports facilities and tennis court facilities; entertainment in the nature of golf
+and tennis tournaments; golf club services; golf caddie services; entertainment
+services in the nature of a theme park featuring water sports, speed boat rides
+and shows, amusement park attractions and rides; entertainment in the nature of
+night clubs; providing casino services and casino facilities; entertainment
+services providedbyhotels; providingchildren's campservices.
+ATLANTIS, 4608381 August 13, 35 Proposed
+THEROYAL 2020 tobeused
+Services: Real estate marketing services; real estate marketing services, namely,
+marketing for sale condominium resident units and villas; advertising of
+commercial or residential real estate; real estatesales management.
+ATLANTIS, 4608383 August 13, 36 Proposed
+THEROYAL 2020 tobeused
+Services: Leasing of real estate; real estate management services; real estate
+services, namely, listing leasing, brokerage, management and operation of
+condominium resident units and villas; real estate financing; real estate and
+property management services; real estate services, namely, leasing, renting and
+management of vacation homes, condominiums and villas, and management of
+condominium properties; home owners association services, namely,
+CS(COMM)827/2023 Page3of7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:48
+community compliance management ill the nature of management of common
+grounds andamenities.
+ATLANTIS, 4608388 August 13, 43 Proposed
+THEROYAL 2020 tobeused
+Services: Providing temporary accommodation; providing hotel
+accommodation, hotel services, resort hotel services; arrangement of
+accommodation ill resorts; providing convention facilities and services; travel
+agency services, accommodation bookings and making reservations and
+bookings for dining; providing restaurant and bar services; health resort
+services, namely, providing food and lodging that specialize in promoting
+patrons' general health and wellbeing; spa services, namely, providing
+temporaryaccommodations andmeals toclients ofahealthorbeautyspa.
+ATLANTIS, 4608385 August 13, 39 Proposed
+THEROYAL 2020 tobeused
+Services: Marina services, including rental of berths for marine craft, boat
+storage,marinarental services; arrangingtours andcruises, charteringofmarine
+vessels; provision of information relating to marinas; provision of tie-up
+assistance; dock assistance for transfer of luggage and provisions, transportation
+between marina and resort; tour operation, namely arranging and conducting
+travel tours and providing information in the field of travel tours; travel agency
+services, namely making reservations and bookings for transportation; air
+transportation services, namely charter and scheduled passenger and cargo air
+transport services; arranging excursions for tourists in the fields of underwater
+divingandsnorkeling,andboat cruises andboat chartering.”
+2. All these registrations are stated to be valid and subsisting as on
+today.
+3. In view of the statement made by learned counsel for the
+defendants in Court, is not necessary to refer at length to the facts of
+the case.
+4. Suffice it to state, therefore, that the plaintiff is aggrieved by the
+use, by the defendants, of “ROYAL ATLANTIS” as the name of their
+hotel. The defendants use the signages/sign boards and logo
+CS(COMM)827/2023 Page4of7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:48
+and . The
+plaintiff, therefore, seeks a decree of permanent injunction restraining
+the defendants from using the marks “ROYAL ATLANTIS”,
+“HOTEL ROYAL ATLANTIS” or the labels/logos
+or any other mark
+which includes “ATLANTIS” or “ROYAL ATLANTIS” as a part
+thereof, for the hotel/hospitality segment or any other allied or cognate
+goods or services, apart from rendition of accounts, costs and
+damages.
+5. It is also noted that mark the “ATLANTIS” has already
+acquired enormous global reputation specially in the Indian sub-
+continent and is recognized as a well-known trade mark by this Court
+vide order dated 13 May 2022 in CS(COMM) 321/2022. As such, it
+is entitled to additional protection even on that ground.
+6. According to averments made in the plaint, the impugned mark
+was being used by a partnership firm titled M/s ND Business Venture
+which was a partnership firm of Mr. Naresh Sadhwani, Mr. Naresh
+Daryani and Mr. Daulat Raisinghani.
+7. Mr. Kautilya Kaushik, learned counsel is present with Mr.
+CS(COMM)827/2023 Page5of7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:48
+Naresh Daryani. Mr. Kaushik submits that the partnership firm stands
+dissolved and that the mark “ROYAL ATLANTIS” is presently being
+used only by his client Mr. Naresh Daryani, who is impleaded as
+Defendant 2 herein.
+8. Mr. Kaushik undertakes, on instructions from his client who is
+also present virtually during the hearing, that his client would
+forthwith discontinue use of the mark “ROYAL ATLANTIS” with
+immediate effect. He also undertakes that his client would remove,
+from all virtual as well as the physical sites, any reference to the mark
+“ROYAL ATLANTIS” in connection with his client. He also submits
+that his client would not use any mark which includes “ATLANTIS”
+as a part thereof.
+9. In view of the aforesaid statement, Mr. Lall agrees that the suit
+can be decreed but prays that some costs may be awarded.
+10. As the defendants have come up upfront with an undertaking to
+discontinue the use of the impugned mark, I am not inclined to award
+any costs.
+11. Accordingly, the suit stands decreed by permanently restraining
+the defendants, as well as all others acting on their behalf, from using
+the mark “ROYAL ATLANTIS”, “HOTEL ROYAL ATLANTIS” or
+the logos or any
+CS(COMM)827/2023 Page6of7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:48
+other mark or logo which uses “ATLANTIS” or “ROYAL
+ATLANTIS” as a part thereof or is otherwise deceptively or
+confusingly similar to the registered trade marks of the plaintiff in
+respect of the hotel/hospitality segment or any other allied or cognate
+services or goods. The defendant shall also forthwith remove, from all
+physical as well as virtual sites, any reference to the mark
+“ATLANTIS”, “ROYAL ATLANTIS” or “Hotel Royal Atlantis” in
+connection with the defendants.
+12. The defendants shall also withdraw the opposition filed before
+the Registrar of Trade Marks opposing the application filed by the
+plaintiff for registration of the mark “ROYAL ATLANTIS” forthwith.
+Let a withdrawal application be accordingly filed within a period of
+three days from today. The Registrar of Trade Marks is directed to
+take appropriate action within two weeks thereof.
+13. Mr. Kaushik undertakes to file his Vakalatnama within 24
+hours.
+14. The suit stands decreed in the aforesaid terms.
+15. Let a decree sheet be drawn up by the Registry accordingly.
+C.HARI SHANKAR, J
+DECEMBER 22, 2023
+kd
+Click here to check corrigendum, if any
+CS(COMM)827/2023 Page7of7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:48
+
+===== ORDER =====
+
+$~32
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 827/2023
+KERZNER INTERNATIONAL LIMITED ..... Plaintiff
+Through: Ms. Nancy Roy and Mr. Lalit Alley,
+Advs.
+versus
+NARESH SADHWANI & ORS. ..... Defendants
+Through:
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 06.02.2024
+I.A. No. 2897/2024 (Exemption from filing apostilled affidavits)
+1. This application has been filed under Section 151 of the Code of Civil
+Procedure, 1908, seeking exemption from filing apostilled documents.
+2. Exemption allowed subject to all just exceptions.
+3. Accordingly, the application stands disposed of.
+I.A. No. 2896/2024 (for correction of clerical errors)
+1. This application has been filed by the plaintiff’s counsel for seeking
+correction in order dated 22nd December, 2023 passed by this Court. It is
+stated that in para 5 of the order a reference has been made by the Court to a
+purported submission by the counsel for the plaintiff that the mark
+‘ATLANTIS’ was recognised as a well-known trademark, which was not the
+submission made by the counsel for the plaintiff. In order to seek
+rectification, the plaintiff, therefore, seeks correction.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:47
+2. Accordingly, the order dated 22nd December, 2023 is rectified to read
+as under:
+“5. It is also noted that mark the “ATLANTIS” has already
+been held to have acquired enormous global reputation
+specially in the Indian subcontinent vide order dated 13 May
+2022 in CS(COMM) 321/2022. As such, it is entitled to
+additional protection even on that ground.”
+3. Also, a correction is sought in the recording of the appearance of the
+counsel for the plaintiff, since the advocates represented in the order of 22nd
+December, 2023 were different advocates from a different firm.
+4. Accordingly, the following correction be made. Appearance on behalf
+of the plaintiff shall be read as follows:
+“Mr. Chander Lall, Senior Adv. with Ms. Nancy Roy, Mr.
+Raghav Malik, Mr. Lalit Alley and Ms. Prakriti Varshney,
+Advocates.”
+5. The said order shall stand corrected in the above terms.
+6. The application is disposed of accordingly.
+7. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+FEBRUARY 6, 2024/MK/ig
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:47

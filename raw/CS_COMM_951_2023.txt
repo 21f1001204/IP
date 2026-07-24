@@ -1,0 +1,522 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_951_2023
+case_status: DISPOSED
+n_orders: 8
+
+$~53
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 951/2023
+HUMAN WELFARE CREDIT AND THRIFT COOPERATIVE
+SOCIETY LIMITED ..... Plaintiff
+Through: Mr. Mayank Kshirsagar, Ms. Anumita
+Verma and Ms. Nitya Sharma,
+Advocates.
+versus
+MR. SACHIN KUMAR ..... Defendant
+Through: None.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 15.01.2024
+I.A. 973/2024 (seeking enlargement of time under Section 148 read with
+Section 151 of the CPC, 1908)
+1. Vide order dated 22nd December, 2023, the Court passed an ad-interim
+injunction, restraining Defendants from using “ ”
+mark. Directions were also issued for freezing of the bank accounts enlisted
+in paragraph No. 29 of the said order. Additionally, a Local Commissioner
+was appointed to carry out the mandate noted in paragraph No. 32 of the
+order. The commission was required to be executed within one week from
+the date of the order (22nd December, 2023) and a report was to be filed by
+the Local Commissioner within two weeks thereafter.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:13
+2. Counsel for Plaintiff states that on account of inadvertent mistake on his
+part, the order could not be executed. He regrets the lapse and seeks
+enlargement of time for executing the directions through Local
+Commissioner.
+3. Although the grounds offered by the Plaintiff’s counsel are not
+convincing, however, considering the public interest involved in the
+litigation, as is evident from the facts noted in the order dated 22nd
+December, 2023, which reveal that Defendant is prima facie duping the
+general public by claiming association with the Plaintiff, the request of
+Plaintiff is allowed. The timelines set in paragraph No. 34 and 35 of order
+dated 22nd December, 2023 are extended by a period of one week
+commencing today.
+4. With the above directions, the application is disposed of.
+5. Dasti under the signatures of Court Master.
+6. A copy of the order shall not be uploaded for a period of two weeks from
+today.
+SANJEEV NARULA, J
+JANUARY 15, 2024
+nk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:13
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 951/2023
+HUMAN WELFARE CREDIT AND THRIFT
+COOPERATIVE SOCIETY LIMITED ..... Plaintiff
+Through: Mr. Parth Sarathi, Mr. Mayank
+Kshirsagar, Advocates
+versus
+MR. SACHIN KUMAR ..... Defendant
+Through: Mr. Atri Roy Chowdhury,
+Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 20.02.2024
+Defendant has been served on 15.02.2024. Ld. Counsel
+has entered appearance on behalf of defendant and submits that
+vakalatnama shall be filed within a week, and the written
+statement shall be filed within the statutory period.
+Ld. Counsel for the plaintiff is directed to supply a copy of
+the order dated 22.12.2023 to the ld. Counsel for defendant today
+itself.
+Put up for completion of pleadings on 02.05.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 20, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:12
+
+===== ORDER =====
+
+$~8
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 951/2023
+HUMAN WELFARE CREDIT AND THRIFT
+COOPERATIVE SOCIETY LIMITED ..... Plaintiff
+Through: Mr. Parth Sarathi (VC),
+Advocate
+versus
+MR. SACHIN KUMAR ..... Defendant
+Through: Mr. Atri Roy Chowdhury,
+Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 02.05.2024
+Defendant has filed his written statement on 12.04.2024
+which was put under objections and thereafter, re-filed on
+01.05.2024. Same is under scrutiny. An application for
+condonation of delay is said to have been filed but which is also
+under scrutiny.
+Matter is already listed before the Hon’ble Court for
+21.05.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 21.05.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 2, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:11
+
+===== ORDER =====
+
+$~28
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 951/2023
+HUMAN WELFARE CREDIT AND THRIFT
+COOPERATIVE SOCIETY LIMITED .... Plaintiff
+Through: Mr. Parth Sarathi (VC),
+Advocate
+versus
+MR. SACHIN KUMAR ..... Defendant
+Through: Ms. Atri Roy Chowdhury (VC),
+Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 07.05.2024
+I.A. No. 10325/2024 filed by the defendant for condonation of
+delay of 27 days in filing the written statement.
+Issue notice. Notice accepted by the ld. Counsel for the
+plaintiff who presses for an opportunity to file a response.
+Let the reply be filed within two weeks, with an advance
+copy of the same to the opposite side. Rejoinder thereto, if any,
+be filed thereafter within a week of receiving an advance copy of
+the reply.
+Matter is already listed before the Hon’ble Court for
+21.05.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 21.05.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 7, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:11
+
+===== ORDER =====
+
+$~31
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 951/2023
+HUMAN WELFARE CREDIT AND THRIFT COOPERATIVE
+SOCIETY LIMITED ..... Plaintiff
+Through: Mr. Mayank Verma, Ms. Aarushi
+Relan, Ms. Nitya Sharma and
+Mr. Parth Sarthi, Advocators.
+versus
+MR. SACHIN KUMAR ..... Defendant
+Through: Mr. Akshay Srivastava, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 10.05.2024
+I.A. 10701/2024 (for exemption from filing translated copies of the
+documents in Hindi language)
+1. Exemption is granted, subject to all just exceptions.
+2. The Applicant shall file legible and clearer copies of exempted
+documents, compliant with practice rules, before the next date of hearing.
+3. Accordingly, the application stands disposed of.
+I.A. 10702/2024 (under Order XXXIX Rule 4 read with Section 151 of
+the Code of Civil Procedure, 1908)
+4. Counsel for the Applicant, seeks an adjournment on the ground that
+the main arguing counsel could not come down from Kolkata owing to
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:10
+personal difficulty and is, thus, not available.
+5. List on the date fixed i.e. on 21st May, 2024.
+SANJEEV NARULA, J
+MAY 10, 2024
+nk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:10
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 951/2023 with I.As. 26319/2023, 26325/2023
+HUMAN WELFARE CREDIT AND THRIFT COOPERATIVE
+SOCIETY LIMITED ..... Plaintiff
+Through: Mr. Mayank Kshirsagar, Ms. Anumita
+Verma, Ms. Aarushi Relan, Ms. Nitya
+Sharma, Mr. Parth Sarathi, Ms.
+Pankhuri, Mr. Roshan Lal Goel and
+Ms. Anju Gupta, Advocates.
+versus
+MR. SACHIN KUMAR ..... Defendant
+Through: Mr. Akshay Srivastava and
+Mr. Shresth Nanda, Advocates.
+Ms. Hetu Arora Sethi, ASC, GNCTD
+with Mr. Arjun Basra, Advocate for
+IFSO Spl. Cell, Delhi Police.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 21.05.2024
+I.A. 10325/2024 (filed by defendant under Order VIII Rule 1 r/w Section
+151 CPC seeking condonation of delay in filing the written statement)
+1. As noted by the Joint Registrar on 20th February, 2024, the Defendant
+was served on 15th February, 2024. The written statement has thereafter been
+filed on 12th April, 2024, with a delay of 27 days beyond the prescribed
+period of 30 days. By way of the present application, Defendant seeks
+condonation of the said delay.
+2. Considering the grounds stated in the application and the short delay
+that has occurred, the request for condonation of delay is allowed and the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:10
+written statement is taken on record.
+3. The Plaintiff is permitted to file replication within the time allowable
+commencing from today.
+4. Disposed of.
+I.A. 10702/2024 (filed by defendant under Order XXXIX Rule 4 CPC)
+5. Counsel for the Defendant states that he has no objection to the
+injunction granted vide order dated 22nd December, 2023 being continued
+during the pendency of the present suit. However, he makes a prayer for the
+Defendant to be allowed to access the bank accounts in his personal name,
+which had been frozen on account of this Court’s directions. The said bank
+accounts are mentioned as follows:
+Account BankName Account IFS Code Address
+Holder Number
+SachinKumar StateBankof 31188565557 SBIN0012347 166/179,
+India SarsunaMain
+Road,Kolkata
+-700061
+SachinKumar FincareSmall 20100003 FSFB0000001 5thFloorBren
+FinanceBank 018338 Mercury,
+Ltd SarjapurRoad,
+Kaikondrahalli,
+Bengaluru
+6. Counsel for the Plaintiff states that he would not have any serious
+objection to the aforenoted request, provided that the account statements of
+these accounts are furnished, which would reveal the source of funds into
+the bank accounts. Accordingly, State Bank of India as well as Fincare
+Small Finance Bank Limited are directed to furnish to the Court the
+statement of accounts from 1st June, 2023 till date.
+7. The copy of this order be also communicated to the said banks by the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:10
+counsel for Defendant, including dasti, for compliance.
+8. At this juncture, it is also noted that ACP ISFO, Special Cell, Delhi
+Police, has filed a status report dated 15th May, 2024, which states that
+notices had been served to the concerned banks for freezing of the
+Defendant’s accounts in terms of the directions issued on 22nd December,
+2024. It is further stated that IDBI Bank Ltd. has informed the ACP that the
+accounts of the Defendant stated to be maintained with them do not exist as
+per their records. Accordingly, such accounts could not be frozen.
+9. In view of the fact that status report has been filed, the presence of the
+Delhi Police is dispensed with, subject to further orders of the Court.
+10. List on 15th July, 2024.
+SANJEEV NARULA, J
+MAY 21, 2024
+PB
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:10
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 951/2023, I.A. 26319/2023-Stay, I.A. 26325/2023-O-26,
+R-9 & I.A. 10702/2024-O-39,R-4
+HUMAN WELFARE CREDIT AND THRIFT COOPERATIVE
+SOCIETY LIMITED .....Plaintiff
+Through: Mr. Mayank, Ms. Anumita Verma
+and Mr. Parth S., Advs.
+versus
+MR. SACHIN KUMAR .....Defendant
+Through: Mr. Akshay Srivastava, Mr. Shreshth
+Nanda and Mr. Apalak Basu, Advs.
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 15.07.2024
+1. Learned counsel appearing for the defendant seeks, and is granted,
+four weeks time for complying with the earlier order dated 21.05.2024.
+2. Accordingly, renotify on 07.11.2024.
+SAURABH BANERJEE, J
+JULY 15, 2024/rr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:09
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 951/2023 with I.A. 26319/2023, I.A. 26325/2023, I.A.
+10702/2024
+HUMAN WELFARE CREDIT AND THRIFT COOPERATIVE
+SOCIETY LIMITED .....Plaintiff
+Through: Mr Mayank Kshirsagar, Mr Parth
+Sarathi, Ms Anumita and Mr
+Akhilesh Yadav, Advocates.
+versus
+MR. SACHIN KUMAR .....Defendant
+Through: Mr Akshay Srivastava, Mr Shreshth
+Nanda and Mr Apalak Basu,
+Advocates.
+Ms Hetu Arora Sethi, ASC, GNCTD
+with Mr Arjun Basra, Advocate for
+IFSO Spl. Cell, Delhi Police.
+Insp. Nagender Singh, IFSO/ Special
+Cell.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 07.11.2024
+1. Counsel for the defendant submits that the defendant has never
+misused the trademark and copyright of the plaintiff.
+2. Both the counsel for the plaintiff and the defendant submit that the
+present suit proceedings may be closed.
+3. Counsel appearing for the defendant makes a statement that the
+defendant shall not use the trademark and copyright of the plaintiff in any
+manner.
+4. The aforesaid statement is taken on record. The defendant shall
+CS(COMM)951/2023 Page1of3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:08
+remain bound by the same.
+5. The consequences of non-compliance of the aforesaid statement have
+been communicated to the defendant through counsel.
+6. In view of the aforesaid statement of the defendant, the counsel for
+the plaintiff does not wish to pursue the suit any further.
+7. Taking the aforesaid statement on record and binding the defendant to
+the same, the suit stands disposed of.
+8. In view of the aforesaid, the following bank accounts, which were
+frozen in terms of an earlier order dated 22nd December, 2023 passed in the
+suit, shall be defreezed by the respective banks. The details of the account
+numbers as well as the particulars of the banks are given in the table below:
+Sr. Account Bank AccountNumber IFSCode Address
+No. Holder Name
+1 Human IDBI 1184102000005190 IBKL0001184 IDBIBank,Basu
+Technology BankLtd. Villa,371/2,
+Service Diamond
+HarbourRoad,1st
+Floor,Bebala.
+Kolkata-700034
+2 Human Cab IndusInd 259334455694 INDB0001071 76 Diamond Harbour
+Service BankLtd. Road Behala State:
+WestBengal
+3 Sachin IDBI 1184104000101120 IBKL0001184 IDBI Bank, Basu
+Kumar BankLtd. Villa, 371/2, Diamond
+Harbour Road, 1st
+Floor, Behala. Kolkata
+-700034
+4 Sachin State 31188565557 SBIN0012347 166/179,SarsunaMain
+Kumar Bank of Road, Kolkata -
+India 700061
+5 ICICI 197301503083 ICICI0001973 ICICIBankLtd.,130c,
+BankLtd Diamond Harbour
+Road, Joka, PS:
+Thakurpukur, Kolkata
+–700104
+6 Sachin Fincare 20100003018338 FSFB0000001 5th Floor Bren
+Kumar Small Mercury, Sarjapur
+Finance Road, Kaikondrahalli,
+BankLtd Bengaluru
+CS(COMM)951/2023 Page2of3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:08
+9. Liberty is given to the counsel for the defendant to serve the copy of
+this order to the respective banks/ branches.
+10. Counsel for the defendant submits that during the pendency of the
+present suit, a pen drive was filed on behalf of the defendant in a sealed
+cover.
+11. The Registry shall release the said pen drive to the defendant.
+AMIT BANSAL, J
+NOVEMBER 7, 2024
+PB
+CS(COMM)951/2023 Page3of3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:08

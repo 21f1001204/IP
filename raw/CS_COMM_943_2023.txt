@@ -1,0 +1,446 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_943_2023
+case_status: DISPOSED
+n_orders: 5
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 943/2023 & I.A. 26138-143/2023
+JRPL RICELAND LLP ..... Plaintiff
+Through: Mr. Anil Kumar Sahu and Mr.
+Satish Kumar, Advs.
+versus
+NEERAJ MITTAL & ANR. ..... Defendants
+Through: None
+CORAM:
+HON’BLE MR. JUSTICE C. HARI SHANKAR
+O R D E R
+% 22.12.2023
+1. No advance service of this suit has been effected on the
+defendants.
+2. The plea of the plaintiff is only of passing off, of the name
+BIRYANI KING in respect of rice.
+3. I see no reason why this suit should have been instituted
+without compliance with Rule 22 of the IPD Rules.
+4. As such, in order to enable the plaintiff to effect advance
+service on the defendants in accordance with Rule 22 of the IPD
+Rules, re-notify on 4 January 2024.
+C. HARI SHANKAR, J.
+DECEMBER 22, 2023
+dsn
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:07
+
+===== ORDER =====
+
+$~10
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 943/2023, I.A. 26138/2023, I.A. 26139/2023, I.A.
+26140/2023, I.A. 26141/2023, I.A. 26142/2023 & I.A. 26143/2023
+JRPL RICELAND LLP ..... Plaintiff
+Through: Mr. Sandeep Sethi, Sr. Adv. with Mr.
+Anil Kumar, Mr. Satish Kumar, Mr.
+Roshan Kumar, Mr. Vishal Patel, Mr.
+Sumer Dev Seth, Ms. Shreya Sethi,
+Ms. Riya Kumar and Mr. Syed Naqui
+Abbas Jafar, Advs.
+versus
+NEERAJ MITTAL & ANR. ..... Defendants
+Through:
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 04.01.2024
+I.A. 26140/2023 (Exemption from filing certified copies)
+1. Exemption is granted, subject to all just exceptions.
+2. Applicant shall file legible, clear, and original copies of the
+documents on which the applicant may seek to place reliance within four
+weeks from today/before the next date of hearing.
+3. Accordingly, the present application is disposed of.
+I.A. 26141/2023 (Exemption from filing additional documents)
+1. The present application has been filed on behalf of the Plaintiff under
+Order 11 Rule 1(4) of the Code of Civil Procedure, 1908 as applicable to
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:06
+commercial suits under the Commercial Courts Act, 2015 seeking to place
+on record additional documents.
+2. The Plaintiff, if it wishes to file additional documents at a later stage,
+shall do so strictly as per the provisions of the Commercial Courts Act, 2015
+and the DHC (Original Side) Rules, 2018.
+I.A. 26142/2023 (Exemption from instituting pre-litigation mediation)
+1. Having regard to the facts of the present case and in light of the
+judgement of Division Bench of this Court in Chandra Kishore Chaurasia
+v. R.A. Perfumery Works Private Ltd. FAO (COMM) 128/2021, exemption
+from attempting pre institution mediation is allowed.
+2. Accordingly, the application stands disposed of.
+I.A. 26138/2023 (Application under Order XXXIX Rule 1&2 read with
+Section 151 of the CPC, 1908)
+1. Pursuant to the order dated 22nd December, 2023, the plaintiff was
+directed to effect advance service on the defendants, it is stated by the
+Senior Counsel for the plaintiff that service was indeed effected through
+speed-post on both defendant No.1 (the person who had applied for their
+infringing trademark) and defendant No.2 (the manufacturer of the said
+product). The affidavit of service would bear out that the service was
+effected through courier on 26th December, 2023. While defendant No.1
+could not receive the said communication and it was returned as “no such
+person in the address”, Defendant No.2 has duly received the same on 27th
+December, 2023 on the first address. He refused to received the same at the
+second address.
+2. The Senior Counsel for the plaintiff, therefore, presses the application
+under Order XXXIX Rules 1 and 2 of the CPC seeking ex parte injunction.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:06
+3. By this application, the ex parte ad-interim injunction is sought by the
+plaintiff for restraining the defendants from dealing with their impugned
+trademark “Biryani King” or any other trademark deceptively similar to the
+plaintiff’s trademark “Biryani King” in respect of rice or any other edible
+goods. The comparative representation of plaintiff’s product which shows
+the mark “Biryani King” selling classic basmati rice is represented below
+along with the defendants’ impugned trademark which also shows as
+“Biryani King XXXL” selling premium rice:
+4. While prima facie, it is clear from a perusal of the packaging of the
+plaintiff’s product and the defendants’ product that the name used on both
+products are identical, t is also submitted that the colour scheme of both of
+products is the same i.e. green and gold.
+5. The Senior Counsel has pointed out to the fact that the original owner
+of the trademark was Shree Chamunda Trading Company who had applied
+for registration of the trademark “Biryani King” in class 30 on 03rd January,
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:06
+2005. Thereafter while the application was pending, the said trademark
+was assigned by Shree Chamunda Trading Company in favour of Jain Rice
+Land Private Limited by assignment deed dated 02nd April, 2012.
+Subsequently, by another deed of assignment dated 12th May, 2021, the said
+trademark was assigned by Jain Rice Land Pvt. Ltd. to JRPL Rice Land
+LLP, the plaintiff herein. These assignment deeds reflect the trademarks
+which have been assigned from Shree Chamunda Trading Company to Jain
+Rice Land Pvt. Ltd. and then to the plaintiff, and include the trademark
+“Biryani King”.
+6. The plaintiff preferred another application for registration of the
+trademark “Biryani King” on 20th February, 2022 indicating that their use
+was since 03rd January, 2005 in class 30. Since there was an opposition to
+the said trademark, the application is still in process. It has been further
+pointed out that the said trademark was opposed by the defendants on the
+ground that the mark was deceptively similar to a well-known prior mark
+used by the defendants. The Senior Counsel, however, contends that the
+claim of prior user by the defendants is clearly defeated by their own
+application for registration of trademark which was filed for trademark
+“Biryani King with label” on 06th January, 2023 in class 30 and was duly
+opposed by the plaintiff herein. It is noted that the said trademark
+application of the defendants notes in the section for user detail that the
+mark is “proposed to be used”.
+7. Accordingly, it is contended that the question of being a prior user
+does not arise considering that there is enough proof that the plaintiff has
+been selling the rice product since 2005 under the trademark “Biryani King”.
+For this purpose, sales invoice of 30th May, 2005 has been appended along
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:06
+with the plaint as well as subsequent invoices through various years
+including 2013 onwards. The copy right registration certificate in the
+artistic work is also appended dated 17th April, 2023 which was duly
+registered. The listing of the plaintiff product on the website
+www.indiamart.com has also been appended.
+8. In these facts and circumstances, this Court is of the view that the
+plaintiff has made out a prima facie case for grant of ex parte ad-interim
+injunction in respect of the trademark “Biryani King”. Balance of
+convenience lies in favour of the plaintiff who is likely to suffer irreparable
+harm in case the injunction as prayed for is not granted. Accordingly, the
+defendants and its principal officers, employees, agents et al. are restrained
+from using Plaintiff's trademark “Biryani King” and/or any other mark
+deceptively similar to plaintiff’s aforesaid trademark and
+permutations/combinations thereof in any form or manner amounting to
+passing off, till the next date of hearing.
+9. Plaintiff shall comply with the provisions of Order XXXIX Rule 3 of
+the CPC within a period of one week, returnable on 26th February, 2024.
+CS(COMM) 943/2023
+1. Let the plaint be registered as a suit.
+2. Upon filing of process fee, issue summons to the Defendants by all
+permissible modes. Summons shall state that the written statement(s) be
+filed by the Defendants within 30 days from the date of receipt of summons.
+Along with the written statement(s), the Defendants shall also file
+affidavit(s) of admission/denial of the documents of the Plaintiff, without
+which the written statement shall not be taken on record.
+3. Liberty is given to the Plaintiff to file replication(s) within 15 days of
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:06
+the receipt of the written statement(s). Along with the replication(s), if any,
+filed by the Plaintiff, affidavit(s) of admission/denial of documents of the
+Defendants, be filed by the Plaintiff, without which the replication(s) shall
+not be taken on record. If any of the parties wish to seek inspection of any
+documents, the same shall be sought and given within the timelines.
+4. List before the Joint Registrar for marking of exhibits on 03rd April,
+2024. It is made clear that any party unjustifiably denying documents
+would be liable to be burdened with costs.
+5. List before Court for framing of issues thereafter on 26th February,
+2024.
+I.A. 26139/2023 (For Appointment of Local Commissioner)
+1. This application has been moved for appointment of the Local
+Commissioner.
+2. In view of the injunction granted, this application is not pressed at this
+stage by the Senior Counsel for the plaintiff.
+3. Issue notice in the said application, returnable on 26th February, 2024.
+I.A. 26143/2023 (Exemption from serving Advance Service)
+1. In view of the above facts and circumstances, the said application is
+infructuous and is accordingly disposed of.
+2. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+JANUARY 4, 2024/MK
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:06
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 943/2023, I.A. 26138/2023, I.A. 26139/2023 & I.A.
+26141/2023
+JRPL RICELAND LLP ..... Plaintiff
+Through: Mr. Satish Kumar, Mr. Sreejan
+Pankaj and Mr. Roshan Kumar, Advs.
+versus
+NEERAJ MITTAL & ANR. ..... Defendants
+Through: Mr. P.L. Prajapati, Adv. for D-1 & 2.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 26.02.2024
+1. Counsel for the parties state that the matter has been settled between
+the parties and an application under Order XXIII Rule 3 of the Code of Civil
+Procedure, 1908 has been filed which is not listed before this Court.
+2. The application shall be taken up as and when listed.
+3. List on 15th March, 2024.
+4. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+FEBRUARY 26, 2024/MK/ig
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:06
+
+===== ORDER =====
+
+$~35
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 943/2023 & I.A. 5528/2024
+JRPL RICELAND LLP ..... Plaintiff
+Through: Mr. Anil Kumar Sahu and Mr. Syed
+N. Abbas, Advs.
+versus
+NEERAJ MITTAL & ANR. ..... Defendants
+Through: Mr. P.L. Prajapati, Adv. for D-1 & 2.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 11.03.2024
+Hon’ble Judge is on leave today.
+Renotify on 15th March, 2024.
+By Order
+Court Master
+MARCH 11, 2024/sm
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:05
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 943/2023, I.A. 26138/2023, I.A. 26139/2023, I.A.
+26141/2023
+JRPL RICELAND LLP ..... Plaintiff
+Through: Mr. Sreejan Pankaj, Mr. Anil Kumar
+Sahu and Mr. Roshan Kumar, Advs
+versus
+NEERAJ MITTAL & ANR. ..... Defendants
+Through: Mr. P.L. Prajapati, Adv. for D-1 & 2.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 15.03.2024
+I.A. 5528/2024 (under Order XXIII Rule 3 CPC)
+1. This application has been filed jointly by plaintiff and defendants
+placing on record the terms of settlement arrived at between them.
+2. The parties have amicably settled all their disputes which form the
+subject matter of this suit. The terms of settlement have been incorporated in
+paragraphs 2(a) to (f) of the present application, which are extracted as under:
+“a. the Defendants admits that the plaintiff is the prior and exclusive
+user, owner and Registered proprietor of trade mark BIRYANI KING.
+b. the defendants agreed not to use the trade mark BIRY ANI KING
+and/or and/or any other similar trade mark and packaging material
+which may be deceptively and closely similar to the trade mark and
+copyright of the plaintiff in respect of goods and business activities
+relating to Rice and other Edible products for Human Consumption.
+c. the defendant no. 1 has already withdrawn his application no.
+5753695 in class 30 for registration of trade mark BIRYANI KING and
+also withdrawn notice of opposition no.1240823 to application no.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:04
+5345082 in class 30 in respect of trade mark BIR Y ANI KING in the
+name of Plaintiff and the Plaintiff has become the Registered proprietor
+of trade mark BIRYANIKING.
+d. the Defendants agree and undertake not to apply for registration
+of any trade mark including the word/device/label BIRYANI KING in
+respect of goods and business activities relating to Rice and other
+Edible products for Human Consumption and/or Copyright including
+the Artistic work similar to the Copyright in the Artistic work Registered
+under no. A-144474/2023 in the name of Plaintiff
+e. the Defendants agree that not to oppose or challenge any
+application for registration of trade mark I copyright in the name the
+Plaintiff including the word/device/label BIRYANI under any
+circumstances.
+f. the Defendants have already discontinued the use of trade mark
+BIRYANI KING and not having any stock of finished goods and
+packaging material in respect of said trade mark and agreed to recall
+the finished goods having the trade mark BIRYANI KING from the
+markets and shall destroy the packaging material I wrapper I cartons I
+mould/ dies/ films in the presence of Plaintiffs representative on or
+before 29th February 2024.”
+3. The said application is signed by authorised representatives of
+both parties and counter singed by their respective counsels as well as
+duly supported by affidavits.
+4. Court has perused the terms of agreement and finds the same to
+be acceptable and lawful. In view of the same, nothing further survives
+for adjudication.
+5. Accordingly, decree sheet be drawn up by the Registry in terms
+of the settlement, as extracted above.
+6. Parties are bound by terms of settlement.
+7. In view of the settlement between the parties, plaintiffs are
+entitled to refund of 50% of court fee under section 16A of the Court
+Fees Act, 1870.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:04
+8. Since nothing survives for adjudication, the suit stands disposed
+of.
+9. Pending applications, if any, are disposed of as infructuous.
+10. Date of 3rd April, 2024, already fixed before the Joint Registrar,
+stands cancelled.
+11. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+MARCH 15, 2024/sm/na
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:04

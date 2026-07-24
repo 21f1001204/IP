@@ -1,0 +1,997 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_948_2023
+case_status: PENDING
+n_orders: 14
+
+$~32
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 948/2023
+GLAXOSMITHKLINE BIOLOGICALS SA ..... Plaintiff
+Through: Ms. Tanya Varma, Mr.
+Vardaan Anand and Mr. V. Srinivas,
+Advs.
+versus
+HUMAN BIOLIFE INDIA PRIVATE LIMITED AND
+ORS .... Defendants
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE C. HARI SHANKAR
+O R D E R
+% 22.12.2023
+CS(COMM) 948/2023
+1. The plaintiff is a leading manufacturer of pharmaceutical
+preparations. Several marks of the plaintiff being registered
+under the Trade Marks Act for pharmaceutical preparations.
+2. The plaintiff possesses a list of such trade marks as thus
+been provided in para 19 of the plaint:
+S. Trademark Registration Registration Class
+No. no. Date
+1 ENGERIX 421433 4 May 1984 05
+2 HAVRIX 638704 1 September 05
+1994
+3 ENGERIX-B 648329 9 December 05
+1994
+4 TRITANRIX 656030 17 February 05
+1995
+5 HIBERIX 656493 22 February 05
+1995
+CS(COMM) 948/2023 Page 1 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:52
+6 TWINRIX 680441 18 September 05
+1995
+7 INFANRIX 680452 18 September 05
+1995
+8 PRIORIX 762435 21 July 1997 05
+9 TYPHERIX 798731 16 April 1998 05
+10 BOOSTRIX 823941 21 October 05
+1998
+11 VARILRIX 830146 01 December 05
+1998
+12 FLUARIX 832562 16 December 05
+1998
+13 ROTARIX 870321 9 August 1999 05
+14 AMBIRIX 876478 15 September 05
+1999
+15 CERVARIX 1066178 11 December 05
+2001
+16 SYNFLORIX 1270517 3 March 2004 05
+17 RIX 1354194 28 April 2005 05
+3. As would be apparent, in each of the aforesaid marks,
+RIX is a suffix. The plaintiff, therefore, claims that it has a
+proprietary right over the “RIX” family of marks; in other
+words, marks which end with the suffix “RIX”. It is submitted
+that, when a consumer comes across a pharmaceutical product
+with a name ending with “RIX”, it invariably associates the
+product with the plaintiff.
+4. The plaintiff is aggrieved by the use, by the defendants, of
+brand names for similar pharmaceutical products which end with
+“RIX”, including RUTORIX, DROTARIX, AMIRIX,
+CEFTARIX, MERORIXX, ESOMRIX, PIPTARIX,
+CALCIRIX, FLUCORIX and OFZORIX. Of these, the
+defendants possess registrations, under the Trade Marks Act, of
+the marks PIPTARIX and OFZORIX.
+CS(COMM) 948/2023 Page 2 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:52
+5. Ms. Tanya Varma, learned Counsel for the plaintiff, very
+fairly submits that, as the defendants are claiming user since
+2017 and has a registration for two “RIX” marks, the application
+for interim relief may be taken for hearing after a short
+opportunity to file a response is granted to the defendants.
+6. As the plaint makes out a case worthy of consideration, let
+the plaint be registered as a suit.
+7. Issue summons in the suit. Summons be served on the
+defendants by all modes.
+8. In the case of the defendants located in Delhi, let the
+summons be served additionally dasti. Affidavit of service along
+with proof thereof be placed on record before the next date of
+hearing.
+9. Written statement, accompanied by affidavit of admission
+and denial of the documents filed by the plaintiff may be filed
+within 30 days with advance copy to learned Counsel for the
+plaintiff who may file replication thereto, accompanied by
+affidavit of admission and denial of the documents filed by the
+defendants within 30 days thereof.
+10. List before the learned Joint Registrar (Judicial) for
+completion of the pleadings, admission and denial of documents
+and marking of exhibits on 23 February 2024, whereafter the
+matter would be placed before the Court for case management
+hearing and further proceedings.
+CS(COMM) 948/2023 Page 3 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:52
+I.A. 26277/2023 (Order XXXIX Rules 1 and 2 of the CPC)
+11. This is an application under Order XXXIX Rules 1 and 2
+of the Code of Civil Procedure, 1908 (CPC), seeking
+interlocutory injunctive relief.
+12. In view of the submissions made by Ms. Varma, let notice
+of this application be issued to the defendants.
+13. In the case of the defendants located in Delhi, notice be
+served additionally dasti.
+14. Reply, if any, be filed within three weeks with advance
+copy to learned Counsel for the plaintiff who may file rejoinder
+thereto within one week thereof.
+15. List this application before the Court on 31 January 2024.
+16. No extension of time for filing of reply/rejoinder shall be
+granted.
+I.A. 26278/2023 (under Order XI Rule 5(1) of CPC)
+17. By this application, the plaintiff seeks permission to
+disclose the names, addresses and manufacturers of the
+impugned products. Details in that regard are available with
+Defendant 1. Defendant 1 would be required to produce the
+same in the response to be filed in this matter.
+CS(COMM) 948/2023 Page 4 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:52
+18. The application stands disposed of.
+I.A. 26279/2023 (under Section 12A of the Commercial Courts
+Act)
+19. As this is a case of use of allegedly infringing marks for
+pharmaceutical products and the plaintiff has preceded the filing
+of this suit by cease and desist notice addressed to the
+defendants, there is no purpose in relegating the plaintiff to pre-
+institution mediation.
+20. Exemption from the requirement of pre-institution
+mediation is granted.
+21. The application stands allowed.
+I.A. 26280/2023 (under Order XI Rule 1(4) of CPC)
+22. This application seeks permission to file additional
+documents. The plaintiff is permitted to place additional
+documents on record in accordance with Order XI Rule 1(4) of
+the Code of Civil Procedure, 1908 (CPC) as amended by the
+Commercial Courts Act within four weeks from today.
+23. The application stands disposed of accordingly.
+I.A. 26281/2023 (exemption)
+24. Subject to the plaintiff filing legible copies of any dim or
+CS(COMM) 948/2023 Page 5 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:52
+illegible documents on which it may seek to place reliance
+within 30 days from today, exemption is granted for the present.
+25. The application is disposed of.
+I.A. 26282/2023(under Section 151 of CPC)
+26. This application seeks permission to place certain
+documents in a sealed cover. Permission as sought is granted.
+27. The issue of whether the documents are required to be
+disclosed to the defendants shall be considered later at the
+appropriate stage.
+28. The application stands disposed of.
+I.A. 26283/2023 (under Section 149 of CPC)
+29. Ms. Varma submits that court fee already stands
+deposited.
+30. Accordingly, this application has been rendered
+infructuous and is disposed of.
+C.HARI SHANKAR, J
+DECEMBER 22, 2023
+dsn
+Click here to check corrigendum, if any
+CS(COMM) 948/2023 Page 6 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:52
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 948/2023 & I.A. 26277/2023.
+GLAXOSMITHKLINE BIOLOGICALS SA ..... Plaintiff
+Through: Ms. Urvi Tripathi & Mr. Vardaan
+Anand, Advs.
+versus
+HUMAN BIOLIFE INDIA PRIVATE LIMITED AND ORS
+..... Defendants
+Through: Mr. Pranav Sapra, Adv. for D-2 & 3
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 31.01.2024
+1. Subject to orders of Judge In-Charge (Original Side), Registry shall list
+this matter before another Bench of which Anish Dayal, J. is not a member,
+on 12th February, 2024.
+2. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+JANUARY 31, 2024/sm/rj
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:50
+
+===== ORDER =====
+
+$~42
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 948/2023 & IA 26277/2023
+GLAXOSMITHKLINE BIOLOGICALS SA ..... Plaintiff
+Through: Ms. Shwetasree Majumder, Advocate
+with Ms. Tanya Varma, Mr. Vardaan
+Anand, Mr. Srinivas Venkat and Ms.
+Urvi Tripathi, Advocates.
+versus
+HUMAN BIOLIFE INDIA PRIVATE LIMITED AND ORS
+..... Defendants
+Through: Mr. Pranav Sapra, Advocate for
+Defendant Nos. 2 & 3.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 12.02.2024
+I.A. 26277/2023 (under Order XXXIX Rules 1 and 2 for interim injunction)
+1. As per affidavit of service dated 25th January, 2024 filed on behalf of
+Plaintiff, Defendants have been served. Mr. Pranav Sapra, Advocate,
+appears on behalf of Defendants No. 2 and 3. However, there is no
+representation on behalf of Defendant No. 1.
+2. Mr. Sapra states that written statement on behalf Defendants No. 2
+and 3 is on record, wherein they have pleaded as follows:
+2.1. The said Defendants are engaged in the business of manufacturing
+pharmaceutical formulations/ products in India for third parties on a
+CS(COMM)948/2023 Page1of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:49
+contractual basis. Defendants No. 2 and 3 entered into separate agreements
+with Defendant No. 1, both dated 20th March, 2021, for the manufacture of
+certain pharmaceutical formulations, which included the drugs impugned in
+the instant suit.
+2.2. In terms of Clause No. 10(c) of the said agreements, the name to be
+printed on the labels, cartons and packaging of the pharmaceutical
+formulations/products was expressly on the instructions of Defendant No. 1.
+2.3. Further, in terms of Clauses No. 14 and 16 of such agreements, it had
+been assured by Defendant No. 1 that the trademark/trade names adopted for
+the products are owned by the Defendant No. 1, and Defendants No. 2 and 3
+entered into the agreements based on this representation. Thus, in case of
+any infringement of the Plaintiff’s trade mark, Defendant No. 1 would be
+solely responsible and liable. Moreover, in this regard, the responsibility
+also lies on Defendant No. 1 to indemnify Defendants No. 2 and 3 for any
+liability arising out of the infringement of any third party’s trademark.
+3. In light of the aforenoted stand taken by Defendants No. 2 and 3, Mr.
+Sapra does not oppose the prayers made in the instant application.
+4. As noted above, there is no appearance on behalf of Defendant No. 1.
+Upon specific query of the Court, both, Ms. Shwetasree Majumder, counsel
+for Plaintiff, and Mr. Pranav Sapra, counsel for Defendants No. 2 and 3,
+state that Defendant No. 1 Company is operational and is also participating
+in the opposition proceedings ongoing before the Trademark Registry,
+however, they have neither responded to the Plaintiff’s legal notice nor
+appeared before this Court.
+5. In light of the above, and especially considering that two of the
+contested marks are in fact registered in favour of Defendant No. 1, the
+CS(COMM)948/2023 Page2of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:49
+Court finds it odd that they have chosen not to join the present proceedings
+despite service of summons. Be that as it may, in absence of Defendant No.
+1, the Court has heard the present application ex-parte.
+6. Ms. Shwetasree Majumder has presented the following facts and
+contentions on behalf of the Plaintiff:
+6.1. The present suit pertains to Plaintiff’s registered trademarks
+‘ROTARIX’, ‘AMBIRIX’, ‘CERVARIX’ and ‘RIX’, as well as their other
+trademarks using RIX as a suffix in respect of vaccines.
+6.2. The Plaintiff Company is well known in the field of vaccine research,
+development and production. Plaintiff started as a pioneer in production of
+antibiotics before transitioning to vaccine research and production in the
+1950s. Since then, they have continued to be involved in the same
+throughout its different acquisitions and mergers. From its very inception,
+the vaccines manufactured by the Plaintiff have contributed to many major
+successes which includes several worldwide ‘firsts’.
+6.3. Plaintiff’s trademark RIX has been derived from the name of a village
+in Belgium called ‘RIXENSART’, which is the site for the Plaintiff’s
+registered office and headquarters. Consequently, Plaintiff has registered a
+large number of trademarks containing the suffix ‘RIX’, which is primarily
+used in respect of vaccines.
+6.4. In line with the general custom in the vaccine industry, several of the
+Plaintiff’s trademarks are derived from the disease which the vaccine
+intends to immunize against, with the proprietary suffix RIX playing a
+critical part in the arbitrariness of the trademarks. This illustrated at
+Paragraph No. 18 of the plaint, relevant portion whereof is extracted below:
+CS(COMM)948/2023 Page3of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:49
+S.No. Trademark Disease
+1. VARILRIX Varicella
+2. ROTARIX Rotavirus
+3. CERVARIX Cervical Cancer
+4. HAVRIX Hepatitis A Virus -
+(HAY)
+5. TYPHERIX Typhoid Fever
+6. HIBERIX Haemophilus
+Influenzae type B (HIB)
+7. FLUARIX Flu
+6.5. The Plaintiff’s ‘RIX’ suffix trademarks registered in India are
+delineated at Paragraph No. 19 of the plaint, which are as follows:
+S. Trademark Registration Registration Class
+No. No. date
+1. ENGERIX 421433 04/05/1984 05
+2. HAVRIX 638704 01/09/1994 05
+3. ENGERIX-B 648329 09/12/1994 05
+4. TRITANRIX 656030 17/02/1995 05
+5. HIBERIX 656493 22/02/1995 05
+6. TWINRIX 680441 18/09/1995 05
+7. INFANRIX 680452 18/09/1995 05
+8. PRIORIX 762435 21/07/1997 05
+9. TYPHERIX 798731 16/04/1998 05
+10. BOOSTRIX 823941 21/10/1998 05
+11. VARILRIX 830146 01/12/1998 05
+12. FLUARIX 832562 16/12/1998 05
+13. ROTARIX 870321 09/08/1999 05
+14. AMBIRIX 876478 15/09/1999 05
+15. CERVARIX 1066178 11/12/2001 05
+CS(COMM)948/2023 Page4of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:49
+16. SYNFLORIX 1270517 03/03/2004 05
+17. RIX 1354194 28/04/2005 05
+6.6. Further, the launch dates for the vaccines sold by the Plaintiff in India
+under the trademark ‘RIX’ are set out at Paragraph No 20 of the plaint as
+under:
+PRODUCT LAUNCH
+DATES
+ENGERIX-B (Hepatitis B) 1986
+HAVRIX (Hepatitis A) 1998
+VARILRIX (Chicken Pox) 1998
+HIBERIX (Haemophilus influenza 1999
+type B)
+TRITANRIX-HR (diphtheria, tetanus, 2000
+whooping cough,
+hepatitis R)
+TYPHERIX (Typhoid fever) 2000
+TWINRIX (Hepatitis A & B) 2002
+FLUARIX (Influenza) 2004
+PRIORIX (Measles, mumps and 2004
+rubella)
+ROTARIX 2008
+CERVARIX 2009
+SHINGRIX (Shingles) 2023
+6.7. Plaintiff’s grievance arises from Defendant No. 1 adopting
+deceptively similar marks for their pharmaceutical preparations. Defendants
+No. 2 and 3 have been arrayed as companies which are engaged in
+manufacturing some of the impugned products. A comparative table
+between the Plaintiff’s marks and the Defendant’s impugned marks is as
+follows:
+CS(COMM)948/2023 Page5of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:49
+SR. PLAINTIFF’S DEFENDANT’S MARKS STATUS DATEOF USE
+NO. MARKS AND ANDUSEDFOR AS PER
+USEDFOR APPLICATION
+1. ROTARIX Opposedby 29.06.2017
+Plaintiff
+Applicationno.-
+870321 Rule47filed
+Registeredsince- /
+09/08/1999 RUTORIX
+(ROTAVIRUS) TMNo.-5526002
+(PAINRELIEF
+MEDICINE)
+2. ROTARIX DROTARIX Objected 28.06.2017
+Applicationno.- TMNo.-
+870321 5332906 Last hearing
+date: 15/02/24
+Registeredsince- (ANTISPASMODIC)
+09/08/1999
+(ROTAVIRUS)
+3. AMBIRIX AMIRIX Opposedby 19.08.2017
+Plaintiff
+ApplicationNo.- TMNo.-5393214
+876478 (ANTI-BIOTIC) Rule46filed
+Registeredsince-
+15/09/1999
+(HEPATITIS A&
+B)
+4. CERVARIX CEFTARIX Objected 28.06.2017
+ApplicationNo.- TMNo.-5393216
+1066178
+(ANTI-BIOTIC)
+Registeredsince-
+11/12/2001
+(CERVICAL
+CANCER)
+CS(COMM)948/2023 Page6of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:49
+5. RIX ESOMRIX Opposedby 28.06.2017
+Plaintiff
+ApplicationNo.- TMNo.- 5393219
+1354194 Rule46filed
+(ACIDTREATING
+Registeredsince- DISEASEAND
+28/04/2005 ULCERS)
+6. RIX CALCIRIX Objected 28.06.2017
+ApplicationNo.-
+1354194 TMNo.-5450854
+Registeredsince- (CALCIUM
+28/04/2005 ABSORBANT)
+7. RIX MERORIXX Acceptedon 28.06.2017
+ApplicationNo.- 7th February
+1354194 TMNo.- 5393218 2024
+Registeredsince- (BACTERIAL
+28/04/2005 INFECTIONS)
+8. RIX PIPTARIX Registered 28.06.2017
+ApplicationNo.-
+1354194 TMNo.- 5393215 Cancellation
+filed
+Registeredsince- (ANTIBIOTICS)
+28/04/2005
+9. RIX OFZORIX Registered 16.06.2017
+ApplicationNo.-
+1354194 TMNo.-4584969 Cancellation
+filed
+Registeredsince- (ANTIBIOTIC)
+28/04/2005
+10. RIX FLUCORIX Noapplication NA
+ApplicationNo.- filed
+1354194 (ANTIFUNGALS)
+Registeredsince-
+28/04/2005
+CS(COMM)948/2023 Page7of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:49
+6.8. The impugned marks used by the Defendant No. 1 are nearly
+identical/ deceptively similar to the Plaintiff’s registered marks, and/or use a
+suffix ‘RIX’.
+6.9. The Plaintiff has, in similar circumstances, taken steps to protect their
+trademarks rights and has even been granted an ad-interim injunction in
+their favour by this Court vide order dated 20th February, 2007 in CS(OS)
+320//2007.
+7. The Court has noted the aforenoted contentions. Defendant No. 1 is
+not contesting the instant application whereas Defendants No. 2 and 3 have
+no serious objection to the prayers made in the same.
+8. At this juncture, the Court is limiting its scope of consideration to the
+Plaintiff’s registered trademarks delineated at Sr. Nos. 1, 2, 3 and 4 in the
+table produced above. A comparison of these registered trademarks against
+the corresponding impugned products of the Defendants reveals that they are
+prima facie nearly identical/ deceptively similar. The said marks are
+phonetically as well as structurally similar, which amplifies the likelihood of
+creating confusion for the general public. It is also pertinent to note that the
+present discussion is taking place within the context of pharmaceutical
+products, which demands that this Court use a stricter yardstick in assessing
+the similarity between the competing marks, as mandated by the Supreme
+Court in its landmark judgement in Cadila Health Case Ltd. v. Cadila
+Pharmaceuticals Ltd.1. Given the fact that the Plaintiff’s mark is used in
+respect of vaccines whereas the impugned products of the Defendants are in
+respect of injectables/infusions for treatment of various ailments, the
+possibility of harm arising out of any confusion by a consumer could result
+CS(COMM)948/2023 Page8of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:49
+in grave and potentially disastrous consequences.
+9. In view of the above, and noting the public interest involved in this
+matter, the Court finds that the Plaintiff has made out a strong prima facie
+case in their favour and in case injunction is not granted, Plaintiff will suffer
+irreparable harm; balance of convenience also lies in favour of the Plaintiff
+and against the Defendants.
+10. Accordingly, till the next date of hearing, the Defendants and/or
+anybody acting on their behalf, are restrained from manufacturing,
+marketing, selling, offering for sale, advertising, directly or indirectly with
+pharmaceutical products under the trademarks ‘RUTORIX’, ‘DROTARIX’,
+‘AMIRIX’ and/or ‘CEFTARIX’.
+11. Plaintiff’s prayer for injunction in respect of its other pharmaceutical
+products mentioned in the aforenoted comparative table, which is based on
+their assertion of rights in respect of the ‘RIX’ suffix, shall be considered on
+the next date of hearing.
+12. Plaintiff shall communicate this order to the Defendants within a
+period of one week from today.
+13. Re-notify on 4th July, 2024.
+SANJEEV NARULA, J
+FEBRUARY 12, 2024
+sapna
+1(2001)5SCC73.
+CS(COMM)948/2023 Page9of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:49
+
+===== ORDER =====
+
+$~10
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 948/2023
+GLAXOSMITHKLINE BIOLOGICALS SA
+..... Plaintiff
+Through: Mr. Srinivas Venkat, Adv.
+through VC.
+versus
+HUMAN BIOLIFE INDIA PRIVATE LIMITED AND ORS
+..... Defendant
+Through: Mr. Subhas Chandra Sagar,
+Adv. for D-1 & 4.
+Mr. Pranav Sapra, Adv. for
+D-2 & 3.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 23.02.2024
+The counsel for defendant nos. 1 & 4 states that he would
+file the written statement in due course as per law. Once they are
+filed, the replication be then filed as per law.
+The defendant nos. 2 & 3 have already filed their written
+statement. The replication be now filed as per law.
+The defendant no. 5 had been served, as is clear from the
+order dated 12.02.2024. It is yet to file the written statement. Once
+it is filed, the replication be then filed as per law.
+After the pleadings are completed, the parties shall then file
+the physical copies of their respective documents, if not already
+filed and the joint schedule of the documents.
+List the matter for admission-denial and marking of exhibits
+on 16.05.2024.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 23, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:48
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 948/2023
+GLAXOSMITHKLINE BIOLOGICALS SA ..... Plaintiff
+Through: Mr. Vardaan Anand,
+Mr. Srinivas Venkat, Advocates
+versus
+HUMAN BIOLIFE INDIA PRIVATE LIMITED AND
+ORS ..... Defendant
+Through: Mr. Subhash C.Sagar,
+Mr. Paritosh, Advocates for D-1.
+Mr. Pranav Sapra, Advocate for
+D-2 & 3.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 16.05.2024
+I.A. No. 11172/2024 filed by D-1 to condone the delay of 73
+days in filing the written statement.
+Issue notice.
+Notice accepted by ld. Counsel for the plaintiff.
+Ld. Counsel for the plaintiff submits that he has no
+objection if the application is allowed.
+For the reasons stated in the application and in view of the
+„no objection‟ of ld. Counsel for the plaintiff, application is
+allowed. Delay stands condoned. Written statement is taken on
+record. Replication be filed within the period permissible, as
+worked out from today.
+IA stands disposed off.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:48
+CS(COMM) 948/2023
+Defendant nos. 4 & 5 were served through email on
+16.01.2024. However, no written statement has been filed till
+today despite lapse of maximum permissible period to file the
+same. Consequently, right to file written statement on behalf of
+defendant nos. 4 & 5 stands closed.
+Matter is already listed before the Hon‟ble Court for
+04.07.2024.
+Put up before the Hon‟ble Court on the date already fixed
+i.e. 04.07.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 16, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:48
+
+===== ORDER =====
+
+$~31
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 948/2023 & I.A. 26277/2023-Stay
+GLAXOSMITHKLINE BIOLOGICALS SA .....Plaintiff
+Through: Ms. Shilpi Sinha, Advocate
+versus
+HUMAN BIOLIFE INDIA PRIVATE LIMITED AND ORS
+.....Defendants
+Through: Mr. Pranav Sapra, Advocate for D-
+2 & 3
+Mr. Hemant Kumar Sagar, proxy
+counsel for D-1 & 4
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 04.07.2024
+1. Learned counsel appearing for defendant no.1 seeks an adjournment
+as the arguing counsel for defendant no.1, Mr. Subhash Chandra Sagar,
+being under the weather, is indisposed. The same is not opposed by the
+learned counsel appearing for the plaintiff.
+2. Accordingly, renotify on 11.09.2024.
+SAURABH BANERJEE, J
+JULY 4, 2024/akr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:47
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 948/2023
+GLAXOSMITHKLINE BIOLOGICALS SA .....Plaintiff
+Through: Ms. Shilpi Sinha (VC), Advocate
+Versus
+HUMAN BIOLIFE INDIA PRIVATE LIMITED AND
+ORS .....Defendant
+Through: None for D-1.
+Mr. Pranav Sapra, Advocate for
+D-2 & 3.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 09.07.2024
+I.A. No. 32608/2024 filed by the plaintiff to condone the
+delay of 14 day(s) in filing the replication.
+1. There is no appearance on behalf of defendant no. 1 in
+respect of which the present IA has been filed. Ld. Counsel for
+the plaintiff has however informed the Court that ld. Counsel for
+defendant no. 1 has telephonically conveyed his no objection to
+the delay being condoned. Ld. Counsel for the plaintiff submits
+that she has been informed by ld. Counsel for defendant no. 1
+that he is not in a position to appear since he is suffering from
+dengue. On the submission of ld. Counsel for the plaintiff at Bar,
+the present application is allowed. Delay stands condoned.
+Replication is taken on record. Parties are directed to file their
+documents in physical form within six weeks alongwith the Joint
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:47
+document schedule, also in physical form.
+2. IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 9, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:47
+
+===== ORDER =====
+
+$~40
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 948/2023, I.A. 26277/2023 Stay
+GLAXOSMITHKLINE BIOLOGICALS SA .....Plaintiff
+Through: Ms. Tanya Varma, Advocate
+versus
+HUMAN BIOLIFE INDIA PRIVATE LIMITED AND ORS
+.....Defendants
+Through: Mr. Subhas Chandra Sagar,
+Advocate for D-1
+Mr. Pranav Sapra with Mr. Abhijeet
+Kumar, Advocates for D-2 and 3
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 11.09.2024
+1. Learned counsels for the plaintiff and defendant no.1 seek reference
+of the inter se disputes before the Delhi High Court Mediation and
+Conciliation Centre [DHCMC] for mediation proceedings. As such, list
+before the DHCMC on 25.09.2024 at 04:00 PM. The parties with their
+nominated/ authorized representatives are free to appear before the
+DHCMC either physically or through Video Conferencing.
+CS(COMM) 948/2023
+2. Since there was no appearance on behalf of the defendant nos. 4 and
+5 on 09.07.2024 and same is the position even today, the said defendant
+nos. 4 and 5 are proceeded ex parte.
+3. Accordingly, list before the learned Joint Registrar on 19.11.2024
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:46
+for admission/ denial of documents.
+4. Renotify before this Court on 16.01.2025.
+SAURABH BANERJEE, J
+SEPTEMBER 11, 2024/Ab
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:46
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 948/2023
+GLAXOSMITHKLINE BIOLOGICALS SA
+.....Plaintiff
+Through: Mr. Vardaan Anand, Advocate
+versus
+HUMAN BIOLIFE INDIA PRIVATE LIMITED AND
+ORS
+.....Defendant
+Through: Mr. Shailendra Singh, Advocate
+for D-1.
+Mr. Pranav Sapra, Advocate for
+D-2 & 3
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 19.11.2024
+1. The matter has been listed today for carrying out
+admission / denial of documents. However, plaintiff and
+defendants no. 1, 2 & 3 are before the Mediation Centre. The
+next date of mediation is scheduled for 28.11.2024. Defendant
+nos. 4 & 5 are ex-parte.
+2. Ld. Counsels submit that there is high possibility of a
+settlement. Consequently, matter is adjourned.
+3. In view of the mediation efforts and the high probability of
+settlement coming about, suit be placed before the Hon’ble Court
+on the date already fixed i.e. 16.01.2025, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 19, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:45
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 948/2023 with I.A. 26277/2023
+GLAXOSMITHKLINE BIOLOGICALS SA .....Plaintiff
+Through: Mr. Shiv Mehrotra, Advocate.
+versus
+HUMAN BIOLIFE INDIA PRIVATE LIMITED
+AND ORS .....Defendant
+Through: Mr. Shailendra Singh, Advocate for
+D-1.
+Mr. Pranav Sapra, Advocate for D-2
+and D-3.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 16.01.2025
+1. Mediation proceedings before the Delhi High Court Mediation and
+Conciliation Centre are still underway.
+2. Renotify on 7th April, 2025.
+AMIT BANSAL, J
+JANUARY 16, 2025
+Vivek/-
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:45
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 948/2023 & I.A. 26277/2023
+GLAXOSMITHKLINE BIOLOGICALS SA .....Plaintiff
+Through: Ms. Ruchika Yadav, Advocate
+versus
+HUMAN BIOLIFE INDIA
+PRIVATE LIMITED AND ORS .....Defendants
+Through: Mr. Subhash Sagar, Advocate for D-1
+Mr.PranavSapra,AdvocateforD-2&
+D-3
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 07.04.2025
+1. Mediation proceedings are still underway.
+2. Renotify on 1st August, 2025.
+AMIT BANSAL, J
+APRIL 7, 2025
+ds
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:45
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 948/2023 & I.A. 26277/2023
+GLAXOSMITHKLINE BIOLOGICALS SA .....Plaintiff
+Through: Mr. Vardaan Anand and Ms. Ruchika
+Yadav, Advocates
+versus
+HUMAN BIOLIFE INDIA PRIVATE LIMITED AND ORS
+.....Defendants
+Through: Mr. Subhash Sagar, Advocate for D-1
+Mr. Parnav Sapra, Advocate for D-2
+& D-3
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 01.08.2025
+Learned counsels for the parties state that the parties seek time to
+execute and place on record the duly executed settlement agreement.
+It is directed that after the settlement agreement is executed, parties
+are at liberty to move an appropriate application for early listing.
+List on 14.01.2026.
+MANMEET PRITAM SINGH ARORA, J
+AUGUST 1, 2025/rhc
+Page 1 of 1
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:44
+
+===== ORDER =====
+
+$~247
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 948/2023
+GLAXOSMITHKLINE BIOLOGICALS SA
+.....Plaintiff
+Through: Ld. Counsel for the plaintiff.
+versus
+HUMAN BIOLIFE INDIA PRIVATE LIMITED AND ORS
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the defendant when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:43
+
+===== ORDER =====
+
+$~30
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 948/2023 & I.A. 26277/2023
+GLAXOSMITHKLINE BIOLOGICALS SA .....Plaintiff
+Through: Ms. Hansika Bajaj, Advocate.
+versus
+HUMAN BIOLIFE INDIA PRIVATE LIMITED AND ORS
+.....Defendants
+Through: Mr. Pranav Sapra, Advocate for D-2
+and 3.
+Mr. Subhash Sagar and Ms. Divyanshi
+Bucha, Advocates for defendants.
+CORAM:
+HON'BLE MR. JUSTICE TUSHAR RAO GEDELA
+O R D E R
+% 14.01.2026
+1. The learned counsel for the defendant submits that mediation process is
+still going on before the Delhi High Court Mediation and Conciliation Centre.
+Learned counsel also submits that the settlement talks are in an advanced stage
+and in all likelihood will fructify in a Settlement Agreement within next two
+weeks.
+2. In view of the above, list on 22.04.2026.
+TUSHAR RAO GEDELA, J
+JANUARY 14, 2026
+Sumit
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:43

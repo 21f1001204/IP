@@ -1,0 +1,1189 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_841_2023
+case_status: PENDING
+n_orders: 27
+
+$~52
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 841/2023, CAV 600/2023, I.As. 23289/2023,
+23290/2023, 23291/2023, 23292/2023
+INDYA RECORDS AND FILMS PRIVATE LIMITED..... Plaintiff
+Through: Mr. Uttam Datt, Mr. Arjun Anand,
+Ms. Sonakshi Singh, Mr. Kumar
+Bhaskar & Mr. Aman Sanjeev
+Sharma Advs. (M. 9711834225)
+versus
+FRANKFINN ENTERTAINMENT COMPANY
+PRIVATE LIMITED & ORS. ..... Defendants
+Through: Mr. Sanjiv Sindhwani, Sr Advocate,
+Mr. Kapil Midha, Ms. Samiksha
+Gupta, Mr. Garv Singh, Advs. D-1
+(M. 9318887589)
+Mr. Arjun Natarajan, Ms. Kaustubh
+Shakkarwar, & Ms. Kamana
+Pradhan, Advs D-3 (M.
+6370646277).
+Mr. Aditya Gupta, Mr. Raunaq
+Kamath and Ms. Aishwarya Kane,
+Advocates D-4 (M: 9910083144).
+Ms. Tanya Chaudhry, Mr. Mrinal
+Ojha, Mr. Debarshi Datta, Advs. D5
+(9654436678)
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 23.11.2023
+1. This hearing has been done through hybrid mode.
+I.A.23291/2023 (for exemption)
+2. This is an application filed by the Plaintiff seeking exemption from
+filing originals/certified/cleared/typed or translated copies of documents, left
+side margins, electronic documents, etc. Original documents shall be
+CS(COMM)841/2023 Page1of5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:20
+produced/filed at the time of Admission/Denial, if sought, strictly as per the
+provisions of the Commercial Courts Act and the DHC (Original Side)
+Rules, 2018.
+3. Exemption is allowed, subject to all just exceptions.
+4. Accordingly, the application is disposed of.
+I.A.23290/2023 (for additional documents)
+5. This is an application filed by the Plaintiff seeking leave to file
+additional documents under the Commercial Courts, Commercial Division
+and Commercial Appellate Division of High Courts Act, 2015 (hereinafter,
+‘Commercial Courts Act’). The Plaintiff, if it wishes to file additional
+documents at a later stage, shall do so strictly as per the provisions of the
+Commercial Courts Act and the DHC (Original Side) Rules, 2018.
+6. The application is disposed of.
+I.A.23292/2023 (u/S 12A of the Commercial Courts Act)
+7. This is an application filed by the Plaintiff seeking exemption from
+instituting pre-litigation mediation under Section 12A of the Commercial
+Courts Act. Considering the facts and circumstances of the case, the Court is
+satisfied that in terms of the judgment of the Hon’ble Supreme Court in
+Yamini Manohar v. T.K.D Keerthi, SLP(C) 023488/2023, the suit
+contemplates urgent interim relief. In these facts, the exemption under
+Section 12A is granted to the Plaintiff. Accordingly, the application is
+disposed of.
+CAV 600/2023
+8. Since the Defendants are present. Caveat stands discharged.
+CS(COMM) 841/2023
+9. Let the plaint be registered as a suit.
+CS(COMM)841/2023 Page2of5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:20
+10. Issue summons to the Defendants through all modes upon filing of the
+Process Fee. Summons is accepted by Mr. Kapil Midha on behalf of the
+Defendant no.1.
+11. Ld. Counsel appearing for Defendant No. 5 - GoDaddy LLC submits
+that Defendant No. 6- Godaddy India Domains and Hosting Services
+Private Limited has no role to play in respect of the domain name
+indyarecords.com. Accordingly, Defendant No. 6 is deleted from the array
+of parties.
+12. Ms. Tanya Chaudhry accepts summons on behalf of Defendant No. 5.
+13. Ms. Kaustubh Shakkarwar accepts summons on behalf of Defendant
+No. 3- Kanwal Deep Kohli.
+14. Mr. Aditya Gupta accepts summons on behalf of Defendant No. 4-
+Google LLC.
+15. Thus, except Defendant No. 2, all the other Defendants stand served.
+In respect of Defendant No. 2 issue notice and summons.
+16. The written statement(s) to the plaint shall be positively filed within
+30 days. Along with the written statement(s), the Defendants shall also file
+an affidavit of admission/denial of the documents of the Plaintiff, without
+which the written statement(s) shall not be taken on record.
+17. Liberty is given to the Plaintiff to file the replication(s) within 15 days
+of the receipt of the written statement(s). Along with the replication(s), if
+any, filed by the Plaintiff, an affidavit of admission/denial of documents of
+the Defendants, be filed by the Plaintiff, without which the replication(s)
+shall not be taken on record. If any of the parties wish to seek inspection of
+any documents, the same shall be sought and given within the timelines.
+CS(COMM)841/2023 Page3of5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:20
+18. List before the Joint Registrar for marking of exhibits on 15th
+January, 2024. It is made clear that any party unjustifiably denying
+documents would be liable to be burdened with costs.
+19. List before Court on 4th April, 2024.
+I.A. 23289/2023 (u/O XXXIX Rules 1 & 2 CPC)
+20. This is a suit for declaration in respect of the YouTube channel which
+is known by the name “Shabad Kirtan Gurbani – Divine Amrit Bani”. The
+said YouTube channel has already been a subject matter of a separate suit –
+namely CS (Comm) 192/2021 titled Frankfinn Entertainment Company
+Pvt. Ltd. v. Unisys Infosolutions Pvt. Ltd. & Ors., which has been filed by
+the Defendant No. 1 against Defendant No. 2 and others. In the said suit, an
+order dated 2nd March 2022 was passed against Defendant no.2 from using
+the channel name. The said order was appealed in FAO(OS) (COMM)
+60/2022, which is pending. However, there is no stay of the order of the ld.
+Single judge.
+21. The Plaintiff in the present suit is also claiming rights in the said
+channel and according to the Plaintiff, it was given liberty to institute the
+present suit vide order dated 18th August, 2023 passed by the ld. Supreme
+Court in SLP 6284/2022 titled as M/S Indya Records and Films Pvt. Ltd v.
+Frankfinn Entertainment Company Pvt. Ltd.& Ors. The said order reads as
+under:-
+“This Court is of the opinion that suitable remedies
+can be agitated in separate proceedings. It is open to
+the petitioner to avail them. However, it is clarified
+that any observations in the impugned order which
+tend to be prejudicial to such a claim shall not be
+treated as conclusive and will not preclude the parties
+CS(COMM)841/2023 Page4of5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:20
+from asserting any rights or contentions, in
+accordance with law.
+The special leave petition is disposed of in the above
+terms.
+All pending applications are disposed of.”
+22. Mr. Sindhwani, ld. Sr. Counsel for Defendant No. 1, raises an
+objection as to maintainability and limitation. Let the said objection be
+raised in the written statement. The interim application for ad interim
+injunction is not pressed as on date.
+23. List before the Court on 4th April, 2024.
+PRATHIBA M. SINGH, J.
+NOVEMBER 23, 2023
+mr/bh
+CS(COMM)841/2023 Page5of5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:20
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 841/2023
+INDYA RECORDS AND FILMS PRIVATE LIMITED
+..... Plaintiff
+Through: Ms. Sonakshi Singh alongwith
+Mr. Kumar Bhaskar, Advs.
+versus
+FRANKFINN ENTERTAINMENT COMPANY PRIVATE
+LIMITED & ORS.
+..... Defendant
+Through: Mr. Kapil Midha, Adv. For D-1
+Ms. Kamana Pradhan, Adv. For
+Defendant No. 3(VC)
+Mr. Aditya Gupta, Adv. For D-4
+Ms. Tanya Chaudhary, Adv. For D-5
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. AJAY GULATI
+O R D E R
+% 15.01.2024
+Learned Presiding Officer is on leave today.
+Re-notify for purpose already fixed on 04.03.2024.
+Reader to
+SH. AJAY GULATI - I (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 15, 2024
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:18
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 841/2023
+INDYA RECORDS AND FILMS PRIVATE LIMITED
+..... Plaintiff
+Through: Ms. Sonakshi Singh, Advocate
+through VC.
+(sonakshisingh@antareslegal.in)
+versus
+FRANKFINN ENTERTAINMENT COMPANY PRIVATE
+LIMITED & ORS.
+..... Defendant
+Through: Mr. Kapil Midha and Mr. Garv Singh,
+Advocates for D-1.
+Mr. Arjun Natarajan, Ms. Kamana
+Pradhan and Mr. Kaustubh
+Shakkarwar, Advocates for D-3.
+Mr. Rahul Bajaj, Advocate for D-4
+through VC.
+Mr. Mrinal Ojha, Mr. Debarshi Dutta
+and Mr. Samyak B., Advocates for
+D-5.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI (DHJS)
+O R D E R
+% 04.03.2024
+IA no. 5042/2024 filed by D-3 for seeking condonation of delay of 20
+days in filing the written statement &
+IA no. 5043/2024 filed by D-3 for seeking condonation of delay of 9
+days in filing above I.A. 5042/2024
+Ld counsel for the plaintiff accepts Notices and submits that there is
+no objection to the respective delays being condoned, in view of the minor
+delay. The delays thus stand condoned. Written statement on behalf of def
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:18
+no. 3 is taken on record. Replication, if any, be filed within the period
+permissible as worked out from today.
+CS (COMM) 841/2023
+None of the other defs. have preferred any written statement yet. The
+same be filed if the statutory timelines still permit the filing of written
+statement/s.
+Put up before the Hon’ble Court on 4.4.2024 which is the date already
+scheduled, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 4, 2024/ss
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:18
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 841/2023
+INDYA RECORDS AND FILMS PRIVATE LIMITED
+..... Plaintiff
+Through: Ms. Sonakshi Singh, Mr. Kumar Bhaskar
+(VC), Advocates
+versus
+FRANKFINN ENTERTAINMENT COMPANY PRIVATE
+LIMITED & ORS.
+..... Defendant
+Through: Mr. Kapil Midha, Ms. Samiksha Gupta,
+Advocates for D-1.
+Mr. Kaustubh Shakkarwar (VC), Advocate
+for D-3.
+Mr. Mrinal Ojha, Mr. Debarshi Dutta,
+Mr. Shivam Tiwari, Mr. Samyak Bilala,
+Advocates for D-5.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr.AJAY GULATI
+O R D E R
+% 21.03.2024
+I.A. 6716/2024 seeking condonation of delay of 86 days in filing written
+statement on behalf of defendant no.1
+Issue notice.
+Notice accepted by ld. Counsel for the plaintiff.
+Ld. Counsel for the plaintiff submits that he has no objection if the
+application is allowed subject to imposition of a reasonable cost.
+For the reasons stated in the application, application is allowed
+subject to cost of Rs.1000/-, to be paid to the plaintiff. Delay stands
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:17
+condoned. Written statement is taken on record. Replication be filed within
+the period permissible, as worked out from today. Cost however, be paid
+within two weeks failing which written statement shall be deemed to have
+been taken off the record.
+IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 21, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:17
+
+===== ORDER =====
+
+$~31
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 841/2023, I.A. 23289/2023
+INDYA RECORDS AND FILMS PRIVATE LIMITED ..... Plaintiff
+Through:
+versus
+FRANKFINN ENTERTAINMENT COMPANY PRIVATE
+LIMITED & ORS. ..... Defendants
+Through: Mr. Kapil Midha, Advocate for D-1.
+Mr. Sauhald Alung, Advocate for D-
+4.
+Ms. Mrinal Ojha, Mr. Debarshi Datta,
+Mr. Anand Raja and Ms. Tanya
+Chaudhry, Advocates for D-5.
+Mr. Arjun Natarajan, Mr. Kaustubh
+Shakkarwar and Ms. Kamana
+Pradhan, Advocates for D-3.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 04.04.2024
+1. The Pleadings are yet to be completed.
+2. List before the Joint Registrar for admission/ denial of documents and for
+completion of pleadings on 17th May, 2024.
+SANJEEV NARULA, J
+APRIL 4, 2024
+nk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:17
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 841/2023
+INDYA RECORDS AND FILMS PRIVATE LIMITED
+..... Plaintiff
+Through: Ms. Sonakshi Singh, Mr. Kumar
+Bhaskar, Mr. Aman Sanjeev
+Sharma, Advocates
+versus
+FRANKFINN ENTERTAINMENT COMPANY
+PRIVATE LIMITED & ORS. ..... Defendant
+Through: Ms. Meenakshi Midha,
+Ms. Samiksha Gupta, Advocates
+for D-1.
+Ms. Neelakshi Bhadauria,
+Mr. Sarthak Karol, Advocates for
+D-2.
+Mr. Kaustubh Shakkarwar (VC),
+Advocate for D-3.
+Mr. Rahul Bajaj (VC), Advocate
+for D-4/ Google LLC.
+Mr. Mrinal Ojha, Mr. Debarshi
+Dutta, Mr. Anand Raja,
+Mr. Shivam Tiwari, Advocates
+for D-5.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 17.05.2024
+I.A. No. 29491/2024 filed by the plaintiff to condone the delay
+of 15 days in filing the replication to the written statement of
+defendant no. 3.
+Issue notice.
+Notice accepted by ld. Counsel for the defendant.
+Ld. Counsel for the defendant submits that he has no
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:16
+objection if the application is allowed.
+For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the defendant, application is
+allowed. Delay stands condoned. Replication is taken on record.
+IA stands disposed off.
+I.A. No. 11312/2024 filed by the plaintiff to condone the delay
+of 15 days in filing the replication to the written statement of
+defendant no. 1.
+Arguments have been addressed.
+Ld. Counsel for the plaintiff submits that in view of the
+order dated 21.03.2024 when the written statement was taken on
+record, period to file replication would have commenced from
+22.03.2024 since limitation has to commence from the day
+following the date on which written statement was taken on
+record which was 21.03.2024.
+Ld. Counsel for defendant no. 1, in addition to disputing
+this assertion and contending that limitation commenced from
+21.03.2024 itself, places reliance on the judgment passed by the
+Hon’ble Court titled as Ram Sarup Lugani & Anr. vs. Nirmal
+Lugani & Ors. FAO (OS) 47/2020 decided on 19.10.2020, to
+contend that an application seeking condonation of delay for
+fiing replication beyond the 30 day statutory period, has to be put
+up before the Hon’ble Court. Consequently, the present
+application be put up before the Hon’ble Court on the next date.
+CS(COMM)-841/2023:
+Written statement of defendant no. 2 and 4 is yet to come
+on record.
+Ld. Counsel for defendant no. 5 submits that no written
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:16
+statement is to be filed.
+Defendant no. 6 has already been deleted.
+In view of above IA No. 11312/2024, re-notify before the
+Hon’ble Court on 16.07.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 17, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:16
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 841/2023
+INDYA RECORDS AND FILMS PRIVATE LIMITED
+..... Plaintiff
+Through: Ms. Sonakshi Singh, Mr. Kumar
+Bhaskar, Mr. Aman Sanjeev
+Sharma, Advocates
+versus
+FRANKFINN ENTERTAINMENT COMPANY
+PRIVATE LIMITED & ORS. ..... Defendant
+Through: Ms. Meenakshi Midha,
+Ms. Samiksha Gupta, Advocates
+for D-1.
+Ms. Neelakshi Bhadauria,
+Mr. Sarthak Karol, Advocates for
+D-2.
+Mr. Kaustubh Shakkarwar (VC),
+Advocate for D-3.
+Mr. Mrinal Ojha, Mr. Debarshi
+Dutta, Mr. Samyak Bilala,
+Advocates for D-5.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 22.05.2024
+I.A. No. 30105/2024 filed by defendant no. 2 to condone the
+delay of 90 days in filing the written statement.
+Notice accepted by ld. Counsel for the plaintiff, who
+submits that there is no objection to the delay being condoned.
+However, the application has been strongly opposed on behalf of
+ld. Counsel for defendant no. 1 on the ground that filing of
+written statement is beyond the 120 day period which is the
+maximum permissible period in a commercial suit.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:15
+Ld. Counsel for defendant no. 1 submits that admittedly
+the summons were received by defendant no. 2 on 25.12.2023
+and the written statement subsequently has been filed on
+23.04.2023 making it the 121st day from the date of service of
+summons as worked out from 25.12.2023. It is the submission of
+ld. Counsel for defendant no. 1 that the limitation is to be worked
+out from the date of service of summons itself i.e. 25.12.2023. In
+this regard, reliance has been placed on judgment delivered by
+the Hon‟ble Supreme Court in SCG Contracts India Pvt. Ltd. Vs.
+K.S.Chamankar Infrastructure Pvt. Ltd. and Ors. Civil Appeal
+No. 1638/2019.
+In response, it has been submitted on behalf of defendant
+no. 2 that limitation has to commence from the day following the
+date of service of summons.
+I have carefully considered the rival submissions.
+In para 2 of the judgment on which ld. Counsel for
+defendant no. 1 has relied upon, a computation has been made by
+the Hon‟ble Court of the period of 120 days from the date of
+service of summons which clearly excludes the date on which the
+summons were served. Consequently, even in the present case
+the date of service of summons i.e. 25.12.2023 has to be
+excluded and accordingly if worked out from 26.12.2023, filing
+of written statement is on the 120th day from the date of service
+of summons.
+Having observed so, I have also gone through the contents
+of the application wherein the applicant / defendant submits that
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:15
+delay has occasioned on account of collecting documents from
+the year 2008 and also for the purpose of verifying the various
+pleadings of the plaintiff.
+In the understanding of the Court, the reason given is not
+cogent enough for the delay to be condoned without costs
+especially since the applicant admits that another suit and an
+appeal is pending Hon‟ble Court‟s consideration concerning the
+subject matter of the present suit which implies that applicant
+already had the necessary documentation required for filing the
+written statement. Consequently, the delay is condoned however
+subject to cost of Rs.10,000/-, to be deposited with Bharat ke
+veer, online portal within three weeks. Any delay in depositing
+cost will result in further imposition of double of the cost already
+imposed. Replication however be filed within the period
+permissible, as worked out from today.
+IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 22, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:15
+
+===== ORDER =====
+
+$~33
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 841/2023
+INDYA RECORDS AND FILMS PRIVATE LIMITED.....Plaintiff
+Through: Mr. Uttam Datt, Mr. Arjun Anand,
+Ms. Sonakshi Singh, Mr. Kumar
+Bhaskar and Mr. Aman Sanjeev
+Sharma, Advs.
+versus
+FRANKFINN ENTERTAINMENT COMPANY PRIVATE
+LIMITED & ORS. .....Defendants
+Through: Mr. Kapil Midha and Ms. Samiksha
+Gupta, Advs. For D-1
+Ms. Neelakshi Bhadauria, Adv. for
+D2
+Mr. Arjun Natarajan, Mr. Kaustubh
+Shakkarwar and Ms. Kamana
+Pradhan, Advs. For D-3
+Ms. Aishwarya Kane, Adv. For D-4
+Ms. Mrinal Ojha, Mr. Debarshi
+Dutta and Mr. Arjun Mookerjee,
+Advs. For D-5
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 16.07.2024
+I.A. 11312/2024 - Delay of 15 days in filing replication to written
+statement of D-1
+1. By virtue of the present application, plaintiff seeks condonation of
+delay of 15 days in filing replication to the written statement of defendant
+no.1.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:15
+2. As per record, the written statement filed by the defendant no.1 was
+taken on record by this Court on 21.03.2024 by an order dated 21.03.2024
+passed by the Joint Registrar wherein the application (I.A. No. 6716/2024)
+seeking condonation of delay of 86 days in filing the written statement on
+behalf of the defendant no.1 was allowed, after recording as under:-
+“For the reasons stated in the application, application is allowed
+subject to cost of Rs.1000/-, to be paid to the plaintiff. Delay stands
+condoned. Written statement is taken on record. Replication be filed
+within the period permissible, as worked out from today. Cost
+however, be paid within two weeks failing which written statement
+shall be deemed to have been taken off the record.”
+[Emphasis supplied]
+3. Thereafter, the plaintiff filed its replication to the written statement
+of defendant no.1 on 06.05.2024. Therefore, the present application
+seeking condonation of delay of 15 days in the said filing by the plaintiff.
+4. Learned counsel for the plaintiff contends that the statutory period
+of 45 days as per Chapter VII Rule 5 of the Delhi High Court (Original
+Side) Rules, 2018 for filing replication by the plaintiff is to be counted
+from the next day of passing of the order dated 21.03.2024 by the Joint
+Registrar, i.e., with effect from 22.03.2024 and further that the filing of a
+replication by plaintiff was in any event dependent upon depositing of cost
+of Rs. 1,000/- by the defendant no.1.
+5. Learned counsel also contends that though the said period of 45
+days came to an end on 05.05.2024, which since was a Sunday, the filing
+of the replication by the plaintiff on 06.05.2024 was well within the
+permissible period of 45 days. Learned counsel relying upon Classico
+Brands (India) Pvt. Ltd. vs. MIS Stella Industries Limited (2022 SCC
+OnLine Del 2857), wherein a co-ordinate bench allowed an application
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:15
+under Order VIII Rule 1, CPC as amended by the Commercial Courts Act
+since the Court was on leave on the last day of limitation, contends that
+the situation being same, the delay of 15 days is liable to be condoned by
+this Court.
+6. Relying upon the 4 medical prescriptions dated 22.11.2023,
+28.11.2023, 10.01.2024 and 15.04.2024 filed alongwith the present
+application, learned counsel contended that in view of the ill health of the
+authorized representative of the plaintiff, who is also its Director, the
+replication could not have been filed before.
+7. Learned counsel for the defendant no.1 in response, at the outset,
+contends that the issue involved herein has already been settled by a
+Division Bench of this Court in Ram Swarup Lugani & Anr. Vs. Nirmal
+Lugani & Ors. FAO(OS) 47/2020, relied upon by a co-ordinate bench of
+this Court in Ashish Bhalla vs. Sunil Gandi CS(OS) 341/2019 in its order
+dated 11.01.2023, wherein it was held as under:-
+21. A conspectus of the decisions referred to above leaves no manner
+of doubt that where ever the phrase “but not thereafter” has been
+used in a provision for setting a deadline, the intention of the
+legislature is to treat the same as a preemptory provision. Thus, if
+Rule 15 of the DHC Rules mandates filing of a replication within a
+period of 30 days reckoned from the date of receipt of the written
+statement, with an additional period of 15 days provided and that too
+only if the court is satisfied that the plaintiff has been able to
+demonstrate that it was prevented to do so by sufficient cause or for
+exceptional and unavoidable reasons, can the time for filing the
+replication be extended for a further period not exceeding 15 days in
+any event, with costs imposed on the plaintiff. The critical phrase “but
+not thereafter” used in Rule 15 must be understood to mean that even
+the court cannot extend the period for filing the replication beyond the
+outer limit of 45 days provided in the DHC Rules. Upon expiry of the
+said period, the plaintif‟fs right to file the replicatio n would stand
+extinguished. Any other meaning sought to be bestowed on the above
+provision, would make the words “but not thereafter”,
+inconsequential.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:15
+22. The next contention of Mr. Mehta that the words “the Registrar
+shall forthwith place the matter for appropriate orders before the
+court” used in Rule 5 of the DHC Rules indicates that the court would
+still have the power to accept a replication filed beyond a period of 45
+days, is also untenable. The Supreme Court has emphasized that the
+answer to the problem as to whether a statutory provision is
+mandatory or is directory in nature, lies in the intention of the law
+maker, as expressed in the law itself. The words “replication, if any,
+shall be filed within 30 days of the receipt of the written statement”
+and further, the words “further period not exceeding 15 days, but not
+thereafter” used in Rule 5 will lose its entire meaning if we accept the
+submission made on behalf of the appellants that even if the timeline
+for filing the replication cannot be extended by the Registrar, there is
+no such embargo placed on the court.
+23. The court must start with the assumption that every word used in a
+statute, has been well thought out and inserted with a specific purpose
+and ordinarily, the court must not deviate from what is expressly
+stated therein. The period granted for filing the replication under Rule
+15 of the DHC Rules is only 30 days and on expiry of 30 days, the
+court can only condone a delay which does not exceed 15 days over
+and above 30 days and that too on the condition that the plaintiff is
+able to offer adequate and sufficient reasons explaining as to why the
+replication could not be filed within 30 days. As observed earlier,
+since the terms „Cour‟t and „Registrar‟ have been defined in the
+DHC Rules, Rule 5 requires that the court alone can extend the time
+to file the replication beyond the period of 30 days from the date of
+receipt of the written statement. Even the discretion vested in the court
+for granting extension of time is hedged with conditions and the outer
+limit prescribed is 15 days. If the replication is not filed within the
+extended time granted, the Registrar is required to place the matter
+back before the court for closing the right of the plaintiff to file the
+replication.
+XXXXX XXXXX XXXXX
+31. In view of the aforesaid discussion, it is held that in case of any
+inconsistency, the provisions of the Delhi High Court (Original Side)
+Rules, 2018 will prevail over the Civil Procedure Code. The inherent
+powers contemplated in Rule 16 are not to be exercised to overcome
+the period of limitation expressly prescribed in Rule 5 for filing the
+replication. Nor can Rule 5 be circumvented by invoking any other
+provision or even the inherent powers of the court, contrary to the
+scheme of the Rules. The phrase, “but not thereafter” used in Rule 5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:15
+makes it crystal clear that the Rule is mandatory in nature and the
+court cannot permit the replication to be taken on the record after the
+plaintiff has exhausted the maximum prescribed period of 45 days.
+Any other interpretation will result in causing violence to the DHC
+Rules.
+8. Thence, drawing the attention of this Court to the aforementioned 4
+medical prescriptions, learned counsel for the defendant no.1 contends that
+3 of such medical prescriptions dated 22.11.2023, 28.11.2023 and
+10.01.2024 cannot be considered for adjudication of the present
+application since they pertain to a period prior to filing of the written
+statement by the defendant no.1.
+9. While adjudicating the present application, this Court cannot lose
+the sight of the facts that, admittedly, by virtue of the order dated
+21.03.2024 passed by the Joint Registrar, not only was the written
+statement of defendant no.1 taken on record subject to its depositing a cost
+of Rs. 1,000/- within a period of two weeks but also that the plaintiff was
+directed to file its replication thereto within the permissible period from
+the date of said order.
+10. Therefore, filing of the replication by the plaintiff was mandatory
+and not dependent upon deposition of cost by the defendant no.1 as sought
+to be contended by the learned counsel for plaintiff. Similarly, in the wake
+of the categoric order dated 21.03.2024 passed by the Joint Registrar
+wherein the permissible period was to be counted from that day itself, the
+period of limitation was/ is to be calculated with effect from the said date
+of passing of the order, i.e., 21.03.2024 itself and not 22.03.2024 sought to
+be once again contended by the learned counsel for plaintiff.
+11. Meaning thereby, the plaintiff was to file its replication on or before
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:15
+04.05.2024, whereas, admittedly it was filed thereafter only on
+06.05.2024, i.e., after the expiry of statutory period of 45 days as per the
+Delhi High Court (Original Side) Rules, 2018. In view thereof, reliance
+placed by the learned counsel for plaintiff upon Classico Brands (India)
+Pvt. Ltd.(supra) is misconceived.
+12. Lastly, since 3 of the 4 medical prescriptions entail hereinabove are
+for a period prior to filing of the written statement by the defendant no.1,
+they being unrelated to the cause agitated by the plaintiff are nowhere
+involved. In any event, learned counsel for the plaintiff did not advance
+any argument qua the only medical prescription dated 15.04.2024, which
+was subsequent in point of time.
+13. Accordingly, given the mandatory provision as contained in the
+Delhi High Court (Original Side) Rules Act, 2018 as also the
+pronouncement by the Division Bench of this Court and a subsequent
+order passed by the co-ordinate Bench of this Court coupled with the
+factual position involved, the present application is dismissed.
+I.A. 23289/2024 – (under Order XXXIX, Rule 1 & 2, CPC)
+14. List on 21.08.2024.
+CS(COMM) 841/2023
+15. In view thereof, the replication filed by the plaintiff to written
+statement of the defendant no.1, is taken off the record.
+16. List for completion of pleadings before Joint Registrar on
+21.08.2024.
+SAURABH BANERJEE, J
+JULY 16, 2024/rr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:15
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 841/2023
+INDYA RECORDS AND FILMS PRIVATE LIMITED .....Plaintiff
+Through: Mr. Uttam Datt, Mr. Arjun Anand,
+Ms. Sonakshi Singh, Mr. Kumar
+Bhaskar and Mr. Aman Sanjeev
+Sharma, Advocates
+versus
+FRANKFINN ENTERTAINMENT COMPANY PRIVATE
+LIMITED & ORS. .....Defendants
+Through: Mr. Kapil Midha and Ms. Samiksha
+Gupta, Advocates for D-1
+Ms. Kamana Pradhan, Advocate for
+D-3
+Mr. Sauhard Alung, Advocate for
+D-4
+Mr. Mrinal Ojha, Mr. Debarshi
+Dutta and Mr. Arjun Mookerjee,
+Advocates for D-5
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 21.08.2024
+I.A. 23289/2023-Stay against D-1
+1. By virtue of the present application, the plaintiff is seeking the
+following reliefs:-
+a) An ad-interim, ex-parte injunction order restraining the
+Defendant No 1, their directors, officers, servants, agents,
+employees, successors, representatives, assignees etc, from
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:13
+creating any third party rights in the YouTube Channel by
+the name of “Shabad Kirtan Gurbani - Divine Amrit Bani”;
+b) An ad-interim, ex-parte injunction order restraining the
+Defendant No 1, their directors, officers, servants, agents,
+employees, successors, representatives, assignees etc, from
+uploading any content other than Sikh devotional content on
+the YouTube Channel by the name of “Shabad Kirtan
+Gurbani -Divine Amrit Bani” and from altering the nature/
+character/complexion of the said YouTube Channel in any
+way and/or changing the title of the said YouTube Channel;
+c) An ad-interim, ex-parte injunction order restraining the
+Defendant No 1, their directors, officers, servants, agents,
+employees, successors, representatives, assignees etc, from
+engaging in any activities that would adversely affect the
+YouTube channel “Shabad Kirtan Gurbani - Divine Amrit
+Bani” including but not limited to actions that may diminish
+its viewership, reduce its unique viewers, or impact the
+revenue it generates;
+d) An ad-interim, ex-parte mandatory injunction order
+directing the Defendant No 1, their directors, officers,
+servants, agents, employees, successors, representatives,
+assignees etc to take all necessary measures to preserve the
+value and goodwill of the YouTube channel “Shabad Kirtan
+Gurbani - Divine Amrit Bani”, by ensuring its continued
+operation, and prevent any reduction in its revenue;
+e) An ad-interim, ex-parte injunction order restraining the
+Defendant No 1 their directors, officers, servants, agents,
+employees, successors, representatives, assignees from
+directly or indirectly using, offering, advertising, promoting
+or in any other manner using the words “Shabad Kirtan
+Gurbani – Divine Amrit Bani” and/or any other expression
+deceptively similar to that of the Plaintiff;
+f) An ad-interim, ex-parte injunction order restraining the
+Defendant No 1, their directors, officers, servants, agents,
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:13
+employees, successors, representatives, assignees etc, from
+using the words “Indya Records” and/or the domain name
+“indyarecords.com” for any purpose;
+g) An ad-interim, ex-parte injunction order restraining the
+Defendant No 1, their directors, officers, servants, agents,
+employees, successors, representatives, assignees etc, from
+selling, alienating or creating third party rights in the
+domain name indyarecords.com and restrain the Defendant
+No 5 and 6 from renewing the registration of the said
+domain name in the name of the Defendant No 1 or register
+it in the name of any third party;
+2. Issue notice.
+3. Learned counsels appearing for the defendant nos.1 and 3 to 5
+accept notice. They seek, and are granted four weeks to file rely.
+Rejoinder thereto, if any, be filed within a period of two weeks thereafter.
+4. Issue notice to the defendant nos.2&6 by all permissible modes
+returnable before the Joint Registrar on 14.10.2024.
+5. Accordingly, renotify on 14.10.2024 before the learned Joint
+Registrar for completion of pleadings.
+6. Renotify before this Court on 20.11.2024.
+SAURABH BANERJEE, J
+AUGUST 21, 2024/akr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:13
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 841/2023
+INDYA RECORDS AND FILMS PRIVATE LIMITED
+.....Plaintiff
+Through: Ms. Sonakshi Singh, Mr. Kumar
+Bhaskar, Mr. Aman Sanjeev
+Sharma, Advocates
+versus
+FRANKFINN ENTERTAINMENT COMPANY
+PRIVATE LIMITED & ORS. .....Defendant
+Through: Mr. Kapil Midha, Ms. Samiksha
+Gupta, Advocates for D-1.
+Mrs. Neelakshi Bhadauria (VC),
+Mr. Sarthak Karol, Advocates for
+D-2.
+Ms. Kamana Pradhan (VC),
+Advocate for D-3
+Ms. Asavari Jain, Mr. Sauhard
+Alung, Advocates for D-4.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 21.08.2024
+1. Ld. Counsel for the plaintiff submits that no replication is
+to be filed to the written statement of defendant no. 2. Pleadings
+are thus complete between plaintiff and defendant nos. 1, 2 & 3.
+2. Defendant no. 4‟s written statement has been filed but is
+under objection, purportedly since April‟2024 but no steps have
+been taken even till today to bring the same on record.
+Defendant no. 4 is granted one week to bring the written
+statement on record failing which its right to file written
+statement shall stand closed without any further orders.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:14
+3. No written statement is to be filed by defendant no. 5.
+Defendant no. 6 has already been deleted.
+4. Plaintiff and defendant nos. 1, 2 & 3 are directed to file
+their documents in physical form alongwith Joint document
+schedule, also in physical form, within six weeks.
+5. Put up for completion of pleadings on 14.10.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 21, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:14
+
+===== ORDER =====
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 841/2023
+INDYA RECORDS AND FILMS PRIVATE LIMITED
+.....Plaintiff
+Through: Ms. Sonakshi Singh, Mr. Kumar
+Bhaskar and Mr. Aman Sanjeev
+Sharma, Advocates.
+versus
+FRANKFINN ENTERTAINMENT COMPANY
+PRIVATE LIMITED & ORS.
+.....Defendant
+Through: Mrs. Neelakshi Bhadauria and
+Mr. Sarthak Karol, Advocate for
+D-2.
+Ms. Asavari Jain, Advocate for
+D-4.
+Mr. Mrinal Ojha, Mr. Debarshi
+Dutta and Mr. Rishab Agarwal,
+Advocates for D-5.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 30.08.2024
+Learned Presiding Officer is on leave today.
+Re-notify on 02.09.2024.
+Reader to
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 30, 2024
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:13
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 841/2023
+INDYA RECORDS AND FILMS PRIVATE LIMITED
+.....Plaintiff
+Through: Ms. Sonakshi Singh, Mr. Kumar
+Bhaskar (VC), Advocates
+Versus
+FRANKFINN ENTERTAINMENT COMPANY
+PRIVATE LIMITED & ORS. .....Defendant
+Through: Mr. Kapil Midha, Ms. Samiksha
+Gupta, Advocates for D-1.
+Mr. Kaustubh Shakkarwar,
+Ms. Kamana Pradhan (VC),
+Advocates for D-3.
+Ms. Asavari Jain, Advocate for
+D-4.
+Mr. Mrinal Ojha, Mr. Debarshi
+Dutta, Mr. Rishabh Agarwal,
+Advocates for D-5.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 02.09.2024
+I.A. No. 37935/2024 filed on behalf of defendant no. 4,
+seeking condonation of delay of 89 days in filing the written
+statement.
+1. Issue notice. Notice accepted by ld. Counsel for the
+plaintiff who presses for an opportunity to file a response, if
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:12
+required. Let the reply be filed within two weeks, with an
+advance copy of the same to the opposite side.
+2. Put up for completion of pleadings on 14.10.2024, the date
+already fixed.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 2, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:12
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 841/2023
+INDYA RECORDS AND FILMS PRIVATE LIMITED
+.....Plaintiff
+Through: Mr. Damandeep Singh,
+Mr. Krishnayan Sen, Advocates
+versus
+FRANKFINN ENTERTAINMENT COMPANY
+PRIVATE LIMITED & ORS. .....Defendant
+Through: Mr. Kapil Midha (VC), Advocate
+for D-1.
+Mrs. Neelakshi Bhadauria,
+Mr. Sarthak Karol, Advocates for
+D-2.
+Mr. Kaustubh Shakkarwar,
+Mr. Ashwin Romy, Ms. Kamana
+Pradhan (VC), Advocate for D-3
+Mr. Sauhard Alung, Advocate
+for D-4.
+Mr. Mrinal Ojha, Mr. Debarshi
+Dutta, Ms. Nikita Rathi,
+Mr. Rishabh Agarwal, Advocates
+for D-5.
+D-6 stands deleted.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 14.10.2024
+I.A. No. 37935/2024 filed on behalf of defendant no. 4, seeking
+condonation of delay of 89 days in filing the written
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:12
+statement.
+1. Ld. Counsel for the plaintiff submits that though no reply
+has been filed within the period permitted, if at all the delay is to
+be condoned, same should be subject to a reasonable cost.
+2. For the reasons stated in the application, application is
+allowed but subject to cost of Rs. 7000/-, to be paid to the
+plaintiff / counsel for the plaintiff within three weeks failing
+which the written statement shall be deemed to have been taken
+off the record. Delay stands condoned. Written statement of
+defendant no. 4 is taken on record. Replication be filed within
+the period permissible, as worked out from today. IA stands
+disposed off.
+I.A. No. 23289/2023 (Stay).
+3. Ld. Counsel for defendant no. 1 as also for defendant no. 5
+pray for some more time to file reply to the present application.
+Final opportunity is granted to file a reply within three weeks and
+rejoinder, if any, be filed thereafter by 14.11.2024 on receiving
+advance copy of the reply.
+CS(COMM) 841/2023
+4. Pleadings are complete between the plaintiff and defendant
+nos. 1, 2, 3 & 5.
+5. Despite directions, plaintiff and defendant nos. 1, 2 & 3
+have not filed their documents in physical form. They are now
+directed to file their documents in physical form within three
+weeks. Defendant no. 4 is also directed to file its documents
+within three weeks in physical form. Defendant no. 5 has not
+filed its written statement and defendant no. 6 has already been
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:12
+deleted from the array.
+6. Matter is already listed before the Hon’ble Court for
+20.11.2024. Be placed before the Hon’ble Court on the date
+already fixed i.e. 20.11.2024, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+OCTOBER 14, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:12
+
+===== ORDER =====
+
+$~31
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 841/2023
+INDYA RECORDS AND
+FILMS PRIVATE LIMITED .....Plaintiff
+Through: Mr.Akhil Sibal,Senior Advocate with
+Mr. Krishnayan Sen, Mr. Damandeep
+Singh, Ms. Ridhie Bajaj and Mr. S.
+Hague, Advocates.
+versus
+FRANKFINN ENTERTAINMENT
+COMPANY PRIVATE LIMITED & ORS. .....Defendants
+Through: Mr. Kapil Midha and Ms. Samiksha
+Gupta, Advocates for defendant No. 1.
+Mr. Arjun Natarajan, Mr. Kaustubh
+Shakkarwar,Ms.KamanaPradhanand
+Mr. Ashwin Romy, Advocates for
+defendant No. 3.
+Ms. Aishwarya Kane and Ms. Asavari
+Jain, Advocates for defendant No. 4.
+Mr. Mrinal Ojha, Mr. Debarshi Dutta,
+Ms. Nikita Rathi and Mr. Samyak,
+Advocates for defendant No. 5.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 29.10.2024
+I.A. 43775/2024 (O-XXXIX Rules 1 and 2 of CPC)
+1. Issue notice.
+2. Counsel for the defendants accept notice.
+CS(COMM)841/2023 Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:11
+3. Mr. Kapil Midha, counsel for the defendant no.1 points out that some
+ofthereliefsclaimedinthepresentapplicationarethesamethatwereclaimed
+in I.A. 23289/2023.
+4. Needless to say, if similar reliefs have been claimed in the earlier
+application, the same will be considered as part of the earlier application.
+5. Reply to the application be filed on or before 14th November, 2024.
+6. Rejoinder thereto, if any, be filed before the next date of hearing.
+7. List on 20th November, 2024, the date already fixed.
+I.A. 23289/2023 (O-XXXIX Rules 1 and 2 of CPC)
+8. All the defendants are given time till 14th November, 2024 to file their
+replies.
+9. Rejoinders thereto, if any, be filed before the next date of hearing.
+10. List on 20th November, 2024, the date already fixed.
+AMIT BANSAL, J
+OCTOBER 29, 2024
+kd
+CS(COMM)841/2023 Page 2 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21
+
+[TRUNCATED — rights are established in the opening orders above]

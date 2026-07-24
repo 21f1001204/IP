@@ -1,0 +1,635 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_837_2023
+case_status: PENDING
+n_orders: 15
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 837/2023
+G.D. PHARMACEUTICALS PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Vishal Nagpal, Advocate
+versus
+HELBREDE HEALTHCARE LTD & ANR...... Defendant
+Through: Ms. Sarika Gupta (VC),
+Advocate for D-1 & 2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 16.01.2024
+CS (COMM) 837/2023 & I.A. No. 23201/2023 under Order
+XXXIX Rules 1 & 2 CPC :
+Defendants have been served on 27.12.2023, as per the
+affidavit of service filed by the plaintiff. Appearance has been
+put in on behalf of the defendants.
+Let the written statement / reply to the IA be filed as per
+rules with an advance copy of the same to the opposite side.
+Replication/rejoinder thereto be filed as per rules thereafter.
+Put up for completion of pleadings on 13.03.2024.
+AJAY GULATI - I (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 16, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:27
+
+===== ORDER =====
+
+$~10
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 837/2023
+G.D. PHARMACEUTICALS PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Vishal Nagpal (VC),
+Advocate
+versus
+HELBREDE HEALTHCARE LTD & ANR...... Defendant
+Through: Ms. Sarika Gupta (VC),
+Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 13.03.2024
+CS (COMM) 837/2023 & I.A. No. 23201/2023 under Order
+XXXIX Rules 1 & 2 CPC.
+Ld. Counsel appearing for defendants submits that
+although statutory period to file the written statement has lapsed,
+the same shall be filed as per rules alongwith an appropriate
+application, if required. No reply to the IA No. 23201/2023 has
+been filed yet.
+Matter is already listed before the Hon’ble Court for
+28.03.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 28.03.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 13, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:26
+
+===== ORDER =====
+
+$~44
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 837/2023
+G.D. PHARMACEUTICALS PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Vishal Nagpal and Mr. Sharad
+Besoya, Advocates.
+versus
+HELBREDE HEALTHCARE LTD & ANR. ..... Defendants
+Through: Ms. Sarika Gupta, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 18.03.2024
+I.A. 6342/2024 (for return of the plaint)
+1. Issue notice. Mr. Vishal Nagpal, counsel for the Plaintiff, accepts
+notice. Reply, if any, be filed within a period of four weeks from today.
+Rejoinder thereto, if any, be filed within a period of two weeks thereafter.
+2. Renotify on 14th May, 2024.
+3. The earlier date of 28th March, 2024, stands cancelled.
+SANJEEV NARULA, J
+MARCH 18, 2024
+as
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:26
+
+===== ORDER =====
+
+$~45
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 837/2023
+G.D. PHARMACEUTICALS PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Vishal Nagpal and Mr. Bal
+Krishnan Singh, Advocates.
+versus
+HELBREDE HEALTHCARE LTD & ANR. ..... Defendants
+Through: Ms. Sarika Gupta, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 03.05.2024
+I.A. 9929/2024(u/O VIII Rule 10 r/w Section 151 of CPC on behalf of
+Plaintiff)
+List on the date already fixed, i.e., 14th May, 2024.
+SANJEEV NARULA, J
+MAY 3, 2024
+d.negi
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:25
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 837/2023 & I.As. 23201-23203/2023, 6342/2024,
+9929/2024
+G.D. PHARMACEUTICALS PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Vishal Nagpal, Mr. Debjyoti
+Sarkar and Mr. Bal Krishan Sinha,
+Advocates.
+versus
+HELBREDE HEALTHCARE LTD & ANR. ..... Defendants
+Through:
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 14.05.2024
+1. It is already 04:40 PM. Due to paucity of time, it is not possible to
+take up this matter today.
+2. Re-notify on 1st October, 2024.
+3. Interim order to continue.
+SANJEEV NARULA, J
+MAY 14, 2024
+as
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:25
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 837/2023
+G.D. PHARMACEUTICALS PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Samik Mukherjee (VC),
+Mr. Bal Krishan Singh,
+Advocates
+versus
+HELBREDE HEALTHCARE LTD & ANR...... Defendant
+Through: Ms. Sarika Gupta (VC),
+Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 17.05.2024
+I.A. No. 29495/2024 filed by D-1 & 2 for seeking condonation
+of delay of 89 days in filing the written statement alongwith
+the affidavit of admission and denial.
+Issue notice. Notice accepted by the ld. Counsel for the
+plaintiff who presses for an opportunity to file a response.
+Let the reply be filed within four weeks, with an advance
+copy of the same to the opposite side. Rejoinder thereto, if any,
+be filed thereafter within two weeks of receiving an advance
+copy of the reply.
+Put up for completion of pleadings on 13.08.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 17, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:24
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 837/2023
+G.D. PHARMACEUTICALS PRIVATE LIMITED
+.....Plaintiff
+Through: Mr. Vishal Nagpal, Mr. Sharad
+Besoya, Advocates
+versus
+HELBREDE HEALTHCARE LTD & ANR. .....Defendant
+Through: Ms. Sarika Gupta (VC),
+Advocate for D-1 & 2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 13.08.2024
+I.A. No. 29495/2024 filed by D-1 & 2 for seeking condonation
+of delay of 89 days in filing the written statement alongwith
+the affidavit of admission and denial.
+1. Ld. Counsel for the defendants submits that the written
+statement had been filed on the 119th day i.e. 24.04.2024 from the
+date of service of summons, as worked out from 27.12.2023
+which is the date of service mentioned in the order dated
+16.01.2024. In response, ld. Counsel for the plaintiff has
+highlighted that though the said date of 27.12.2023 has indeed
+been mentioned in the order of 16.01.2024, the said date was
+mentioned on the basis of affidavit of service filed by the
+plaintiff. Ld. Counsel has further highlighted that as per the
+affidavit of service, defendants were served on 23.12.2023
+through email. Ld. Counsel for the defendants submits in rebuttal
+that plaintiff should have moved a modification application
+regarding the date of service as mentioned in the order dated
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:24
+16.01.2024. In the understanding of the Court, no such
+modification was or is required since service of summons is a
+matter of record and simply because date of service of summons
+through email was not mentioned in the order dated 16.01.2024,
+would not mean that the defendants were not served through
+email on 23.12.2023. Ld. Counsel for the defendants also
+submits that as on 16.01.2024, the affidavit of service was not on
+record which is incorrect since this Court has referred to the
+affidavit of service while recording that defendants have been
+served on 27.12.2023. Consequently, the written statement
+having been filed beyond the maximum permissible 120 day
+period, cannot be taken on record. The application is thus
+declined.
+2. Matter is already listed before the Hon’ble Court for
+01.10.2024. Put up before the Hon’ble Court on the date already
+fixed i.e. 01.10.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 13, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:24
+
+===== ORDER =====
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 837/2023 and I.A. 23201-23203/2023, I.A. 6342/2024,
+I.A. 9929/2024, I.A. 29495/2024 & O.A. 168/2024
+G.D. PHARMACEUTICALS PRIVATE LIMITED .....Plaintiff
+Through: Mr. Vishal Nagpal, Advocate.
+versus
+HELBREDE HEALTHCARE LTD & ANR. .....Defendants
+Through: Mr. Sanjay Gupta, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 01.10.2024
+1. A request for adjournment is made by the counsel appearing on behalf
+of the Defendants. The request is not opposed by counsel for the Plaintiff.
+2. Re-notify on 28th January, 2025.
+3. To be noted, the counsel for the parties submit that the I.A. Nos.
+23202/2023 and 29495/2024 have already been disposed of vide orders
+dated 22nd November 2023 and 13th August 2024 respectively.
+4. Therefore, the Registry shall ensure that the aforesaid I.A.s are not
+reflected in the Cause List and are indicated as disposed of in the case
+folder.
+AMIT BANSAL, J
+OCTOBER 1, 2024/kd
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:23
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 837/2023 with I.A. 23201/2023, I.A. 23203/2023, I.A.
+6342/2024, I.A. 9929/2024, and O.A. 168/2024
+G.D. PHARMACEUTICALS PRIVATE LIMITED .....Plaintiff
+Through: Mr. Vishal Nagpal, Mr. Debjyoti
+Sarkar and Ms. Suhrita Majumdar,
+Advocates
+versus
+HELBREDE HEALTHCARE LTD & ANR. .....Defendants
+Through: Ms. Sarika Gupta, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 28.01.2025
+I.A. 23201/2023 (under Order XXXIX Rules 1 & 2 of the CPC, 1908)
+1. Counsel for the defendants submits that the defendants does not wish
+to contest this application.
+2. Accoordinlgy, the ad interim injunction passed by this Court on 22nd
+November, 2023 is confirmed till the final adjudication of the suit.
+3. The application is disposed of.
+O.A. 168/2024
+4. This is an appeal filed against the impugned order dated 30th August,
+2024 passed by the learned Joint Registrar whereby the application filed on
+behalf of the defendants seeking condonation of delay in filing the written
+statement has been dismissed on the ground that the written statement was
+CS(COMM)837/2023 Page1of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:23
+filed beyond 120 days.
+5. Issue notice.
+6. Notice is accepted by counsel for the plaintiff.
+7. Reply be filed within three (3) weeks.
+8. Rejoinder thereto, if any, be filed within one (1) week thereafter.
+9. List on 25th March, 2025.
+CS(COMM) 837/2023
+10. Counsel for the defendants submits that the defendants have
+discontinued the use of impugned mark and are willing to settle the matter
+with the plaintiff.
+11. Counsel for the plaintiff insists for a reasonable cost in favour of the
+plaintiff.
+12. Counsel for the defendants submits that she will take instructions
+from the defendants on the aspect of cost.
+13. List, along with pending applications, on 25th March, 2025.
+AMIT BANSAL, J
+JANUARY 28, 2025
+tp
+CS(COMM)837/2023 Page2of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:23
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 837/2023 with I.A. 23202-23203/2023, I.A. 6342/2024,
+I.A. 9929/2024, I.A. 29495/2024, O.A. 168/2024
+G.D. PHARMACEUTICALS PRIVATE LIMITED .....Plaintiff
+Through: Mr. Vishal Nagpal, Ms. Suhrita
+Majumdar and Mr. Balkrishan Singh,
+Advocates.
+versus
+HELBREDE HEALTHCARE LTD & ANR. .....Defendants
+Through: Ms. Sarika Gupta, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 25.03.2025
+1. Counsel for the defendants seeks further time to obtain instructions
+from the client in terms of the order passed on 28th January, 2025.
+2. Lastopportunityoftwo(2)weeksisgiventocounselforthedefendants
+to seek instructions, failing which the matter shall proceed on merits.
+3. Re-notify on 19th May, 2025.
+AMIT BANSAL, J
+MARCH 25, 2025
+at
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:22
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 837/2023 & I.A. 23202-23203/2023, I.A. 6342/2024,
+I.A. 9929/2024, I.A. 29495/2024, O.A. 168/2024
+G.D. PHARMACEUTICALS PRIVATE LIMITED .....Plaintiff
+Through: Mr. Vishal Nagpal, Advocate
+versus
+HELBREDE HEALTHCARE LTD & ANR. .....Defendants
+Through: Ms. Sarika Gupta, Advocate for D-1
+& D-2
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 19.05.2025
+Hon’ble Judge is not holding Court today as he has gone to attend the
+INTA Annual Conference.
+List on 18th July, 2025.
+BY ORDER
+(COURT MASTER)
+MAY 19, 2025
+ds
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:21
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 837/2023 & I.A. 23202-23203/2023, I.A. 6342/2024,
+I.A. 9929/2024, I.A. 29495/2024, O.A. 168/2024
+G.D. PHARMACEUTICALS PRIVATE LIMITED .....Plaintiff
+Through: Mr. Vishal Nagpal, Ms. S. Majumdar
+and Mr. Bal Krishan Singh,
+Advocates.
+versus
+HELBREDE HEALTHCARE LTD & ANR. .....Defendants
+Through: Ms. Sarika Gupta, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 18.07.2025
+1. Counsel for the parties submit that the matter may be referred for
+mediation.
+2. Accordingly, the parties are referred for mediation to Delhi High Court
+Mediation and Conciliation Centre (‘Mediation Centre’).
+3. Parties, along with their respective counsel, shall appear before the
+Mediation Centre on 22nd July, 2025 at 3:00 PM.
+4. List before the Court on 8th October, 2025 to await the outcome of the
+mediation proceedings.
+5. Liberty is given to the parties/counsel to appear in the mediation
+proceedings through video conferencing.
+AMIT BANSAL, J
+JULY 18, 2025/
+Vivek/-
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:21
+
+===== ORDER =====
+
+$~206
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 837/2023
+G.D. PHARMACEUTICALS PRIVATE LIMITED
+.....Plaintiff
+Through: Mr. Afzal B. Khan, adv.
+versus
+HELBREDE HEALTHCARE LTD & ANR.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the defendant when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:20
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 837/2023 & I.A. 23202/2023 I.A. 23203/2023 I.A.
+6342/2024 I.A. 9929/2024 I.A. 29495/2024 O.A. 168/2024
+G.D. PHARMACEUTICALS PRIVATE LIMITED
+.....Plaintiff
+Through: Mr. Vishal Nagpal and Mr. Bal
+Krishan Singh, Advocates
+versus
+HELBREDE HEALTHCARE LTD & ANR. .....Defendants
+Through: None
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 08.10.2025
+1. Learned counsel for the plaintiff states that parties have arrived at a
+settlement before the Delhi High Court Mediation and Conciliation Centre
+and the agreement is pending approval before the Mediation Centre.
+2. Learned mediator is requested to expedite the process and have the
+agreement placed before the Court, prior to the next date of hearing.
+3. List on 11.12.2025.
+4. Copy of the Order be sent to the Organizing Secretary of the Delhi
+High Court Mediation & Conciliation Centre for information and
+compliance.
+MANMEET PRITAM SINGH ARORA, J
+OCTOBER 8, 2025/mt
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:20
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 837/2023, I.A. 23202-23203/2023, I.A. 6342/2024, I.A.
+9929/2024, I.A. 29495/2024 & O.A. 168/2024
+G.D. PHARMACEUTICALS PRIVATE
+LIMITED .....Plaintiff
+Through: Mr. Vishal Nagpal, Adv. (through vc)
+versus
+HELBREDE HEALTHCARE LTD & ANR. .....Defendants
+Through: Mr. Esh Gupta, Adv. (through vc)
+Adv. for D-1 and D-2
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 11.12.2025
+Learned counsel for the parties’ state that they are in the process of
+executing a settlement agreement before the Delhi High Court Mediation
+and Conciliation Centre (‘Mediation centre’). It is stated that the plaintiff
+has already signed the agreement.
+Upon signing of the settlement agreement, the mediation centre is
+directed to forthwith send the same to the Registry and parties are at liberty
+to move an application for early listing.
+At request, list on 27.03.2026.
+MANMEET PRITAM SINGH ARORA, J
+DECEMBER 11, 2025/msh
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:19
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:19

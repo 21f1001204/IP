@@ -1,0 +1,1227 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_907_2023
+case_status: PENDING
+n_orders: 33
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023
+RECKITT & COLMAN (OVERSEAS) HEALTH LIMITED &
+ANR. ..... Plaintiffs
+Through: Ms. Nancy Roy, Ms. Prakriti
+Varshney, Ms. Aastha Kakkar, and
+Mr. Prashant, Advs.
+versus
+ASHOK KUMAR(S)/ JOHN DOE(S) & ORS. ..... Defendants
+Through: None for defendants.
+Mr. Samarth DC, Mr. Akshay
+Srivastava, Mr. Rohit & Ms. Krati
+Tiwari, Advs. for applicant in IA
+No.1607/2024
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 22.01.2024
+I.A. 1607/2024 (under section 151 CPC for de-sealing of equipment)
+1. This application has been filed by the applicant Mr. Kunal, S/o Sh.
+Sher Singh having his shop at Garage no.63, Back Portion, Gulabi Bagh,
+Delhi-110007. It is stated in the application that, pursuant to execution of a
+local commission on 20th December, 2023, as directed vide order dated 19th
+December, 2023, Local Commissioner Mr. Raghav Goyal visited the
+aforementioned shop of the applicant. The applicant’s father Mr. Sher Singh
+is in possession of the said shop, as a tenant.
+2. The applicant, it is stated, is engaged in making carton boxes from
+carboard sheets provided by the customers to the applicant with the help of a
+cutting and pasting machine. As part of execution of the local commission,
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:44
+the said cutting and pasting machine (one in number) was sealed by the Local
+Commissioner. Copy of the superdarinama has been handed up in the Court
+today, which also notes the same.
+3. As per the report of the Local Commissioner dated 4th January, 2024
+(“LC Report”), it is noted that upon disclosure of Mr. Aman Monga and Mr.
+Pankaj Monga, the premises of the applicant was accessed by the Local
+Commissioner. Upon visiting the premises, the Local Commissioner came
+across two machines – (i) a die-cutting machine and (ii) a cutting and pasting
+machine, which were being used for manufacturing packaging material.
+Left overs of the packaging material bearing infringing mark ‘VEET’ and
+‘VEET PURE’ were found, however, could not be quantified owing to its
+condition. Further, 6 die-cutting boards and 10 pieces of die-cutting
+cardboards, on which infringing packaging material was made were found.
+Further material relating to infringing packaging were also found, as noted in
+para 9 and 10 of the LC report.
+4. As requested, copy of the LC report may be provided by the counsel
+for the plaintiffs to the counsel for the applicant.
+5. It is stated by the counsel for the applicant that the applicant is merely
+a service provider which was doing packaging material for his clients and had
+no knowledge of the infringing products. He states that the livelihood of the
+applicant depends on the cutting and pasting machine (now sealed by way of
+execution of local commission), used for work of various other clients. In this
+context, the applicant seeks release of the said cutting and pasting machine
+on superdari.
+6. Counsel for the applicant states that the applicant is aware of the order
+dated 19th December, 2023 passed by this Court in which, detailed directions
+were passed regarding infringing marks, products and packaging. He states
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:44
+that the applicant is willing to give an undertaking in that, he will fully
+comply with the said order of this Court, will not indulge in any activity,
+directly or indirectly, in violation of the said order, and that he will not use
+his machine to do any other work or activity amounting to infringement of
+plaintiff’s products. The said undertaking be filed within a period of one
+week from today with a copy to the counsel for the plaintiff.
+7. Counsel for the plaintiff states that in this circumstance and on the
+basis of the LC report, the applicant be impleaded as a party/defendant in the
+present proceedings. Counsel for the plaintiff is at liberty to move an
+application in this regard, stating the reasons for doing so.
+8. Mr. Raghav Goyal, the Local Commissioner, shall re-visit the
+premises, de-seal the cutting and pasting machine and handover the same to
+the applicant on superdarinama and shall obtain written receipt in that regard
+from the applicant. Copy of the said order be handed over to the Local
+Commissioner by counsel for the applicant or the plaintiff.
+9. Transport for the Local Commissioner to visit the premises shall be
+arranged by the applicant, in coordination with his counsel and all out-of-
+pocket expenses of the Local Commissioner shall be paid by the applicant.
+10. It is directed that de-sealing of cutting and pasting machine, by the
+Local Commissioner, shall be done within a week of this order. Furthermore,
+counsel for the plaintiffs and counsel for the applicant shall be present at the
+time of de-sealing of the said machine.
+11. The application stands disposed of in the aforesaid terms.
+12. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+JANUARY 22, 2024/sm/sc
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:44
+
+===== ORDER =====
+
+$~34
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023
+RECKITT & COLMAN (OVERSEAS) HEALTH LIMITED & ANR
+..... Plaintiffs
+Through: Ms. Nancy Roy, & Ms. Prakriti
+Varshney, Advs.
+versus
+ASHOK KUMAR(S)/ JOHN DOE(S) & ORS. ..... Defendants
+Through: Mr. Sumanta De & Mr, Akshay
+Srivastava, Advs. for applicant
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 29.01.2024
+I.A. 2044/2024 (under Section 151 CPC)
+1. This application has been filed by the applicant for de-sealing of die
+cutting machine sealed during the execution of local commission on 20th
+December, 2023 in terms of order dated 19th December, 2023 passed by this
+Court.
+2. It is noted that a previous application being IA No.1607/2024 had also
+been filed for de-sealing of cutting and pasting machine, local commission
+for which is yet to be executed. Further, it is pointed out by counsel for the
+plaintiff that the applicant has not yet complied with para 6 of order dated
+22nd January, 2024 passed by this Court in IA No.1607/2024.
+3. Accordingly, re-notify on 8th February, 2024.
+4. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+JANUARY 29, 2024/sm/sc
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:43
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023
+RECKITT & COLMAN (OVERSEAS) HEALTH LIMITED
+& ANR.
+..... Plaintiff
+Through: Ms. Prakriti Varshnay, Adv.
+through VC.
+versus
+ASHOK KUMAR(S)/ JOHN DOE(S) & ORS.
+..... Defendant
+Through: None.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 30.01.2024
+List the matter for the purpose fixed on the date fixed i.e.
+21.02.2024
+IA No. 2191/2024 (u/order 1 Rule 10 r/w 151 CPC for
+impleadment of D- 4, 5 and 6 by plaintiff)
+Issue notice to proposed defendant no. 4.The counsel for the
+plaintiff states that the proposed defendant no. 4 had already
+appeared through counsel before the Hon'ble Court on 22.01.2024.
+Accordingly she request that liberty be given to serve the proposed
+defendant no. 4 through its counsel. The permission is granted. The
+proposed defendant no. 4 be now served through its counsel, via
+email/whatsapp.
+Further issue notice to the proposed defendant nos. 5 & 6
+through all permissible modes including whatsapp.
+The aforesaid processes be issued, subject to filing of PF.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 30, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:43
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023, I.A. 2044/2024 & I.A. 2191/2024.
+RECKITT & COLMAN (OVERSEAS) HEALTH LIMITED & ANR.
+..... Plaintiffs
+Through: Ms. Nancy Roy, Ms. Prakriti
+Varshney and Mr. Prashant,
+Advocates.
+versus
+ASHOK KUMAR(S)/ JOHN DOE(S) & ORS. ..... Defendants
+Through: Mr. Sumant De and Mr. Akshay
+Srivastava, Advocates for proposed
+D-4.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 08.02.2024
+1. It is pointed out by learned counsel for the parties that pursuant to the
+order dated 22.01.2024 in I.A. No. 1607/2024, the Local Commissioner was
+not well and the Commission could not be executed. Reportedly, the
+Commission is to be executed today.
+2. Another application had been filed being I.A. No.2044/2024 for
+de-sealing of die cutting machine to be released from superdari. It is agreed
+by learned counsel for the parties that the same local commissioner, Mr.
+Raghav Goyal (Mobile No. 8171444449), can carry out the task of
+de-sealing of the die cutting machine.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:42
+3. Copy of the order may be provided to Mr. Raghav Goyal, Local
+Commissioner who has been appointed by this Court.
+4. Considering that the Local Commissioner has been requested to
+perform the task of de-sealing at the request of the Mr. Kunal, the proposed
+defendant no.4, Mr. Sumant De, Advocate appearing for the proposed
+defendant no.4 submits that they will bear costs of transportation,
+miscellaneous expenses and additional charges of Rs.15,000/- to be paid to
+the Local Commissioner.
+5. The local commissioner shall place on record the report regarding
+execution of commission with both the aforesaid tasks (de-sealing of die
+cutting machine and the cutting and pasting machine) of proposed defendant
+no. 4 within two weeks from execution.
+6. List on 27.03.2024, the date already fixed.
+7. The undertaking pursuant to order dated 22.01.2024 has been filed by
+the proposed defendant no.4.
+8. In view of the fact and circumstances, it may be appropriate for the
+proposed defendant no.4 to file an affidavit in terms of paragraph 22 (ii) of
+the order dated 19.12.2023. The said affidavit be placed on record within
+two weeks from today.
+9. Copy of order be given dasti under signature of the Court Master.
+ANISH DAYAL, J
+FEBRUARY 8, 2024/ssc/ig
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:42
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023
+RECKITT & COLMAN (OVERSEAS) HEALTH LIMITED
+& ANR.
+..... Plaintiff
+Through: Ms. Prakriti Varshney, Adv.
+versus
+ASHOK KUMAR(S)/ JOHN DOE(S) & ORS.
+..... Defendant
+Through: Ms. Krati Tiwari, Adv. for
+D-3 through VC.
+Ms. Krati Tiwari, Adv. for
+proposed D-4 & Mr. Kunal,
+Adv.
+Ms. Sujata Singh, Adv. for
+proposed D-6.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 21.02.2024
+The defendant no. 1 is John Doe.
+As per office notings, the defendant no. 2 was served on
+01.02.2024 & 02.02.2024 and the defendant no. 3 was served on
+25.01.2024. The counsel for the defendant no. 3 is otherwise
+appearing through VC.
+The defendant nos. 2 & 3 shall now file their written
+statements in accordance with law, whereafter the replications be
+filed as per law.
+List the matter for completion of pleadings on 15.05.2024.
+IA No. 2191/2024 (by plaintiff u/o 1 Rule 10 r/w Section 151
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:42
+CPC for impleadment of D-4, 5 & 6)
+The counsel for the proposed defendant no. 4 (also appearing
+for the defendant no. 3) has appeared through VC and seeks time to
+file the reply.
+The proposed defendant no. 4 has been served on 07.02.2024
+as per the office noting.
+The counsel for the proposed defendant no. 6 is present in
+the Court and seeks time to file the reply.
+The proposed defendant nos. 4 to 6 may file their replies
+within four weeks, whereafter the rejoinders be then filed in the
+next four weeks.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 21, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:42
+
+===== ORDER =====
+
+$~8
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023, I.A. 25650/2023, I.A. 2044/2024, I.A.
+2191/2024 & I.A. 7012/2024
+RECKITT & COLMAN (OVERSEAS) HEALTH LIMITED & ANR.
+..... Plaintiff
+Through: Ms. Nancy Roy and Ms. Prakriti
+Varshney, Advocates.
+versus
+ASHOK KUMAR(S)/ JOHN DOE(S) & ORS. ..... Defendants
+Through: Mr. Shubham Saigal, Mr. Siddharth
+Jain and Ms. Gaurika Sood, Advocates
+for D-2/applicant.
+Mr. Sumant De and Mr. Akshay
+Srivastav, Advocates for D-6.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 27.03.2024
+1. Hon’ble Judge is on leave today.
+2. Renotify on 23rd April, 2024.
+3. Order be uploaded on the website of this Court.
+BY ORDER
+(COURT MASTER)
+MARCH 27, 2024/kct
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:41
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023 I.A. 25650/2023 I.A. 2044/2024
+I.A. 7012/2024
+RECKITT & COLMAN (OVERSEAS) HEALTH LIMITED &
+ANR. ..... Plaintiffs
+Through: Ms. Nancy Roy and Ms. Prakriti
+Varshney, Advocates.
+versus
+ASHOK KUMAR(S)/ JOHN DOE(S) & ORS. ..... Defendants
+Through: Mr. Shubham Saigal, Mr. Siddharth
+Jain and Ms. Gaurika Sood,
+Advocates for D-2/applicant.
+Mr. Sumant De and Mr. K. Tiwari,
+Advocates for D-4
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 23.04.2024
+I.A. 2191/2024 (under Order 1 Rule 10 r/w Section 151, CPC)
+1. This application has been filed by plaintiffs seeking to implead
+proposed defendant nos. 4, 5, and 6 in these proceedings.
+2. Summons were issued in the suit on 19th December 2023 when an ex-
+parte ad interim injunction was granted in favour of plaintiffs. Additionally,
+Local Commissioners [‘LC’] were appointed by the Court to inventorize and
+take into custody the products bearing plaintiffs’ registered marks. The
+notified premises were visited by the LC. While inspecting notified
+premises, it transpired that certain other premises came into notice of the LC
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:40
+as per information gained while executing the Commission as also through
+defendant no.3, according to which infringing packaging material was found
+in the premises operated by defendant nos. 4, 5, and 6. Notice had been
+issued in said application on 30th January 2024. Subsequently, counsel had
+appeared on behalf of defendant no.4 and 6 while defendant no.5 appeared in
+person.
+3. Accordingly, the application is allowed and said defendant no.4 to 6
+are impleaded as parties. Amended memo of parties filed along with this
+application is taken on record.
+4. Application stands disposed of.
+CS(COMM) 907/2023
+1. Pursuant to previous orders dated 19th December, 2023 and 8th
+February, 2024, affidavit of Mr. Kunal has been filed. Disclosure has been
+made in para 4 of the said affidavit that raw material for production of
+packaging material, in respect of infringing trademark ‘VEET’ that was
+found at the shop and has since been put under seal of LC on 20th December,
+2023, was brought to the shop by one Mr. Rafiq Shaikh, having mobile
+number 991792453.
+2. It is noted that this mobile number is incomplete, comprising of only 9
+digits.
+3. Mr. Sumant De, counsel for the applicant, states that he will confirm
+and provide full mobile number to counsel for plaintiffs.
+5. Counsel for defendant no.4 states that in context of what has been
+recorded by this Court in previous orders dated 22nd January 2024, 29th
+January 2024 and 8th February 2024, they have no objection to decree being
+passed on the ground that defendant no.4 was merely a job worker who was
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:40
+manufacturing commercial packaging by using die-cutting and pastings and
+was given raw material by some third party for the purpose.
+6. In view of the reply and affidavit which has been filed by defendant
+no.4, the suit is decreed qua defendant no.4 in terms of prayer A (i)&
+(ii), extracted as under:
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:40
+7. Decree sheet be drawn up qua defendant no. 4 in terms of the above
+prayer clauses by the Registry.
+8. The materials which had been seized by the LC from premises of
+defendant no.4 shall be destroyed in the presence of counsel for defendant
+no.4 and counsel/representative of plaintiffs, within a period of 2 weeks from
+today.
+9. Directions which had been passed by this Court in respect of de-sealing
+of the die-cutting machine and the pasting machine vide order dated 22nd
+January 2024 and 8th February 2024, stand confirmed.
+I.A. 7012/2024 (Application under Chapter X Rule 1 of the Delhi High Court
+(Original Side) Rules, 2018).
+1. This application has been moved on behalf of applicant Ms. Nidhi
+Saigal w/o Mr. Devesh Saigal stating that she runs the sole proprietorship
+concern, “Concept Packaging”, located at Shed No. 30, DSIDC Computer
+Complex, Scheme - 1, Okhla Industrial Area, Phase-II, New Delhi – 110020.
+2. It is stated that pursuant to directions of this Court, on 20th December,
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:40
+2023, a Local Commissioner visited her premises and seized two moulds
+which are deposited in Superdari with defendant no.2 (Mr. Devesh Saigal)
+3. It is stated that the premises noted for defendant no.2 were Shed no. 29
+and Shed no.30 whereas she and her husband both run separate operations,
+i.e., she runs her business under ‘Concept Packaging’ in Shed no. 30 while
+her husband Mr. Devesh Saigal runs his partnership firm ‘Devi Laxmi
+Extrusion Works’ along with Mr. Umesh Saigal, (the father of Mr. Devesh
+Saigal as the other partner) at Shed no. 29. This submission has been made
+by counsel for applicant on instructions.
+4. She, therefore, prays for de-sealing of her moulds which are used for
+other packaging purposes of similar size as that of the plaintiffs’ ‘VEET’
+products.
+5. Issue notice.
+6. Notice is accepted by Ms. Nancy Roy, counsel for plaintiffs who
+submits that said moulds could possibly be used for manufacturing
+counterfeit products and she has some concern relating to the same.
+7. It will be appropriate in this context that the applicant is present before
+this Court through VC or in person on the next date of hearing.
+8. In this regard, defendant no.2 may also be present personally or
+through VC on the next date of hearing.
+9. List on 06th May, 2024.
+10. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+APRIL 23, 2024/sm/sc
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:40
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023
+RECKITT & COLMAN (OVERSEAS) HEALTH
+LIMITED & ANR. .... Plaintiff
+Through: Ms. Prakriti Varshney (VC),
+Advocate
+versus
+ASHOK KUMAR(S)/ JOHN DOE(S) & ORS... Defendant
+Through: Ms. Kriti Tiwari (VC), Advocate
+for D-4
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 26.04.2024
+I.A. No. 9149/2024 filed by D-4 to condone the delay of 23
+days in filing reply to I.A. 2191/2024 for impleadment of D-4
+to D-6.
+Ld. Counsels submit that present application has become
+infructuous as IA No. 2191/2024 has been decided by the
+Hon’ble Court vide order dated 23.04.2024.
+In view of the submissions, present IA stands disposed off
+as being infructuous.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 26, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:40
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023, I.A. 25650/2023 & I.A. 2044/2024
+RECKITT & COLMAN (OVERSEAS) HEALTH LIMITED & ANR.
+..... Plaintiffs
+Through: Ms. Nancy Roy, Ms. Prakrit
+Varshney and Mr. Prashant,
+Advocates.
+versus
+ASHOK KUMAR(S)/ JOHN DOE(S) & ORS. ..... Defendants
+Through: Mr. Shubham Saigal, Mr. Siddharth
+Jain and Ms. Gaurika Sood,
+Advocates for D-2, Mr. Devesh
+Sehgal (D-2) appears in person
+through VC along with Ms. Nidhi
+Sehgal (in person through VC)
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 06.05.2024
+I.A. 7012/2024 (under Chapter X Rule 1 of the Delhi High Court (Original
+Side) Rules, 2018 read with Section 151, CPC for de-sealing of machinery)
+1. Pursuant to previous order dated 23rd April, 2024, both Mr. Devesh
+Saigal and Ms. Nidhi Saigal have appeared through video-conferencing
+(VC), and their counsel is present in Court.
+2. It is stated by Ms. Nidhi Saigal, that she runs her enterprise in the
+name of ‘Concept Packaging’ at Shed No. 30, whereas, Mr. Devesh Saigal,
+her husband, states that he runs his partnership firm along with his father as
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:39
+the other partner, under the name ‘Devi Laxmi Extrusion Works’ at Shed No.
+29.
+3. The application has been moved for release of the moulds which were
+sealed when the local commission was executed. Ms. Saigal states that these
+moulds belong to her business and she has nothing to do with the business of
+her husband, Mr. Devesh Saigal, where other infringing material had been
+seized.
+4. In the reply filed by plaintiffs to this application, detailed averments
+have been placed on record which suggest that the lack of knowledge,
+between Mr. Saigal and Ms. Saigal in relation to their respective businesses,
+do not seem to be correct. Needless to state, plaintiff shall have all rights
+available to it to present these facts during further suit proceedings inter alia
+for seeking costs and damages.
+5. Both Mr. and Ms. Saigal have undertaken before this Court that the
+said mould, which Ms. Saigal seeks release for ‘Concept Packaging’, will in
+no manner whatsoever, be utilised for any counterfeit activity, including that
+of plaintiff’s products. The said undertaking is taken on record. It has been
+pointed out to both Mr. Saigal and Ms. Saigal that breach of this undertaking
+will invite strict measures and directions from the Court.
+6. In view of this undertaking which is given, the sealed moulds as
+detailed in Para 3 of the said application, shall be released in presence of
+plaintiff’s representatives/counsel, Mr. and Ms. Saigal, along with their
+counsel. The same shall be done on 09th May, 2024 between 10:00 and
+05:00 P.M.
+7. Counsel for plaintiff states that they will be moving an application for
+the impleadment of Ms. Nidhi Saigal as a party to these proceedings. The
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:39
+application shall be considered as and when filed.
+8. The Partnership Deed relating to ‘Devi Laxmi Extrusion Works’ will
+be filed by defendant, along with their written statement.
+9. Accordingly, the said application is disposed of with the above
+directions.
+I.A. 10204/2024 & I.A. 10205/2024 (under Section 151 of CPC for
+De-sealing and examination of the Hard Disk)
+1. This application has been filed by plaintiff for de-sealing and
+examination of the hard disk containing the data seized at the time of the
+execution of the local commission on 20th December, 2024. The said
+commission was executed pursuant to order of this Court dated 19th
+December, 2023.
+2. With facts and circumstances stated in the application, the said
+application is allowed.
+3. The Registry is accordingly directed to de-seal the said hard disk in
+the presence of counsel for the defendant no.2. for inspection by counsel for
+plaintiffs.
+4. Accordingly, the said application is disposed of with the above
+directions.
+CS(COMM) 907/2023
+1. Re-notify on 25th September, 2024.
+2. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+MAY 6, 2024/
+MR/na
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:39
+
+===== ORDER =====
+
+$~33
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023 & I.A. 25650/2023 & I.A. 2044/2024
+RECKITT & COLMAN (OVERSEAS) HEALTH LIMITED & ANR.
+..... Plaintiff
+Through: Ms. Nancy Roy, Ms. Prakrit
+Varshney and Mr. Prashant, Advocates.
+versus
+ASHOK KUMAR(S)/JOHN DOE(S)/ & ORS. ..... Defendant
+Through: Jain and Ms. Gaurika Sood,
+Advocates for D-2, Mr. Devesh Sehgal
+(D-2)
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 10.05.2024
+1. Matter has been received on office note.
+2. The matter has been mentioned by counsel for parties with respect to
+order passed by this Court on 06th May, 2024.
+3. As per para 6 of the order, the relevant sealed moulds were to be released
+in presence of plaintiff’s representatives/counsel, Mr. and Ms. Saigal along
+with their counsel as well on 09th May, 2024 between 10:00 and 05:00 P.M.
+4. Counsel for plaintiff has expressed his apprehension that this de-sealing
+may be carried out in the presence of a Local Commissioner.
+5. Considering the circumstances of this case, that may not be necessary.
+6. It would be, however, imperative for both plaintiff’s representative and
+counsel, as well as counsel for applicant Ms. Saigal to be present.
+7. The de-sealing can be executed on or before 13th May, 2024 between
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:39
+10:00 and 05:00 P.M.
+8. Compliance report in this regard may be filed by counsel for applicant
+within a period of two weeks thereafter.
+9. List on 25th September, 2024.
+10. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+MAY 10, 2024/RK
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:39
+
+===== ORDER =====
+
+$~8
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023
+RECKITT & COLMAN (OVERSEAS) HEALTH
+LIMITED & ANR. ..... Plaintiff
+Through: Ms. Prakriti Varshney, Advocate
+versus
+ASHOK KUMAR(S)/ JOHN DOE(S) & ORS.
+..... Defendant
+Through: Mr. Siddharth Jain, Mr. Shubham
+Saigal, Gaurika Sood, Advocates
+for D-2.
+Mr. Akshay Srivastava,
+Ms. Krati Tiwari (VC), Advocate
+for D-3.
+Mr. Akshay Raj, Ms. Hunny
+Sharma (VC), Advocates for
+proposed D-6.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 15.05.2024
+Defendant nos. 2 and 3 are yet to file their written
+statements.
+Ld. Counsel appearing for defendant no. 2 submits that
+written statement shall be filed, as per rules.
+Defendant nos. 4 to 6 have been impleaded on 23.04.2024.
+Suit has already been decreed qua defendant no. 4. However,
+written statement is yet to be filed by defendant no. 5. Let the
+same be filed, as per rules.
+Ld. Counsel however highlights that plaintiff is in
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:38
+settlement talks with defendant no. 5.
+Ld. Counsel appearing for defendant no. 6 submits that
+written statement has been filed which is however under
+objections. Ld. Counsel is directed to take steps within a week
+and bring the same on record. A copy of the same be supplied to
+ld. Counsel for the plaintiff before being refiled.
+Put up for completion of pleadings on 27.08.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 15, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:38
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023
+RECKITT & COLMAN (OVERSEAS) HEALTH
+LIMITED & ANR. ..... Plaintiff
+Through: Ms. Prakriti Varshney (VC),
+Advocate
+versus
+ASHOK KUMAR(S)/ JOHN DOE(S) & ORS.
+..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 20.05.2024
+I.A. No. 29820/2024 filed by the plaintiff for impleadment of
+the proposed defendant no. 7.
+Issue notice to the proposed defendant no. 7 on filing of
+PF. Steps be taken within a week. Reply to the IA be filed
+within two weeks of receiving notice. Advance copy of the reply
+be supplied to ld. counsel for the plaintiff.
+Put up for completion of pleadings on 27.08.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 20, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:37
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023
+RECKITT & COLMAN (OVERSEAS) HEALTH
+LIMITED & ANR. ..... Plaintiff
+Through : Ms. Prakriti Varshney
+(VC), Advocate
+versus
+ASHOK KUMAR(S)/ JOHN DOE(S) & ORS.
+..... Defendant
+Through : Mr. Shubham Saigal,
+Mr. Siddharth Jain,
+Ms. Gaurika Sood,
+Advocates for D-2.
+Mr. Akshay Srivastava,
+Mr. Kriti Tiwari (VC)
+Advocates for D-3
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 01.07.2024
+I.A. No. 31942/2024 on behalf of defendant no. 2 to condone
+the delay of 89 days in filing the written statement.
+Issue notice.
+Notice accepted by ld. Counsel for the plaintiff.
+Ld. Counsel for the plaintiff submits that she has no
+objection if the application is allowed subject to imposition of a
+reasonable cost.
+For the reasons stated in the application, application is
+allowed subject to cost of Rs.5000/-, to be paid to the plaintiff
+within three weeks. Delay stands condoned. Written statement
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:37
+is taken on record. Replication be filed within the period
+permissible, as worked out from today.
+IA stands disposed off.
+I.A. No. 31943/2024 on behalf of defendant no. 2 seeking
+discovery and inspection of documents /materials from the
+plaintiffs.
+&
+I.A. No. 31944/2024 on behalf of defendant no. 2 seeking
+leave of this Hon'ble Court to serve interrogatories on the
+plaintiffs.
+Issue notices. Notices accepted by ld. Counsel for the
+plaintiff who presses for an opportunity to file a response.
+Let the reply/ies be filed within four weeks, with an
+advance copy of the same to the opposite side. Rejoinder/s
+thereto, if any, be filed thereafter within two weeks of receiving
+an advance copy of the reply/ies.
+Put up for completion of pleadings on 27.08.2024, the date
+already fixed.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 1, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:37
+
+===== ORDER =====
+
+$~32
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023, I.A. 25650/2023, I.A. 2044/2024, I.A.
+29820/2024, I.A. 31943/2024 & I.A. 31944/2024
+RECKITT & COLMAN (OVERSEAS) HEALTH LIMITED
+& ANR. .....Plaintiffs
+Through: Ms. Nanacy Roy and Mr. Prashant,
+Advs.
+M: 9871678017
+Email: nroy@indiaip.com
+versus
+ASHOK KUMAR(S)/ JOHN DOE(S) & ORS. .....Defendants
+Through: Mr. Siddharth Jain and Mr. Shubham
+Saigal, Advs. for R-2.
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 12.08.2024
+1. List before the Joint Registrar (Judicial), for completion of pleadings,
+on the date already fixed, i.e., 27th August, 2024.
+MINI PUSHKARNA, J
+AUGUST 12, 2024/kr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:36
+
+===== ORDER =====
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023
+RECKITT & COLMAN (OVERSEAS) HEALTH
+LIMITED & ANR. ....Plaintiff
+Through: Ms. Ananya (VC), Advocate
+versus
+ASHOK KUMAR(S)/ JOHN DOE(S) & ORS.
+.....Defendant
+Through: Mr. Shubham Saigal,
+Mr. Siddharth Jain, Mr. Afnan,
+Ms. Shambhavi, Advocates for
+D-2 and proposed D-7.
+Mr. Akshay Srivastava,
+Ms. Krati Tiwari (VC),
+Advocates for D-3.
+Mr. Irfan (VC), Defendant no. 5
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 27.08.2024
+I.A. No. 37359/2024 filed by the plaintiff for seeking
+condonation of delay of 13 days in filing the replication qua
+D-2.
+1. Issue notice. Notice accepted by ld. Counsel for defendant
+no. 2 who presses for an opportunity to file a response. Let the
+reply be filed within four weeks, with an advance copy of the
+same to the opposite side. Rejoinder thereto, if any, be filed
+thereafter within two weeks of receiving an advance copy of the
+reply. Put up again on the next date.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:34
+I.A. No. 29820/2024 filed by the plaintiff for impleadment of
+proposed defendant no. 7.
+2. Reply to the present IA has been filed yesterday and is
+pending scrutiny. A copy of the reply has been received by ld.
+Counsel for the plaintiff. Rejoinder, if any be filed within two
+weeks without waiting for the reply to come on record. Put up
+again on the next date.
+I.A. No. 31943/2024 on behalf of defendant no. 2 seeking
+discovery and inspection of documents /materials from the
+plaintiffs.
+&
+I.A. No. 31944/2024 on behalf of defendant no. 2 seeking
+leave of this Hon'ble Court to serve interrogatories on the
+plaintiffs.
+3. Final opportunity is granted to the plaintiff to file replies to
+both these IA’s within three weeks failing which right to file
+reply shall stand closed without any further orders. An advance
+copy of the reply be sent to ld. Counsel for defendant no. 2 who
+may file a rejoinder within two weeks of receiving an advance
+copy of the reply. Put up again on the next date.
+CS(COMM)-907/2023:
+4. Cost stands paid by defendant no. 2. Replication to the
+written statement of defendant no. 2 is under defect on account of
+delay for which an IA has been moved.
+5. Although written statement of defendant no. 3 is reflected
+on record, ld. Counsel for defendant no. 3 submits that an
+application has been moved for seeking condonation of delay for
+taking on record the written statement.
+6. Suit has already been decreed qua defendant no. 4.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:34
+Defendant nos. 4 to 6 have been impleaded on 23.04.2024.
+Defendant no. 5 has put in appearance today through VC.
+Summons are deemed to have been served today on defendant
+no. 5. Let written statement be filed, as per rules.
+7. Written statement of defendant no. 6 is under objections.
+On 15.05.2024, one week was granted to defendant no. 6 to
+remove the objections. However, till today steps have not been
+taken. Steps be now taken within two weeks to remove the
+objections failing which right to bring the written statement shall
+stand closed without any further orders.
+8. Put up for completion of pleadings on 22.10.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 27, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:34
+
+===== ORDER =====
+
+$~28
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023, I.A. 25650/2023, I.A. 2044/2024, I.A.
+29820/2024, I.A. 31943/2024, I.A. 31944/2024, I.A. 37359/2024 &
+I.A. 40360/2024
+RECKITT & COLMAN (OVERSEAS) HEALTH LIMITED
+& ANR. .....Plaintiffs
+Through: Ms. Prakriti Varshney, Adv.
+M: 9899257363
+Email: pvarshney@indiaip.com
+versus
+ASHOK KUMAR(S)/ JOHN DOE(S) & ORS. .....Defendants
+Through: Ms. Shambhavi Jaiswal, proxy
+counsel for Mr. Shubham Saigal,
+Advocate.
+(M): 9958039440
+9407223688
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 25.09.2024
+1. Hon’ble Judge is on leave today.
+2. Re-notify on 07th October, 2024.
+BY ORDER
+COURT MASTER
+SEPTEMBER 25, 2024
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:33
+
+===== ORDER =====
+
+$~33
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023 & I.A. 25650/2023, I.A. 2044/2024, I.A.
+29820/2024, I.A. 31943/2024, I.A. 31944/2024, I.A. 37359/2024,
+I.A. 40360/2024
+RECKITT & COLMAN (OVERSEAS) HEALTH LIMITED
+& ANR. .....Plaintiffs
+Through: Ms. Nancy Roy, Advocate
+(through VC)
+versus
+ASHOK KUMAR(S)/ JOHN DOE(S) & ORS. .....Defendants
+Through: Mr. Shubham Saigal and Ms.
+Sambhavi Jaiswal, Advs. for D-2.
+M: 9407223688
+Mr. Akshay Srivastava and Ms. Krati
+Tiwari, Advocates for Defendant No.-
+3 (through VC)
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 07.10.2024
+I.A. 40360/2024
+1. The present application has been filed under Section 151 of the Code
+of Civil Procedure, 1908 (“CPC”) for de-sealing and examination of the
+hard disk containing the data of the electronic devices and hard disks seized
+at the time of local commissions conducted on 20th December, 2023.
+2. By way of the present application, the plaintiff seeks appointment of
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:33
+the Local Commissioner for the purpose of carrying out the de-sealing and
+the examination/inspection of all the data and hard disks with the assistance
+of IT experts as hired by the plaintiffs, in the presence of the representatives
+of plaintiffs and the defendant no.2.
+3. Learned counsel appearing for defendant no. 2 submits that he has
+objections to the present application and wishes to file reply thereto.
+4. Accordingly, issue notice. Notice is accepted by learned counsel
+appearing for defendant no. 2.
+5. Let reply be filed within a period of four weeks. Rejoinder thereto, if
+any, be filed within a period of two weeks, thereafter.
+6. List before the Joint Registrar (Judicial) on the date already fixed,
+22nd October, 2024.
+7. List before the Court on 17th January, 2025.
+MINI PUSHKARNA, J
+OCTOBER 7, 2024
+ak
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:33
+
+===== ORDER =====
+
+$~8
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023
+RECKITT & COLMAN (OVERSEAS) HEALTH
+LIMITED & ANR. .....Plaintiff
+Through: Ms. Prakriti Varshney (VC),
+Advocate
+Versus
+ASHOK KUMAR(S)/ JOHN DOE(S) & ORS.
+.....Defendant
+Through: Mr. Akshay Srivastava,
+Ms. Krati Tiwari (VC),
+Advocates for D-3.
+Mr. Harjeet Singh Sidhu (VC),
+Advocate for proposed D-5.
+Mr. Siddharth Jain, Mr. Shubham
+Saigal, Advocates for D-2 and
+proposed D-7.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 22.10.2024
+I.A. No. 42916/2024 filed by the proposed defendant no. 7
+seeking condonation of delay of 84 days in filing reply to I.A.
+No. 29820/2024 (Impleadment of D-7 by the plaintiff).
+1. Issue notice. Notice accepted by ld. Counsel for the
+plaintiff who submits that if the delay is to be condoned, same
+should be subject to a reasonable cost. For the reasons stated in
+the application, application is allowed subject to cost of Rs.
+2000/-, to be deposited with Delhi High Court Bar Clerk’s
+Association, Delhi High Court within three weeks failing which
+the reply shall be deemed to have been taken off the record.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:32
+Delay stands condoned. Reply to IA No. 29820/2024 is taken on
+record. IA stands disposed off.
+I.A. No. 25650/2023 (for Stay).
+2. No reply has been filed till now by defendants no. 2 to 5
+(defendant no. 1 being John Doe). Final opportunity is granted to
+the defendants to file a reply within three weeks failing which
+respective rights to file reply shall stand closed without any
+further orders. Rejoinder, if any, be filed within two weeks on
+receiving advance copy of the reply. Put up for completion of
+pleadings.
+I.A. No. 2044/2024 filed by the applicant for de-sealing of dye
+cutting machine sealed during the execution of Local
+Commission on 20.12.2023.
+3. The present application has been moved by defendant no.
+4. However, Ld. Counsel for the plaintiff submits that suit has
+already been decreed against defendant no. 4. Consequently, the
+present IA becomes infructuous and is disposed off accordingly.
+I.A. No. 29820/2024 filed by the plaintiff for impleadment of
+proposed D 7.
+4. Reply on behalf of proposed defendant no. 7 is taken on
+record subject to depositing of cost. No rejoinder is to be filed.
+Put up for arguments on the next date.
+I.A. No. 37359/2024 filed by the plaintiff for seeking
+condonation of delay of 13 days in filing the replication qua
+D-2.
+5. Ld. Counsel for defendant no. 2 submits that if at all the
+delay is condoned, the same should be to a reasonable cost.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:32
+Consequently, for the reasons mentioned in the application the
+delay is condoned subject to cost of Rs. 3000/- to be paid to
+defendant no. 2 / counsel for defendant no. 2 within three weeks
+failing which the replication shall be deemed to have been taken
+off the record. Delay stands condoned. Replication qua
+defendant no. 2 is taken on record. IA stands disposed off.
+I.A. No. 31943/2024 on behalf of defendant no. 2 seeking
+discovery and inspection of documents / materials from the
+plaintiffs.
+6. Reply has been filed. No rejoinder is to be filed. Pleadings
+are complete.
+I.A. No. 31944/2024 on behalf of defendant no. 2 seeking
+leave of this Hon'ble Court to serve interrogatories on the
+plaintiffs.
+7. Reply has been filed. No rejoinder is to be filed. Pleadings
+are complete.
+I.A. 40360/2024 (against D-2).
+8. Ld. Counsel for defendant no. 2 submits that reply shall be
+filed within the period permitted by the Hon’ble Court vide order
+dated 07.10.2024.
+CS(COMM)-907/2023
+9. As per the record of the Registry, written statement has
+been filed on behalf of defendant no. 5 but is under objection. Ld.
+Counsel is directed to take steps to bring the same on record. A
+copy of the same be supplied to ld. Counsel for the plaintiff.
+10. Defendant no. 6 was served with summons on 23.04.2024.
+There is no appearance on behalf of defendant no. 6, neither any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:32
+written statement has been filed on its behalf till date.
+Consequently, right to file written statement on behalf of
+defendant no. 6 stands closed.
+11. Put up for arguments in IA Nos. 29820/2024, 31943/2024,
+31944/2024 / completion of pleadings on 23.12.2024.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+OCTOBER 22, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:32
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023
+RECKITT & COLMAN (OVERSEAS) HEALTH
+LIMITED & ANR.
+.....Plaintiff
+Through: Ms. Prakriti Varshney, Advocate
+versus
+ASHOK KUMAR(S)/ JOHN DOE(S) & ORS.
+.....Defendant
+Through: Mr. Lakshya Gupta, Mr. Akshay
+Srivastava (VC), Advocate for
+D-3.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 27.11.2024
+Ld. Presiding officer is on leave today.
+Re-notify on 23.12.2024, the date already fixed.
+Reader to
+Dr. AJAY GULATI,
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 27, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:31
+
+===== ORDER =====
+
+$~4
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 907/2023
+RECKITT & COLMAN (OVERSEAS) HEALTH
+LIMITED & ANR. .....Plaintiff
+Through: Ms. Nancy Roy, Ms. Prakriti
+Varshney, Mr. Prashant,
+Advocates
+Versus
+ASHOK KUMAR(S)/ JOHN DOE(S) & ORS.
+.....Defendant
+Through: Ms. Sonia (VC), Advocate for
+D-2 & proposed D-7.
+Ms. Neha Yadav, Ms. Aafreen
+Azim, Mr. Mohd. Faiz,
+Mr. He
+
+[TRUNCATED — rights are established in the opening orders above]

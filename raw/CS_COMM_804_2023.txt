@@ -1,0 +1,421 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_804_2023
+case_status: DISPOSED
+n_orders: 6
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 804/2023, I.A. 22110/2023, 22111/2023, 22112/2023,
+22113/2023 & 22114/2023
+RAM NIWAS JINDAL ..... Plaintiff
+Through: Sh. Rakesh Tiwari, Adv. (M.
+9582931401)
+versus
+PEARL PRECISION PRODUCTS
+PVT. LTD & ANR. ..... Defendants
+Through: None.
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 07.11.2023
+1. This hearing has been done through hybrid mode.
+2. The Hon’ble Judge is not holding the Court today.
+3. List on 16th November, 2023.
+BY ORDER
+(COURT MASTER)
+NOVEMBER 07, 2023/DJ
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:18
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 804/2023, I.As. 22110/2023, 22111/2023, 22112/2023,
+22113/2023 & 22114/2023
+RAM NIWAS JINDAL ..... Plaintiff
+Through: Mr. Rakesh Tiwari adv. (M.
+9582931401)
+versus
+PEARL PRECISION PRODUCTS
+PVT. LTD & ANR. ..... Defendants
+Through:
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 16.11.2023
+1. This hearing has been done through hybrid mode.
+2. Hon’ble Judge is on official visit to Geneva to participate in “2023
+WIPO Judges Forum”.
+3. List on 6th December, 2023.
+BY ORDER
+(COURT MASTER)
+NOVEMBER 16, 2023
+Rahul
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:18
+
+===== ORDER =====
+
+$~38
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 804/2023
+RAM NIWAS JINDAL ..... Plaintiff
+Through: Mr. Satish Kumar and Mr. Rakesh
+Tiwari, Advs. (M: 9582931401)
+versus
+PEARL PRECISION PRODUCTS
+PVT. LTD & ANR. ..... Defendants
+Through: None.
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 06.12.2023
+1. This hearing has been done through hybrid mode.
+I.A.22112/2023 (for exemption)
+2. This is an application seeking exemption from filing
+originals/certified/cleared/typed or translated copies of documents, left side
+margins, electronic documents, etc. Original documents shall be
+produced/filed at the time of Admission/Denial, if sought, strictly as per the
+provisions of the Commercial Courts Act and the DHC (Original Side)
+Rules, 2018.
+3. Exemption is allowed, subject to all just exceptions.
+4. Accordingly, the application is disposed of.
+I.A. 22111/2023 (for additional documents)
+5. This is an application seeking leave to file additional documents under
+the Commercial Courts, Commercial Division and Commercial Appellate
+Division of High Courts Act, 2015 (hereinafter, ‘Commercial Courts Act’).
+CS(COMM)804/2023 Page1of5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:17
+The Plaintiff, if it wishes to file additional documents at a later stage, shall
+do so strictly as per the provisions of the Commercial Courts Act and the
+DHC (Original Side) Rules, 2018.
+6. Application is disposed of.
+I.A.22113/2023 (u/S 12A of the Commercial Courts Act)
+7. This is an application filed by the Plaintiff seeking exemption
+instituting pre-litigation mediation under Section 12A of the Commercial
+Courts Act. Considering the facts and circumstances of the case, the Court is
+satisfied that in terms of the judgment of the Hon’ble Supreme Court in
+Yamini Manohar v. T.K.D Keerthi, (2023 LiveLaw (SC) 906), that the
+present suit contemplates urgent interim relief. The exemption is granted to
+the Plaintiffs. Accordingly, the application is disposed of.
+I.A.22114/2023 (u/O XI Rule 6 of CCA)
+8. The present application by the Plaintiff has been filed under Order XI
+Rule 6(3) of the Commercial Courts Act, 2015 read along with Order XI
+CPC, along with Section 65 B of the Evidence Act, 1872 seeking permission
+to place on record, printouts of website links.
+9. Considering the averments in the application, the permission is
+allowed. The application is disposed of in the above terms.
+CS (COMM) 804/2023
+10. Let the plaint be registered as a suit.
+11. Issue summons in the suit to the Defendants through all modes upon
+filing of Process Fee.
+12. The summons to the Defendants shall indicate that the written
+statement to the plaint shall be positively filed within 30 days from date of
+receipt of summons. Along with the written statement, the Defendants shall
+CS(COMM)804/2023 Page2of5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:17
+also file an affidavit of admission/denial of the documents of the Plaintiff,
+without which the written statement shall not be taken on record.
+13. Liberty is given to the Plaintiff to file a replication within 15 days of
+the receipt of the written statement(s). Along with the replication, if any,
+filed by the Plaintiff, an affidavit of admission/denial of documents of the
+Defendants, be filed by the Plaintiff, without which the replication shall not
+be taken on record. If any of the parties wish to seek inspection of any
+documents, the same shall be sought and given within the timelines.
+14. List before the Joint Registrar for marking of exhibits on 23rd January,
+2024. It is made clear that any party unjustifiably denying documents would
+be liable to be burdened with costs.
+15. List before Court on 27th February, 2024.
+I.As.22110/2023 (u/O. XXXIX Rule 1&2 CPC)
+16. The present suit has been filed by the Plaintiff-Ram Niwas Jindal
+Proprietor of M/s Jindal Sanitary Works under Section 134 of Trade Marks
+Act, 1999 seeking protection of the mark ‘PEARL’ bearing no. 660043
+dated 21st March 1995 in Class 11. The plaint further avers that the Plaintiff
+is the adopter of the artistic work underlying the Plaintiff’s label ‘PEARL’
+bearing copyright registration no. ‘A-144594/2023’ dated 11th May 2023.
+The trade mark ‘PEARL’ as well as the artistic work underlying the
+‘PEARL’ label is set out below:
+‘PEARL’ Mark
+CS(COMM)804/2023 Page3of5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:17
+Artistic Work undelying ‘PEARL’ label
+17. The registered proprietor of the above mark ‘PEARL’ was M/s Jindal
+Sanitary Works, which was later dissolved vide dissolution deed dated 1st
+September 1995. It is averred that Sh. Ram Niwas Jindal filed Form TM-24
+for recordal of his name as the subsequent proprietor of registered mark
+‘PEARL’.
+18. As per the plaint, the Plaintiff is recognized as a leading manufacturer
+and trader in India, particularly known for products under the mark
+‘PEARL’. The plaint avers that the high quality and efficiency of the
+Plaintiff’s goods sold under the trade mark/device PEARL, have led to
+significant recognition and demand for their products such as C.P. Bathroom
+Fittings, Cistern & Cistern Balls, Syphon, Seat Cover, and other sanitary
+fittings.
+19. The sales of the Plaintiff’s products are stated to be substantial and in
+the financial year 2021-22, it was stated to be more than Rs. 6.79 crores.
+20. Defendant No.1-Pearl Precision Products Pvt. Ltd., established in
+2019, is involved in the same business as the Plaintiff. Defendant No.2-
+CS(COMM)804/2023 Page4of5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:17
+Shivam Trading Co., is a proprietorship firm led by Mr. Sonu Garg, and acts
+as a dealer/distributor for Defendant No.1.
+21. In July 2023, the Plaintiff's sales team reported that Defendant No.1,
+in collusion with Defendant No.2, is marketing and selling products bearing
+the Plaintiff’s label mark ‘PEARL’ in Delhi and other parts of the country.
+According to the Plaintiff, the Defendant No.1 dishonestly adopted a
+competing trade mark/device named ‘PEARL PRECISION PRODUCTS’,
+which is claimed to be phonetically and visually similar to the Plaintiff's
+trade mark/device. The competing marks/labels are extracted below:
+22. Issue notice. Let reply be filed within four weeks. Rejoinder within
+four weeks thereafter. List before the Joint Registrar on 23rd January, 2024.
+23. List before Court on 27th February, 2024.
+PRATHIBA M. SINGH, J.
+DECEMBER 06, 2023/dk/dn
+CS(COMM)804/2023 Page5of5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:17
+
+===== ORDER =====
+
+$~10
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 804/2023
+RAM NIWAS JINDAL ..... Plaintiff
+Through: Ms. Pratha Atray, Adv.
+versus
+PEARL PRECISION PRODUCTS PVT. LTD & ANR.
+..... Defendants
+Through: Ms. Maitri, Adv. for D-1 (VC).
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 23.01.2024
+Defendant No. 1 has been served through e-mail on 22.01.2024.
+Learned counsel for the plaintiff submits that in addition to the service
+through e-mail, defendant no. 1 has been served on 19.01.2024 through
+courier. She further submits that even defendant No. 2 has been served
+through courier on 19.01.2024.
+Let written statement be filed within the statutory period and advance
+copy of the same be supplied to learned counsel for the plaintiff.
+Replication,if any, be filed within the period permitted. Reply to I.A. No.
+22110/2023 be filed within the period permitted by the Hon’ble Court.
+Put up before the Hon’ble Court for the date already fixed, for further
+directions, on 27.02.2024.
+Dr. AJAY GULATI (DJHS)
+JOINT REGISTRAR (JUDL.)
+JANUARY 23, 2024/ Click here to check corrigendum, if any
+MR
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:16
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 804/2023, I.A. 22110/2023
+RAM NIWAS JINDAL ..... Plaintiff
+Through: Ms. Pratha Atray, Advocate.
+versus
+PEARL PRECISION PRODUCTS PVT. LTD & ANR.
+..... Defendants
+Through: Mr. Mahip Singh, Mr. Krishnan
+Kumar and Ms. Himani Yadav,
+Advocates.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 27.02.2024
+1. Ms. Pratha Atray, counsel for the Plaintiff, states that the dispute with
+Defendants has been settled under Settlement Agreement dated 7th February,
+2024 (“Settlement Agreement”).
+2. To that effect, Ms. Atray states that she will be filing an appropriate
+application seeking decree on consent terms, within two weeks from today.
+3. Counsel for the Defendants has pointed out that despite Defendants’
+adherence to terms of the settlement, the Plaintiff has not filed appropriate
+application seeking consent decree within the timeframe stipulated in the
+Settlement Agreement.
+4. A day’s time is given to the Plaintiff to file the appropriate
+application, failing which the Plaintiff shall remain present before the Court,
+on the next date of hearing.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:16
+5. List on 29th February, 2024.
+SANJEEV NARULA, J
+FEBRUARY 27, 2024
+nk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:16
+
+===== ORDER =====
+
+$~41
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 804/2023, I.A. 22110/2023
+RAM NIWAS JINDAL ..... Plaintiff
+Through: Mr. Rakesh Tiwari and Ms. Pratha
+Atray, Advocates.
+versus
+PEARL PRECISION PRODUCTS PVT. LTD & ANR.
+..... Defendants
+Through: Mr. Mahip Singh and Mr. Krishan
+Kumar, Advocates for D-1.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 29.02.2024
+1. Counsel for the parties on instructions state that the dispute, which forms
+the subject matter of the present suit, has been settled under a deed of
+settlement dated 7th February, 2024, copy whereof has handed over across
+the board and is taken on record. In terms of the said settlement, the parties
+have agreed to withdraw the ongoing litigation against each other.
+2. Counsel for the Plaintiff states that accordingly he has instructions to
+withdraw the present suit. He also makes a request for the refund of court
+fees as the withdrawal of the suit is outcome of amicable settlement between
+the parties.
+3. In view of the above, the suit is dismissed as withdrawn in light of the
+settlement between the parties. At the counsel for Plaintiff’s request and
+having regard to the judgment of the Supreme Court in The High Court of
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:15
+Judicature at Madras v. M.C. Subramaniam and Ors.,1, the Registry is
+directed to issue a certificate for refund of Court fees, in favour of the
+Plaintiff.
+4. Accordingly, the suit and pending applications are disposed of.
+SANJEEV NARULA, J
+FEBRUARY 29, 2024
+nk
+1Dated17thFebruary,2021inSLP(C)Nos.3063-3064/2021.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:15

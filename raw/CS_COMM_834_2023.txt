@@ -1,0 +1,1097 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_834_2023
+case_status: PENDING
+n_orders: 21
+
+$~103
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 834/2023
+UPAKARMA AYURVEDA PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Darpan Wadhwa,
+Sr.Advocate with Mr. Hemant Daswani, Ms.
+Saumya Bajpai, Mr. Kunal Prakash, Ms.
+Pranjal, Mr. Amar Vaid, Ms. Dinit Vyas
+and Ms. Neelatshi Bhaduria, Advs.
+versus
+RASAYANUM ENTERPRISES ..... Defendant
+Through: Mr. Anil Goel and Mr. Aditya
+Goel, Advs.
+CORAM:
+HON'BLE MR. JUSTICE C. HARI SHANKAR
+O R D E R
+% 08.12.2023
+I.A. 24629/2023 (under Order XXXIX Rule 4 of CPC) & I.A.
+24630/2023
+1. Issue notice. Notice is accepted on behalf of the plaintiff/non-
+applicant by Mr. Hemant Daswani.
+2. Reply, if any, be filed positively within two weeks with advance
+copy to learned Counsel for the applicant who may file rejoinder
+thereto, if any, within one week thereof.
+3. List for disposal of this application on the date already fixed
+i.e., 21 February 2024.
+CS(COMM) 834/2023 Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:51
+4. No extension of time for filing of reply/rejoinder shall be
+granted and it is made clear that this application would be taken up for
+hearing and disposal on the next date.
+5. Mr. Goel, learned Counsel for the defendant, prays that the
+operation of the interim order dated 21 November 2023 be suspended
+till the next date of hearing.
+6. Having heard learned Counsel, I am of the opinion that as the
+Court would be considering the plaintiff’s IA 23080/2023 (under
+Order XXXIX Rules 1 and 2 of the CPC), for hearing and disposal on
+the next date, no interlocutory directions are necessary.
+C. HARI SHANKAR, J.
+DECEMBER 8, 2023
+dsn
+Click here to check corrigendum, if any
+CS(COMM) 834/2023 Page 2 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:51
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 834/2023, I.A. 23080/2023, I.A. 24629/2023 & I.A.
+24630/2023.
+UPAKARMA AYURVEDA PRIVATE LIMITED ..... Plaintiff
+Through: Mr Anil Goel and Mr Pranjal Sharma,
+Advs.
+versus
+RASAYANUM ENTERPRISES ..... Defendants
+Through: Mr Darpan Wadhwa, Sr Adv. with Mr
+Hemant Daswani, Ms Saumya Bajpai,
+Ms Pranjal, Mr Amir Vaid, Ms Divita
+Vyas, Mr Kumar Prakash and Ms N.
+Bhadauria, Advs.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 04.01.2024
+1. Counsel for the defendant has presented an order dated 21st December,
+2023, passed by the Division Bench of this Court in FAO(OS) (COMM)
+278/2023, where request was made to the Roster Bench to list the application
+Order XXXIX Rule 4 of the Code of Civil Procedure, 1908 filed by the
+defendant to an early date. The earlier date was fixed for 21.02.2024.
+2. In view of the same, the matter is listed on 12th January, 2024.
+3. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+JANUARY 4, 2024/RK
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:51
+
+===== ORDER =====
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 834/2023, I.A. 23080/2023, & I.A. 24630/2023
+UPAKARMA AYURVEDA PRIVATE LIMITED ..... Plaintiff
+Through: Mr Darpan Wadhwa, Sr Adv. with
+Mr. Hemant Daswani, Ms Saumya
+Bajpai, Ms Pranjal, Mr Amir Vaid,
+Ms Divita Vyas, Mr Kumar Prakash
+and Ms N. Bhadauria, Advs.
+versus
+RASAYANUM ENTERPRISES ..... Defendant
+Through: Mr Anil Goel and Mr Pranjal
+Sharma, Advs.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 12.01.2024
+I.A. No.876/2024 (under Order XXXIX Rule 2A CPC)
+1. This application has been filed by the plaintiff pointing out that despite
+the order dated 21st November, 2023 restraining the defendant from
+manufacturing or marketing any product with the impugned device mark, the
+impugned products are being sold on various websites (non-applicants/
+defendant Nos.1 to 3). Screen shots of the said listings on the websites of the
+non-applicants are provided in this application.
+2. Counsel for the defendant accepts notice and states on instructions that
+there is absolute compliance of the order of this Court dated 21st November,
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:50
+2023. He wishes to file reply to this application, which he may do within
+next 4 weeks with advance copy to the opposing counsel, who may file a
+rejoinder, if necessary, before the next date of hearing.
+3. In the meantime, defendant shall ensure that all aspects of order dated
+21st November, 2023 are complied with including, in particular, restraining
+marketing and manufacturing of their products using the impugned label
+extracted in para 2 of the said order or any other label being deceptively
+similar to the device mark registered in plaintiff’s favour.
+4. The defendant shall also ensure that written communications are
+addressed to any e-commerce platform which may have listings of the
+impugned label, including but not limited to those which have mentioned by
+the plaintiff in this application. These communications shall refer to the order
+of this Court and ensure compliance by taking down the said listings. The
+details of such communications may be placed in the reply to be filed by the
+defendant to this application.
+I.A. 24629/2023(under Order XXXIX Rule 4 CPC)
+1. This application has been filed by the defendant seeking vacation of
+the injunction order passed by this Court on 21st November, 2023. The
+plaintiff has already filed reply to this application.
+2. During deliberation in the Court, it transpired that defendant has
+devised a new set of packaging for its products in two different quantities,
+viz. 10g and 20g. These new packaging have certain changes from the
+impugned packaging, and the same have been shown to the Court as also to
+the Senior Counsel for the plaintiff.
+3. Mr Darpan Wadhwa, Senior Counsel for the plaintiff, states that he
+will seek instructions from the plaintiff on whether they are willing to agree
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:50
+to the proposed modifications.
+4. The parties shall be at liberty, through their counsel, to discuss various
+permutations and combinations, if considered necessary, in order to arrive at
+an amicable resolution of their disputes.
+5. Counsel for the defendant shall also take instructions from his client
+with respect to attempting an amicable settlement of disputes.
+6. List for further directions, and for parties to report on the outcome of
+settlement talks on 24th January, 2024.
+7. Interim orders to continue till then.
+8. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+JANUARY 12, 2024/sm/rj
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:50
+
+===== ORDER =====
+
+$~25
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 834/2023
+UPAKARMA AYURVEDA PRIVATE LIMITED
+..... Plaintiff
+Through: Ms. Saumya Bajpai, Adv.
+(M- 8826576220).
+versus
+RASAYANUM ENTERPRISES
+..... Defendant
+Through: None.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 16.01.2024
+List the matter for the purpose fixed on the date fixed i.e.
+22.01.2024.
+IA No. 1025/2024 (by plaintiff u/s 151 CPC to amend the name
+of defendant/ respondent)
+Issue notice to the defendant through counsel, via
+e-mail/whatsapp.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 16, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:49
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 834/2023
+UPAKARMA AYURVEDA PRIVATE LIMITED
+..... Plaintiff
+Through: Ms. Saumya Bajpai, Adv.
+(M- 8826576220).
+Versus
+RASAYANUM ENTERPRISES
+..... Defendant
+Through: None.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 22.01.2024
+The counsel for the defendant states that he had filed the
+written statement yesterday, vide diary no. 137455/24. The office
+noting in respect thereof is however awaited.
+The plaintiff may, in the meantime, file the replication in due
+course.
+The parties shall thereafter file the physical copies of their
+respective documents, if not already filed and the joint schedule of
+the documents.
+List the matter for admission-denial and marking of exhibits
+on 25.04.2024.
+IA No.1025/2024 (By plaintiff u/s 151 CPC to amend the name
+of defendant)
+The application is allowed, being formal in nature.
+The amended memo of parties is already annexed with this
+application.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 22, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:49
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 834/2023, I.A. 23080/2023, I.A. 24629/2023, I.A.
+24630/2023, & I.A. 876/2024.
+UPAKARMA AYURVEDA PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Darpan Wadhwa, Sr. Adv. with
+Mr. Hemant Daswani, Ms. Saumya
+Bajpai, Ms. Pranjal, Mr. Amit Vaid,
+Ms. Divita Vyas, Ms. N. Bhaduria,
+Advs.
+versus
+RASAYANUM ENTERPRISES ..... Defendant
+Through: Mr. Anil Goel and Mr. Aditya Goel,
+Advs.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 24.01.2024
+1. Counsel for the plaintiff points out to the continued non-compliance
+by the defendant of the order dated 21st November, 2023 passed by this
+Court which was reiterated in order dated 12th January, 2024. They have
+presented to the Court various screen-shots of the listings on the defendant’s
+website as well as other websites showing that the product which was
+injuncted is still available.
+2. Counsel for the plaintiff seeks liberty to file additional documents in
+support of their application, I.A. 876/2024.
+3. Liberty to do the same is granted.
+4. Counsel for the defendant refutes the averments made by counsel for
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:48
+the plaintiff.
+5. List on 02nd February, 2024.
+6. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+JANUARY 24, 2024/MK/sc
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:48
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 834/2023, I.A. 23080/2023, I.A. 24629/2023, I.A.
+24630/2023 & I.A. 876/2024.
+UPAKARMA AYURVEDA PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Darpan Wadhwa, Sr. Adv. with
+Mr. Hemant Daswani, Ms. Saumya
+Bajpai, Ms. Pranjal, Ms. Divita Vyas,
+Mr. Amar Vaid and Ms. Neelakshi
+Bhaduria, Advs.
+versus
+RASAYANUM ENTERPRISES ..... Defendant
+Through: Mr. Aditya Goel, Mr. Anil Goel and
+Mr. Pranjal Sharma, Advs.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 02.02.2024
+1. Counsel for the defendant points out that they will file a response to
+the application under Order XXXIX Rule 2A Code of Civil Procedure, 1908
+for which four weeks were given by the order dated 12th January, 2024. He
+insists on instructions that there has been full compliance of the order dated
+21st November, 2023.
+2. Order dated 21st November, 2023 was an ex parte ad-interim
+injunction in favour of the plaintiff restraining the defendant from using the
+label which was extracted in para 2 of the said order.
+3. Counsel for the defendant today points out that they have now
+received the registration for the device mark by the Registrar of Trade
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:48
+Marks. The certificate dated 30th January, 2024 has been handed up to the
+Court, a screen-shot of which is being extracted as under for reference:-
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:48
+4. Further, he reiterates that as recorded previously by this Court the
+packaging for the 10gms. product has now been changed from beige to a
+dark brown colour, whereas the 20gms. product, some changes have been
+made.
+5. Mr. Darpan Wadhwa, Senior Counsel for the plaintiff, however,
+points out that the website of the defendant themselves (www.rasayanam.in)
+on being accessed, even as of today, showed the original packaging of the
+20gms. product of the defendant. This, according to him, is enough
+evidence of the fact that the packaging which was injuncted is still available
+on their website. He further states that the said product along with this
+packaging is also available on another e-commerce websites.
+6. Counsel for the defendant states on instructions that they have
+removed all such listings in compliance of the order dated 21st November,
+2023 and they have not sold a single product since then.
+7. The Court has been shown the website www.rasayanam.in on a
+computer device in Court and it is obvious that the 20gms. packaging is still
+available, and also available for purchase as pack of 1, 2, 3, 4, 5 for various
+prices from Rs.999/- to Rs.800/-. There is a purchase option also given on
+the said website being “Add to cart”.
+8. Counsel for the defendant while reiterating his earlier submission
+states that he will seek instructions with regard to the presence of the listings
+of this packaging, which now are obvious from the perusal of the
+defendant’s own website being accessed before the Court.
+9. Compliances with regard to the order dated 21st November, 2023 as
+also compliance of the directions given in the order dated 12th January, 2024
+be also ensured by the defendant and will be included in the reply which
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:48
+may be filed on or before 08th February, 2024.
+10. Counsel for the defendant submits that his application under Order
+XXXIX Rule 4 CPC may be taken up by this Court. It is pointed out to the
+counsel that this application has already been listed, and perusal of the
+previous orders would show that various attempts were made to resolve the
+issue, however, if non-compliance is apparent of an order of this Court, the
+defendant would have to first satisfy this Court that there has been no
+violation of the orders of this Court, before his plea under Order XXXIX
+Rule 4 CPC can be accepted.
+11. List on 21st February, 2024, the date already fixed.
+12. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+FEBRUARY 2, 2024/MK/ig
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:48
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 834/2023, I.A. 23080/2023, I.A. 24629/2023, I.A.
+24630/2023 & I.A. 876/2024
+UPAKARMA AYURVEDA PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Darpan Wadhwa, Sr. Advocate
+alongwith Mr. Hemant Daswani, Ms.
+Saumya Bajpai, Ms. Pranjal, Mr.
+Amer Vaid, Ms. Neelakshi Bhaduria,
+Ms. Divita Vyas and Mr. Kunal
+Prakash, Advocates.
+versus
+RASAYANUM ENTERPRISES ..... Defendant
+Through: Mr. Anil Goel, Mr. Aditya Goel and
+Mr. Pranjal Sharma, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 21.02.2024
+I.A. 24630/2023 (Exemption from filing originals/certified copies etc.)
+1. Exemption is granted, subject to all just exceptions.
+2. Applicant shall file legible, clear, and original copies of the
+documents on which the applicant may seek to place reliance before the next
+date of hearing.
+3. Accordingly, the present application is disposed of.
+I.A. 23080/2023 (U/o XXXIX Rules 1 & 2 CPC), I.A. 24629/2023 (U/o
+XXXIX Rule 4 CPC) & I.A. 876/2024 (U/o XXXIX Rule 2A CPC)
+1. Arguments heard. Judgment reserved.
+2. It is stated that compilations of earlier filed documents relating to the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:47
+alleged violation by defendant of the injunction order of this Court have
+been filed vide Diary Nos.E-240397/2024 dated 31st January, 2024 (which is
+already on record), E-257237/2024 dated 01st February, 2024, and
+E-500255/2024 dated 20th February, 2024, as stated by the plaintiff’s
+counsel. Copies of the same have been given to the counsel for the
+defendant in Court today.
+3. Registry to ensure that the same are placed on record within the next 3
+days.
+4. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+FEBRUARY 21, 2024/kct/sc
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:47
+
+===== ORDER =====
+
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+% Reserved on : 21st February, 2024
+Pronounced on : 22nd March, 2024
++ CS(COMM) 834/2023, I.A. 23080/2023, I.A. 24629/2023, I.A.
+24630/2023 & I.A. 876/2024
+UPAKARMA AYURVEDA PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Darpan Wadhwa, Sr.
+Advocate along with Mr. Hemant
+Daswani, Ms. Saumya Bajpai, Ms.
+Pranjal, Mr. Amer Vaid, Ms.
+Neelakshi Bhaduria, Ms. Divita
+Vyas and Mr. Kunal Prakash,
+Advocates.
+versus
+RASAYANUM ENTERPRISES ..... Defendant
+Through: Mr. Anil Goel, Mr. Aditya Goel
+and Mr. Pranjal Sharma,
+Advocates.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+JUDGMENT
+ANISH DAYAL, J.
+I.A. 23080/2023 (under Order XXXIX Rules 1 & 2, CPC) & I.A. 876/2024
+(under Order XXXIX Rule 2A, CPC) and I.A. 24629/2023 (under Order
+XXXIX Rule 4, CPC)
+1. Present applications are a part of the suit filed by plaintiff praying
+for relief of permanent injunction restraining defendant from infringement
+and passing off of plaintiff’s trademark ‘UPAKARMA AYURVEDA
+CS(COMM) 834/2023 1 of 33
+PURE SHILAJIT’ bearing registration no.
+4422492 dated 14th August, 2023, w.e.f. 28th January, 2020 in Class 5 –
+herbal medicines, supplements, cosmetics, etc. and copyright in the art
+work, and other attendant reliefs.
+2. Grievance of plaintiff was against the use of defendant’s mark
+‘RASAYANAM PURE SHILAJIT’ for an
+identical product.
+3. By order dated 21st November, 2023 (‘injunction order’), an ex-
+parte ad interim injunction was granted in favour of plaintiff and against
+defendant, including appointment of a Local Commissioner. Relevant
+paragraphs of the said order are as under:
+“7. A prima facie case of infringement, by the
+defendant, of the device mark registered in the
+plaintiffs favour vide Registration No.
+4422492 dated 14 August 2023, w.e.f. 28
+CS(COMM) 834/2023 2 of 33
+January 2020, stands made out, as the
+similarities between the defendant's label and
+the plaintiff s registered device mark with
+both being on identical beige background
+with letters in gold, similar placement of the
+name of the product and the word "Shilajit"
+and, most prominently a similar usage of
+mountain peaks above the brand name, are so
+stark that there is every possibility of the
+uninitiated consumer believing, at the very
+least, existence of an association between the
+two marks. That by itself would suffice to
+constitute "infringement" within the meaning
+of Section 29(2)(b) of the Trade Marks Act.
+…
+13. The facts stated hereinabove disclose a
+prima facie case of infringement, by the
+defendant, of the label of the plaintiff, which
+stands registered in its favour as a device
+mark under the Trade Marks Act.
+14. As the product in question is an Ayurvedic
+preparation and is intended for oral
+consumption, the standard for infringement
+would be correspondingly lower, applying the
+principles enunciated by the Supreme Court
+in Cadila Healthcare Ltd. v. Cadila
+Pharmaceuticals, especially as both the
+marks are used for the same product. The
+Court has, therefore, to ensure that there is no
+possibility whatsoever of customers confusion
+as a result of the use, by the defendant, of a
+mark which is deceptively similar to the
+registered trade mark of the plaintiff.
+15. The facts, stated hereinabove, also
+disclose a prima facie case of infringement
+and passing off in favour of the plaintiff and
+against the defendant. An overwhelming
+element of public interest being thus involved,
+the considerations of balance of convenience
+CS(COMM) 834/2023 3 of 33
+and irreparable injury would also justify
+grant of ex parte ad interim relief.
+…
+18. For the aforesaid reasons, till the next
+date of hearing, the defendant, as well as all
+others acting on its behalf, shall stand
+restrained from manufacturing or marketing
+any product using the impugned label
+extracted in para 2 (supra) or any other label
+which is deceptively similar to the device
+mark registered in the plaintiffs favour vide
+Registration No. 4422492 dated 14 August
+2023, w.e.f. 28 January, 2020.”
+4. Subsequently, an application under Order XXXIX Rule 4 of Code
+of Civil Procedure, 1908 (‘CPC’) was filed by defendant, as well as under
+Order XXXIX Rule 2A, CPC by plaintiff alleging violation of the
+injunction order by defendant.
+5. Pleadings were complete and counsel for both parties placed their
+submissions. All three applications have been considered in a
+consolidated manner as under.
+Submissions on behalf of plaintiff
+6. Mr. Darpan Wadhwa, Senior Counsel for plaintiff inter alia made
+the following submissions:
+6.1 Deceptive similarity: Plaintiff’s grievance was on deceptive
+similarity of the device mark used by defendant. In that, it led to adoption
+of a similar trade dress and artistic work as that of the plaintiff’s, for
+identical products i.e. Shilajit (a herbal medicinal product);
+CS(COMM) 834/2023 4 of 33
+6.2 No issue with defendant’s word mark: Plaintiff did not object to
+defendant’s usage of its word mark in its own trade name/trademark
+‘RASAYANAM’; the grievance raised was limited to defendant’s use of
+a similar trade dress;
+6.3 Statutory provisions: As a foundational basis, reference was
+made to Section 2(m) of the Trade Marks Act, 1999 (‘TM Act’)
+[definition of a mark which included inter alia a device, brand, label,
+packaging and a combination of colours]; Section 2(q) of the TM Act
+[packaging including inter alia case, box, covering, wrapper, cap, and
+lid]; Section 2(zb) of the TM Act [definition of trademark which is a mark
+capable of distinguishing goods and services of one person from the other
+including shape of goods, packaging, and combination of colours];
+6.4 Infringement: Plaintiff made a plea of infringement under Section
+29(2)(b) of TM Act [similarity to plaintiff’s registered trademark and
+identical goods];
+6.5 Passing off: A plea of passing off of plaintiff’s product as that of
+the defendant of their goods as that of plaintiff’s was made on the ground
+of the deceptively similar packaging on with respect to aspects of
+similarity and likelihood confusion;
+6.6 Copyright infringement: The unique artwork/get-up/label having
+unique colour combination is stated to be an artistic work within the
+meaning of Section 2(c) of the Copyright Act, 1957 (‘Copyright Act’)
+and thus, a plea of infringement of copyright was made under Section 51,
+Copyright Act;
+CS(COMM) 834/2023 5 of 33
+6.7 User/Presence in the market: Plaintiff’s invoices (earliest being
+of 30th May, 2018 and the latest being of 29th November, 2022) filed as
+part of the suit were referred to prove that the product “Shilajit” was sold
+by plaintiff through all these years. This coincided with the plaintiff’s user
+claimed since 01st April, 2018;
+6.8 Sales Turnover: The Chartered Accountant’s certificate certifying
+annual sales turnover of the product Upkarma Ayurvedva Pure Shilajit for
+the Financial Year 2017-18 till 2021-22 amounting to Rs.
+19,53,48,344.13/- was referred to substantiate the plea of extensive use,
+balance of convenience, and irreversible prejudice.
+7. For the purposes of the application under Order XXXIX Rule 2A,
+CPCs, counsel for plaintiff pointed out availability of the infringing
+product on a Google search inter alia on www.fetchnbuy.in and
+www.ebay.com.
+8. During the proceedings, counsel for defendant stated that a
+completely different packaging has been introduced for the 10gm product
+and several changes have been made in their 20gm product. Pictorial
+representation of both is extracted as under:
+CS(COMM) 834/2023 6 of 33
+9. Senior Counsel for plaintiff also pointed out to listings on various
+sites inter alia Amazon, JioMart, and www.rasayanam.in (defendant’s
+website), demonstrating availability of defendant’s products inter alia in
+20 gm new packaging which, it was contended, was deceptively similar
+to the original packaging injuncted by this Court vide order dated 21st
+November, 2023.
+10. Printout of a Google search for ‘upakarma shilajit’ was handed
+over showing that the results, pursuant to such search, elicit a sponsored
+link for defendant’s product, and also titles the defendant’s product as
+‘UPAKARMA SHILAJIT’ ‘Rasayanam Pure Shilajit.’
+11. Screenshot of such a Google search result is extracted as under:
+12. To substantiate their arguments, Senior Counsel for plaintiff placed
+reliance on the following decisions:
+12.1 Shree Nath Heritage Liquor Pvt. Ltd. v. M/s Allied Blender &
+Distillers Pvt. Ltd., 2015:DHC:5236-DB, wherein factors to determine
+likelihood of confusion in trademark infringement and passing off have
+been elucidated;
+CS(COMM) 834/2023 7 of 33
+12.2 Metis Learning Solutions v. Flipkart India Pvt. Ltd.,
+2022:DHC:3092, a decision by a Single Judge of this Court held that
+broad and essential features are to be considered and not side by side
+comparison.
+12.3 Manju Singal Proprietor Singla Food v. Deepak Kumar, Deepak
+Manocha, Sara Sales and Anr., 2023:DHC:6445, which held that overall
+effect of competing packaging would have to be seen and not minor/trivial
+variations;
+12.4 Allied Blenders v. Hermes Distillery Pvt. Ltd., 2024:DHC:288, a
+decision by a Single Judge of this Court which traverses law relating to
+parameters for determining likelihood of confusion between two labels
+(as also applicable to trade dresses);
+12.5 SSG Pharma (P) Ltd. v. Paras Pan Products Pvt. Ltd. and Anr.,
+2023:DHC:6430, elucidating upon substantial imitations of petitioner’s
+label;
+12.6 Tayabbhai M. Bagasarwalla & Anr. v. Hind Rubber Industries
+Pvt. Ltd., (1997) 3 SCC 443, on the issue that plaintiff cannot be
+disentitled to interlocutory order even if question of jurisdiction has been
+raised.
+Submissions on behalf of defendant
+13. Counsel for defendant, in response, pointed out to his written
+statement and submitted inter alia as under:
+CS(COMM) 834/2023 8 of 33
+13.1 New packaging adopted by defendant: Without prejudice to their
+rights and contentions, they had changed their packaging to what is
+represented in para 8 above. Not only was a new brown colour adopted
+for the packaging of the 10gm product, but the font used for ‘PURE
+SHILAJIT’ was changed and the illustration of mountains with a farmer
+had been added at the bottom;
+13.2 Trademark registration in favour of defendant: During the
+pendency of the suit, registration for the trademark
+was granted on 13th January, 2020 w.e.f. 31st July, 2020 in favour of the
+defendant;
+13.3 Trademark application precedes institution of suit: It was
+emphasised that said application was made prior to filing of the suit and,
+in fact, had been advertised on 07th August, 2023, while the suit had been
+filed on 08th November, 2023;
+13.4 Rights conferred by registration: The trademark
+‘RASAYANAM’ is now registered in favour of defendant; the basic
+grievance related to usage of mountain peak by defendant could not be
+sustained and they would have benefit of Section 28 of the TM Act giving
+exclusive right to the defendant; no rectification petition against the same
+has been filed;
+13.5 Dissimilarities in packaging: The registered trademark of
+defendant formed 30% of the packaging and the rest of the trade dress was
+substantially different. Various dissimilarities between plaintiff’s
+CS(COMM) 834/2023 9 of 33
+packaging and defendant’s original impugned packaging are represented
+in the following pictures and tabulated as under:
+CS(COMM) 834/2023 10 of 33
+CS(COMM) 834/2023 11 of 33
+CS(COMM) 834/2023 12 of 33
+13.6 Dissimilar brand names: It was contended that there is no
+phonetic similarity in the brand names of parties; same was also admitted
+by plaintiff themselves. This forms a distinctive difference between the
+two products;
+13.7 No monopoly over colour: Plaintiff could not claim any monopoly
+in the colour combination of beige and gold since they did not have any
+registration for the same, as also the colour adopted by defendant for its
+packaging in the 20gm product was light green colour as is evident from
+the table above;
+13.8 Ratings: Ratings on the internet for the plaintiff’s product was only
+‘4’ as opposed to that of the defendant which was stated to be ‘4.2’ and it
+is evident that defendant has been in the market for quite some time.
+13.9 Artwork common in such products: Display of mountain peaks
+was also evident in various other Shilajit products and more than 80% of
+the products were either beige, gold, or black in colour. Packaging used
+by other parties for this product are extracted as under:
+CS(COMM) 834/2023 13 of 33
+CS(COMM) 834/2023 14 of 33
+The golden font has been extensively used to symbolise ‘Shilajit Gold’
+which is the highest quality of Shilajit and is evident from packaging used
+by other brands; same are extracted as under:
+13.10 No consistency in colour usage: Other products manufactured by
+plaintiff do not use mountain peaks as part of their artwork and thus, it
+cannot be said that the forms a part of essential features of their packaging:
+In fact, the mountain peaks have been used by defendant in all its products,
+as is evident from the pictures below:
+CS(COMM) 834/2023 15 of 33
+13.11 Promotional expenses incurred on defendant’s product were filed
+and cited as Rs. 2,76,84,743/-.
+13.12 Reliance was placed on decisions in Modern Food Industries
+(India) Ltd and Another v. Sachida Anand Dass and Another, (1995)
+Supp 94 SCC 465, and State of Jammu And Kashmir v. Mohd Yaqoob
+Khan and Others, (1992) 4 SCC 167, to contend that in ex-parte ad
+interim injunction orders, finding of contempt was pre-mature.
+13.13 In any event, there was violation of requirement of pre-litigation
+mediation and serving of advance notice when plaintiffs sought
+interlocutory interim relief from this Court.
+CS(COMM) 834/2023 16 of 33
+Rejoinder arguments on behalf of plaintiff
+14. Senior Counsel for plaintiff in rejoinder stated that defendant had
+not filed any document to support their written statement and documents
+were filed only along with their application; no invoices were filed and
+the sales turnover of the specific product was not on record.
+15. Balance of convenience was, therefore, in favour of plaintiff
+considering that defendant introduced a new 10 gm packaging in dark
+brown colour; nothing prevented defendant from changing the packaging
+of their 20gm product, and their insistence to continue with the beige
+colour combination was evidence enough of dishonest adoption of
+plaintiff’s trade dress and to ensure deceptive similarity.
+16. Pointing out to various products of defendant as extracted in para
+13.10 above, it was contended that different colours have been utilised by
+defendant themselves for various products and there was no reason why
+they could not change their packaging to a different colour, in which case,
+plaintiff would not have any grievance since it would ensure
+distinctiveness and preclude deceptive similarity.
+17. It was pointed out that registration of defendant’s trademark has no
+colour associated with it and they were capable of introducing any colour
+combination; but have chosen to adopt a colour combination deceptively
+similar to that of plaintiff in order to ride on the goodwill of the plaintiff.
+Analysis
+18. Heard submissions of counsel for parties and perused documents
+placed on record; this Court is of the opinion that interim injunction
+CS(COMM) 834/2023 17 of 33
+granted in favour of plaintiff need not be displaced inter alia keeping in
+mind the following factual matrix:
+18.1 Basis of plaintiff’s claim is its registered device mark
+and their grievance was against defendant’s usage of
+the mark as part of the trade dress .
+18.2 Ex-parte ad interim injunction granted on 21st November, 2023
+focused on the deceptively similar beige background with letters in gold,
+similar placement of the name of the product and word ‘PURE
+SHILAJIT’ and, most prominently, a similar use/placing of mountain
+peaks around the brand name.
+18.3 Subsequent to the injunction order, defendant adopted a different
+packaging for their 20gm product being , as also
+CS(COMM) 834/2023 18 of 33
+introduced a new packaging in 10 gm being . Same has
+been recorded in order of this Court dated 02nd February, 2024. While the
+matter was being argued in present applications, discussion arose whether
+defendant was planning to change the colour of the 20gm product as well
+to the 10gm dark brown packaging. However, counsel for defendant as
+well as CEO of defendant company, who appeared through video
+conferencing, stated that they have already made several changes to their
+packaging which are reflected in their reply to plaintiff’s application under
+Order XXXIX Rule 2A, CPC as also their written statement in the present
+suit. Said changes are as follows:
+18.3.1 20gm packaging: Lexin Font has been used instead of erstwhile
+Amarnath Font for ‘PURE SHILAJIT’ in dark brown colour instead of
+erstwhile golden colour. Furthermore, prominent illustration of mountains
+with a farmer at the bottom has been used which was earlier golden
+border. Pictorial depiction of the same is as follows:
+18.3.2 10gm packaging: Completely brown packaging. Pictorial
+representation of the same is as under:
+CS(COMM) 834/2023 19 of 33
+18.4 Since there was insistence on changing the 20gm packaging from
+the colour that was used by defendant prior to the injunction being
+granted, more artwork of a farmer was added to the product as noted above
+in paragraph 18.3.1.
+18.5 Yet another significant development took place during pendency of
+the present proceedings, in that, defendant got registration in the device
+mark ‘RASAYANAM’ represented as having
+registration no. 4591737 in class 5 on a ‘proposed to be used’ basis.
+19. A few pertinent points arise from the developments as noted above:
+19.1 In light of registration of defendant’s trademark/device containing
+mountain peak, the plaintiff, if so desired, would have to apply for
+rectification to displace the same. However, intention in respect of the
+same was not submitted by Senior Counsel for plaintiff. Therefore, use of
+defendant’s registered mark as noted above cannot be faulted, displaced,
+or injuncted.
+19.2 Fonts on the trade dress having been changed from what was
+present in (‘old 20gm product) to that of (‘new
+CS(COMM) 834/2023 20 of 33
+20gm product’) shows distinctive change providing some dissimilarity,
+even though the component will continue to remain as ‘PURE
+SHILAJIT’.
+19.3 Artwork of the farmer at the bottom of the packaging in the new
+20gm product introduces a distinctive new aspect which differentiates
+defendant’s trade dress from that of the plaintiff’s. What is left for
+consideration, as per the injunction order, are two issues – first the
+placement of the name of the product and the words ‘PURE SHILAJIT’;
+and second identical beige background.
+20. In relation to the use of beige background, the following relevant
+points are culled out from the submissions of the parties:
+20.1 Defendant claims that plaintiff used light beige/skin colour (Colour
+Code: ‘Hex FCE7CC’ ) for the background and defendant used
+light green colour, dark shade (Colour Code: ‘Hex F0E8B7’ ).
+While this may seem to be technically different from the colour palette
+point of view, it cannot be denied that the colour shades are similar and,
+on a casual glance, cause confusion.
+20.2 The fact that defendant has introduced a new packaging for their
+10gm product in a distinctive dark brown packaging, which plaintiff does
+not have any quarrel with, there is no reason why uniform beige/greenish
+packaging continues to be used by defendant for their 20gm product. It is
+the uniform beige packaging together with similar placements which
+seems to be effectively causing the problem and bringing it within the
+realm of deceptive similarity and consumers’ confusion. Introducing a
+CS(COMM) 834/2023 21 of 33
+different colour by defendant for their 20gm packaging or combination of
+colours could steer them clear of deceptive similarity.
+21. Pictures other products of defendant have been placed on record
+and are extracted above in para 13.10. It can be clearly seen that in all
+these products, rather than a monochromatic background, a combination
+of two colours is used on labels, in fact uniformly so. Therefore, insistence
+on using the beige background or something similar thereto brings the
+defendant in close proximity with what could be deceptively similar and
+therefore suffer the heat of the injunction.
+22. The background colour makes a difference for the purposes of a
+consumer who sees these products stacked up front or sideways on a super
+market/ shop shelf and therefore a consumer of average intelligence and
+imperfect or hazy recollection might be deceived into picking up one
+product from the other and would fall within the realm of passing off,
+plaintiff’s product having been adopted prior to that of the defendant.
+23. Senior Counsel for plaintiff pointed out that almost all other
+products available in the market of different brands for Shilajit were not
+beige in beige colour but of various other colours, mostly black, since the
+product itself is a black substance, there is therefore, no commercial or
+market-prudent reason to adopt a specific colour which is so close to the
+beige background used by plaintiff.
+24. On the aspect of deceptively similar packaging and the insistence
+on use of a particular colour, reliance is placed on the observations of this
+Court in Dabur India Limited v. Shree Baidyanath Ayurved Bhawan
+Pvt. Ltd, 2012:DHC:3887, where it is stated as under:
+CS(COMM) 834/2023 22 of 33
+“43. It is also pertinent to mention that the
+subject matter of the colour combination, get-
+up and layout are not only covered in the
+subject matter of copyright but also covered
+under the common law remedy i.e. law of
+passing off. Even in the New Trade Mark Act
+1999 the definition of the mark is given
+in Section 2(m) which says that "Mark"
+include a device, brand, style, label, ticket,
+name, signature, word, letter, numeral, shape
+of goods, packaging or combination of
+colours or any combination thereof. As per
+the definition and as per the judgments
+mentioned above it is clear that the colour
+scheme, get up, layout and combination of
+colours is covered under the action for
+passing of also.
+46. The defendant’s counsel has merely tried
+to justify the stand of the defendant on all
+individual features rather overall
+combination of colours and layout. The
+defendant main stress was to challenged the
+rights claimed by the plaintiff. No justification
+was given by the defendant as how to hit upon
+the new packaging which his similar to the
+packaging of the plaintiff. It appears to the
+Court that in case, both packaging used by the
+parties are compared in meaningful manner,
+it can easily come to the conclusion that one
+is designed by placing the another. From the
+placing used by the defendant, it is obvious
+that all essential features are deceptively
+similar to the packaging of the plaintiff. The
+letters used in the packaging are in the same
+colour. Side penal and arrangements and
+placement of pictorial device of fire are
+almost similar. One fails to understand, when
+the defendant had so many packagings which
+were being used by the earlier in the course of
+CS(COMM) 834/2023 23 of 33
+its business which includes black colour
+packaging, why the defendant has adopted
+and used the packaging similar to that of the
+plaintiff. The said conduct of the defendant
+cannot be called as a bonafide as the
+defendant is in the same trade and the
+defendant must be aware about the packaging
+of the plaintiff at the time of its adoption.”
+(emphasis added)
+25. Also a recent decision of 15th January, 2024, in CS(COMM)
+274/2021 titled as Allied Blenders @ Distillers Private Limited v. Hermes
+Distillery Private Limited, 2024:DHC:288, following observations were
+noted while disposing of an application under Order XXXIX Rule 1 & 2,
+CPC.
+“37. In Parle Products v. J.P. & Co. Mysore
+(1972 INSC 31), the Plaintiff, Parle, used a
+wrapper for their 'Gluco F Biscuit' that
+featured a farmyard scene with a girl carrying
+a pail of water, surrounded by cows and hens
+against the backdrop of a farmhouse. The
+Defendant, on the other hand, sold 'Glucose
+Biscuits' with a wrapper showing a girl
+holding hay on her head and carrying a sickle
+and bundle of food, with cows and hens
+around her in front of a building. After
+observing that an ordinary purchaser is not
+gifted with the powers of observation of
+Sherlock Holmes, the Supreme Court held
+that, in an infringement action, it was enough
+to demonstrate ‘overall similarity’ that could
+mislead a person accustomed to one product
+to accept the other if offered. The Court found
+that the packets were similar in size, color
+scheme, and design. The essential elements of
+both wrappers included a girl with one arm
+raised, carrying something in the other, and
+CS(COMM) 834/2023 24 of 33
+surrounded by farm animals near a house.
+This similarity was deemed sufficient for a
+case of infringement, noting that the marks
+should not be compared side by side but
+considered based on their overall impression.
+…
+39. The test for comparing the above labels,
+as laid down in several judgments of the
+Supreme Court such as in Parle (supra) and
+S.M. Dyechem Ltd. (supra) is not one of
+identity but of similarity. Further, following
+the decision of the Supreme Court in Corn
+Products Refining Co. v. Shangrila Food
+Products Ltd (AIR 1960 SC 142), the plank of
+similarity is to be tested from that of a
+consumer with average intelligence,
+imperfect recollection or a hazy recollection.
+41. Even the said label is not similar to that of
+the Plaintiff. The above two labels are
+distinguishable from the impugned labels,
+which have a combination of various features
+of the Plaintiff’s whisky label. If the Plaintiff's
+products and the Defendant's products are
+stacked together, it is possible for any
+consumer to presume that the Defendant’s
+product also emanates from the Plaintiff's
+bouquet of products.
+42. Confusion need not be between products
+but could also be one of affiliations,
+sponsorship or connection as well. A
+consumer might presume that the Defendant’s
+product is a differently priced product,
+emanating from the Plaintiff. Moreover, the
+Court has to put itself in a realistic position to
+see the manner in which bottles are stacked in
+bar counters. These venues are typically not
+brightly lit and are usually dimly lit. In such a
+setting, if a consumer orders the Plaintiff’s
+CS(COMM) 834/2023 25 of 33
+product and the bartender serves the
+Defendant’s product, owing to the broad
+similarity of the labels, the consumer may not
+even be able to tell that the product served is
+that of the Defendant’s and not of the
+Plaintiff’s. This likelihood of confusion is
+further heightened by the distance at which
+customers typically view bottles in a bar. This
+is not to say that a connoisseur of such
+products may not be able to discern the
+difference after tasting them! But the test is
+not of the standard of a connoisseur but that
+of an ordinary consumer or lay-person. Even
+the purchase at liquor outlets would include
+by consumers who could be from varying
+strata of society and may not be able to
+discern fully the distinguishing features.
+Confusion as to affiliation or sponsorship is a
+clear possibility.”
+(emphasis added)
+26. Furthermore, it is interesting to note how the Trade Mark Act, 1999
+defines “mark” as opposed to the Trade and Merchandise Marks Act,
+1958. Provisions are extracted as under:
+1958 ACT 1999 ACT
+Section 2(j) – “mark” includes Section 2(m) – “mark”
+a device, brand, heading, label, includes a device, brand,
+ticket, name, signature, word, heading, label, ticket, name,
+letter or numeral or any signature, word, letter,
+combination thereof; numeral, shape of goods,
+packaging or combination of
+colours or any combination
+thereof;
+A comparison of the above reveals that ‘combination of colours’, which
+did not exist in the definition under the former Act, finds mention in the
+CS(COMM) 834/2023 26 of 33
+definition under the latter Act. It perhaps encapsulates intent of the
+legislature to recognise the role colours/colour combinations play in
+trademarks regime. Subsequently, Indian Courts have gone onto
+deliberating upon specifics of this role in relation to trademarks, trade
+dresses, and infringement and passing off thereof.
+27. With regard to the use of trade dress and colour combination,
+reference is made to the decision of a Single Judge of this Court in Colgate
+Palmolive Company & Anr. v. Anchor Health and Beauty Care Pvt.
+Ltd., 2003 SCC OnLine Del 1005. Plaintiff sought an ad interim
+injunction against use of trade dress and colour combination of 1/3rd red
+and 2/3rd white on the container of its product viz. tooth powder by
+defendant therein who had allegedly adopted a similar trade dress,
+particularly the colour combination of red and white. Therefore, the
+allegation of passing off was made. The trade names were distinctly
+different being ‘Colgate’ and ‘Anchor’. Part of the evidence which was
+placed were comparative charts of various products of plaintiff and that
+of defendant as well as a few others in the trade like Pepsodent and Dabur
+for the purposes of comparative study. It was noted that none of the other
+rivals of trade had adopted the same colour scheme, combination, or getup
+and the shape of the container. Defendant resisted the injunction on the
+ground that plaintiff could not monopolise the shape, packaging, or colour
+combination. One of defendant’s contentions in that matter was that the
+trade name of the product is prominently mentioned on the container and,
+being different, the colour combination, getup, and colour scheme have
+no relevance and cannot be a ground for injunction, as difference in trade
+name is sufficient to dist
+
+[TRUNCATED — rights are established in the opening orders above]

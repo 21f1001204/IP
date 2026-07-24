@@ -1,0 +1,673 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_953_2023
+case_status: PENDING
+n_orders: 14
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 953/2023, I.A. 26337/2023 & 26338/2023
+NEWS NATION NETWORK PRIVATE LIMITED ..... Petitioner
+Through: Mr Jayant Mehta, Sr. Advocate with
+Mr Aman Jha, Mr Rishi Tutu, Mr
+Gaurav P. Shah and Mr Akshay,
+Advocates
+versus
+YOUTUBE LLC & ORS. ..... Respondents
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE GIRISH KATHPALIA
+O R D E R
+% 27.12.2023
+[Physical Hearing/Hybrid Hearing (as per request)]
+1. Heard. Issue summons in the suit and notice of all applications
+through all modes including dasti returnable on 29.12.2023.
+GIRISH KATHPALIA, J
+DECEMBER 27, 2023/as
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:42
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS (COMM.) 953/2023
+NEWS NATION NETWORK PRIVATE LIMITED
+..... Petitioner
+Through: Mr. Arvind Nayyar, Sr. Advocate with
+Ms. Babita Yadav, Mr. Aman Jha, Mr.
+Rishi Tutu and Mr. Gaurav Shah,
+Advs.
+versus
+YOUTUBE LLC & ORS. ..... Respondents
+Through: Ms. Mamta Jha, Mr. Rohan Ahuja and
+Ms. Shruttima, Advs. For R-1, R-2 &
+R-8.
+Mr. Saurabh Bindal, Ms. Akshita
+Salampuria and Ms. Akanksha Batra,
+Advs. for R-3 to R-7.
+CORAM:
+HON'BLE MS. JUSTICE SHALINDER KAUR
+O R D E R
+% 29.12.2023
+I.A. 26337/2023
+1. The present application has been filed under Order XXXIX Rules 1 & 2
+read with Section 151 CPC for anti-suit injunction.
+2. Let the reply to the application be filed within three weeks, with
+advance copy to the other side. Rejoinder, if any, be filed within a week
+thereafter, with advance copy to the other side.
+I.A. 26338/2023
+3. The present application has been filed under Order XXXIX Rules 1 & 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:42
+read with Section 151 CPC for ex-parte ad-interim injunction.
+4. It is submitted that the respondents are appearing on a very short notice,
+which was issued on 27.12.2023 and the reply could not be prepared.
+5. Let the reply be filed within 03 days, with advance copy to the other
+side.
+6. Re-notify on 04.01.2024 before the Roster Bench.
+SHALINDER KAUR
+(VACATION JUDGE)
+DECEMBER 29, 2023/ss/sds
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:42
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 953/2023, I.A. 26337/2023 & I.A. 26338/2023.
+NEWS NATION NETWORK PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Jayant Mehta, Sr. Advocate with
+Mr Aman Jha, Mr Rishi Tutu, Mr
+Gaurav P. Shah and Mr Akshay,
+Advocates
+versus
+YOUTUBE LLC & ORS. ..... Defendants
+Through: Ms. Mamta Jha, Ms. Shruttima, Mr.
+Rohan Ahuja, Advocates for defendant
+Nos. 1&2 (Google LLC).
+Mr. Saurabh Bindal, Ms. Akshita
+Salampuria and Ms. Akanksha Batra,
+Advocates for 3 to 7.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 04.01.2024
+1. In relation to the previous order dated 29th December, 2023, counsel for
+the Google LLC which owns platform Youtube (defendant Nos. 1 & 2) states
+that the channel of the plaintiff namely “NewsNation” has not been terminated
+from the YouTube platform. Only the URLs complained of by defendant Nos.
+3 to 7 were disabled and plaintiff was banned from uploading content since it
+had copyright strikes on the basis of the notices sent by the defendant Nos. 3 to
+7.
+2. It is further stated that the defendant Nos. 3 to 7 have commenced legal
+action against the plaintiff in California, District Court. Counsel states that the
+matter is sub judice before the US Court and therefore, they will be subjected to
+the directions passed by the US Court as regards the infringement of the URLs.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:41
+3. Counsel for the defendant Nos. 1& 2 states that the channel is not being
+terminated or deleted from the YouTube platform and the uploaded data has
+been restored since the channel has zero strikes at this moment on account of
+the above.
+4. Further, the counsel for the defendant Nos. 3 to 7 enters appearance and
+states that they shall file the response to I.A. 26337/2023 (for anti-suit
+injunction) within the time period as directed by this Court on 29th December,
+2023.
+5. Mr Jayant Mehta, Sr. Advocate, who appears for the plaintiff states that
+he is not pressing I.A. No. 26338/2023 under order XXXIX Rule 1 & 2 read
+with Section 151 CPC at this stage, in view of the submissions made by counsel
+for the defendant Nos. 1&2.
+6. Counsel for the defendant Nos. 1&2 states that they are not required to
+file a response to the application for anti-suit injunction moved by the plaintiff.
+7. List on 05h March, 2024.
+8. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+JANUARY 4, 2024/RK
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:41
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 953/2023, I.A. 26337/2023, I.A. 26338/2023, I.A.
+5220/2024 & I.A. 5221/2024
+NEWS NATION NETWORK PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Rishi Tutu, Ms. Babita Yadav
+and Ms. Shubha Yadav, Advocates.
+versus
+YOUTUBE LLC & ORS. ..... Defendants
+Through: Ms. Mamta Rani Jha, Ms. Shruttiman
+Ehersa, Mr. Rohan Ahuja, Mr. Rahul
+Chaudhary and Ms. Diya Viswanath,
+Advocates for D-1 & 2.
+Mr. Saurabh Bindal, Ms. Akshita
+Salampuria and Ms. Akanksha Batra,
+Advocates for D-3 to 7.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 05.03.2024
+1. Counsel for defendant nos. 1 and 2 points out that some inadvertent
+errors had cropped up in paragraph 3 of order of this Court dated 04th
+January, 2024, in that, the phrase “uploaded data has been restored” ought
+to be “uploading privileges have been restored”. Accordingly, paragraph 3
+of the said order be read with the aforesaid correction.
+2. Further, she states that YouTube LLC has been arrayed as defendant
+no.1; however, same has since been taken over by defendant no.2, Google
+LLC. Therefore, she prays that present defendant no.1 be deleted from the
+array of parties and defendant no.2 shall be responsible instead.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:41
+3. In light of these facts and circumstances, defendant no.1 be deleted
+from the array of parties. Amended memo of parties be filed by the plaintiff.
+4. In light of what is recorded in order dated 04th January, 2024, it
+further transpires that the YouTube channel of plaintiff are restored on
+Google LLC’s platforms. The grievance, in the opinion of this Court for
+which the suit was filed stands satisfied, and the suit need not remain on the
+board since the dissemination of content by plaintiff on Google LLC’s
+platforms will be subject to their policies and terms & conditions as
+applicable from time to time. Counsel for plaintiff seeks time to take
+instructions in that regard. He further seeks time to file a rejoinder to the
+reply filed by defendant nos. 3 to 7 in I.A. 26337/2023. Same may be filed
+before the next date of hearing.
+5. List on 05th July, 2024.
+6. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+MARCH 5, 2024/
+MR/sc
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:41
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 953/2023
+NEWS NATION NETWORK PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Rishi Tutu, Advocate
+versus
+YOUTUBE LLC & ORS. ..... Defendant
+Through: Ms. Akshita Salampuria,
+Advocate for D-3 to 7.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 11.03.2024
+I.A No. 5624/2024 filed by defendant nos. 3 to 7 seeking
+condonation of 34 days delay in filing written statement and
+admission and denial of documents. &
+I.A. No. 5625/2024 filed on behalf of defendant nos. 3 to 7 for
+condonation of delay of 42 days in filing the reply to Order 39
+Rule 1 & 2 CPC.
+Ld. Counsel for the defendant nos. 3 to 7 submits that the
+present applications have become infructuous as the prayers
+sought in these IAs have already been allowed by the Hon’ble
+Court on 05.03.2024.
+In view of the submissions, present IAs stand disposed off
+as being infructuous.
+I.A. No. 5634/2024 on behalf of the defendant nos. 3 to 7
+seeking interrogatories.
+Issue notice. Notice accepted by ld. Counsel for the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:40
+plaintiff who seeks an opportunity to file a response.
+Let reply be filed within three weeks, with an advance
+copy to the opposite side. Rejoinder thereto, if any, be filed
+thereafter within two weeks of receiving the copy of advance
+reply.
+Put up for completion of pleadings on 21.05.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 11, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:40
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 953/2023
+NEWS NATION NETWORK PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Rishi Tutu, Advocate
+versus
+YOUTUBE LLC & ORS. ..... Defendant
+Through: Mr. Rohan Ahuja, (VC),
+Ms. Shruttima Ehersa,
+Ms. Tiya Vishwanath,
+Mr. Vatsalya Vishal (VC),
+Advocates for D-1.
+Mr. Saurabh Bindal, Ms. Akshita
+Salampuria, Ms. Akanksha
+Batra, Advocates for D-3 to 7.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 21.05.2024
+I.A. No. 5634/2024 on behalf of defendant nos. 3 to 7 seeking
+interrogatories.
+Ld. Counsel for the plaintiff prays for some more time to
+file a reply to the present IA. Let the same be now filed within
+three weeks failing which right to file the same shall stand
+closed. An advance copy of the reply be supplied to ld. Counsel
+for the defendants.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 05.07.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 21, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:39
+
+===== ORDER =====
+
+Not Available (Error: Could not read PDF)
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 953/2023
+NEWS NATION NETWORK PRIVATE LIMITED
+.....Plaintiff
+Through: Mr. Rishi Tutu, Advocate
+versus
+YOUTUBE LLC & ORS. .....Defendant
+Through: Mr. Rohan Ahuja, Ms. Shruttima
+Ehersa, Mr. Vatsalya Vishal
+(VC), Advocates for D-1
+Mr. Saurabh Bindal, Ms. Akshita
+Salampuria, Ms. Akanksha
+Batra, Advocates for D-3 to 7.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 12.07.2024
+I.A. No. 33030/2024 filed by the plaintiff to condone the delay
+of 23 days in filing reply to the interrogatories.
+1. Issue notice.
+2. Notice accepted by ld. Counsel for the defendant.
+3. Ld. Counsel for the defendant submits that she has no
+objection if the application is allowed.
+4. For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the defendant, application is
+allowed. Delay stands condoned. Reply to interrogatories is
+taken on record.
+5. IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 12, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:38
+
+===== ORDER =====
+
+$~31
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 953/2023 & I.A. 26337/2023, I.A. 26338/2023,
+I.A. 5220/2024, I.A. 5221/2024, I.A. 5634/2024
+NEWS NATION NETWORK PRIVATE LIMITED .....Plaintiff
+Through: Mr. Rishi Tutu, Advocate
+Mob: 9315470814
+versus
+YOUTUBE LLC & ORS. .....Defendants
+Through: Ms. Mamta Rani Jha, Ms. Shruttima,
+Mr. Rohan Ahuja, Mr. Vatsalya
+Vishal and Ms. Diya Viswanath,
+Advocates for D-2
+Mr. Saurabh Bindal, Advocate with
+Mr. Akshita Salampuria and Ms.
+Akanksha Batra, Advocates for D- 3
+to 7.
+Mob: 9953858787
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 21.08.2024
+1. Learned counsel appearing for the plaintiff submits the main counsel
+is not available due to some personal difficulty.
+2. At request, re-notify on 4th December, 2024.
+MINI PUSHKARNA, J
+AUGUST 21, 2024
+ak
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:38
+
+===== ORDER =====
+
+$~35
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 953/2023, I.A. 26337/2023-Stay, I.A. 26338/2023-
+Stay, I.A. 5220/2024-O 7 R 11, I.A. 5221/2024-By D-3 to 7 to place
+on record a pen drive containing 32 videos of the plaintiff infringing
+the copright material of D-3 to 7, I.A. 5634/2024-By D-3 to 7
+seeking interrogatories
+NEWS NATION NETWORK PRIVATE LIMITED .....Plaintiff
+Through: Mr. Rishi Tutu and Mr. Kshitij
+Mayank, Advs.
+versus
+YOUTUBE LLC & ORS. .....Defendants
+Through: Ms. Mamta Jha, Ms. Shruttima
+Ehersa and Ms. Himani, Advs. for
+D-1.
+Mr. Saurabh Bindal, Ms. Akshita
+Salampuria and Ms. Akanksha
+Batra, Advs. for D-3 to D-7.
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 07.04.2025
+1. Learned counsel for the plaintiff submits that he is awaiting
+instructions from the Client.
+2. Renotify on 21.07.2025.
+SAURABH BANERJEE, J.
+APRIL 7, 2025/R
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:29
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 953/2023, IA Nos.26337/2023, 26338/2023, 5220/2024,
+5221/2024 & 5634/2024.
+NEWS NATION NETWORK PRIVATE LIMITED.....Plaintiff
+Through: Mr. Rishi Tutu, Mr. Kshitij Mayank
+& Mr. Srijan Sahu, Advs.
+Versus
+YOUTUBE LLC & ORS. .....Defendants
+Through: Ms. Mamta Jha, Mr. Rohan Ahuja,
+Ms. Shruttima Ehersa, Ms. Himani
+Sachdeva & Ms. Devangini Rai,
+Advs. for D-2.
+Mr. Saurabh Bindal, Ms. Akshita
+Salampuria, Ms. Akanksha Batra,
+Advs. for D-3 to 7.
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 21.07.2025
+1. The learned Counsel appearing for the Plaintiff requests for an
+accommodation on the ground of taking instructions from the Plaintiff.
+2. At the request of the learned Counsel appearing for the Plaintiff, list
+on 09.09.2025.
+TEJAS KARIA, J
+JULY 21, 2025
+‘gsr’
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:28
+
+===== ORDER =====
+
+$~249
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 953/2023
+NEWS NATION NETWORK PRIVATE LIMITED
+.....Plaintiff
+Through: None
+versus
+YOUTUBE LLC & ORS.
+.....Defendant
+Through: Ms. Akanksha Batra, adv. (VC)
+Ms. Amishi Sodani, Adv. (VC)
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the plaintiff when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:27
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 953/2023, I.A. 26337/2023, I.A. 26338/2023, I.A.
+5220/2024, I.A. 5221/2024 & I.A. 5634/2024
+NEWS NATION NETWORK PRIVATE
+LIMITED .....Plaintiff
+Through: Mr. Rishi Tutu, Mr. Kshitij Mayank
+& Mr. Srijan Sahu, Advocates.
+Versus
+YOUTUBE LLC & ORS. .....Defendants
+Through: Ms. Mamta Jha, Mr. Rohan Ahuja,
+Ms. Shruttima & Ms. Divya
+Vishwanath, Advocates for D-1.
+Mr. Saurabh Bindal, Ms. Akshita
+Salampuria & Ms. Akanksha Batra,
+Advocates for D3 to 7.
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 09.09.2025
+1. The learned Counsel for the Plaintiff requests for accommodation on
+the ground of taking instructions from the Plaintiff. Vide order dated
+21.07.2025, the same request was considered by this Court and, at the
+request of learned Counsel for the Plaintiff, the matter was listed today.
+2. The learned Counsel for the Defendants submit that the Plaintiff has
+been requesting for accommodation for the last several occasions starting
+from 05.03.2024 and on 05.07.2024, 21.08.2024, 04.12.2024, 07.04.2025,
+21.07.2025 as well until on 21.07.2025.
+3. The learned Counsel for the Plaintiff submits that this is the last and
+final request being made.
+4. It is clarified that no further adjournment shall be granted to the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:27
+Plaintiff and the Suit shall be dismissed on the ground of non-prosecution, if
+the Plaintiff does not give instructions to the learned counsel for the Plaintiff
+with regard to further proceeding with or withdrawal of the present Suit.
+5. Accordingly, list on 26.09.2025.
+TEJAS KARIA, J
+SEPTEMBER 9, 2025
+‘gsr’
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:27
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 953/2023, I.A. 26337/2023, I.A. 26338/2023, I.A.
+5220/2024, I.A. 5221/2024 & I.A. 5634/2024
+NEWS NATION NETWORK PRIVATE LIMITED .....Plaintiff
+Through: Mr. Aman Jha, Mr. Rishi Tutu, Mr.
+Kshitij Mayank & Mr. Srijan Sahu,
+Advocates.
+versus
+YOUTUBE LLC & ORS. .....Defendants
+Through: Ms. Mamta Rani Jha, Mr. Rohan
+Ahuja, Ms. Shruttima Ehersa & Ms.
+Diya Viswanath, Advocates for
+Defendant No.1.
+Mr. Saurabh Bindal, Ms. Akshita
+Salampuria & Ms. Akanksha Batra,
+Advocates for Defendant Nos.3 to 7
+(through VC).
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 26.09.2025
+I.A. 24632/2025
+1. This is an Application on behalf of the Plaintiff under Section 151 of
+the Code of Civil Procedure, 1908 for withdrawal of the Suit.
+2. Issue Notice. The learned Counsel for the Defendants accept Notice.
+3. The learned Counsel for the Plaintiff submits that during the pendency
+of the present Suit, the Plaintiff was informed about withdrawal of Suit
+bearing Case No.: 3:23-cv- 06598 titled as ‘Viral DRM LLC versus John
+Doe 1 dba Newsnation @NewsnationTV and Ors.’, which was instituted by
+Defendant Nos. 2 to 6 in the District Court, Northern District of California,
+United States of America. The said Suit was instituted by Defendant No. 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:26
+claiming to be affiliated with Defendant Nos. 3 to 6 and seeking permanent
+injunction against the Plaintiff on account of alleged copyright infringement.
+4. The learned Counsel for the Plaintiff submits that in view of the
+withdrawal of the Suit by the Defendants and subsequent succession of the
+proceedings before the District Court, Northern District of California,
+United States of America, the prayer clause No. 2 and 3 of the Plaint has
+been rendered infructuous.
+5. Accordingly, the Plaintiff seeks permission of this Court to withdraw
+this Suit with a liberty to file fresh Suit if the URLs mentioned in Paragraph
+No. 54 of the Plaint is assailed by the Defendants in any other subsequent
+proceedings.
+6. The learned Counsel for the Defendants object to withdrawal of the
+Suit simplicitor on the ground that the Defendants would like to seek costs
+of these proceedings from the Plaintiff. The learned Counsel for the
+Defendants seek time to file their respective Reply to this Application.
+7. Let the Reply, if any, be filed within a period of four weeks.
+Rejoinder thereto may be filed within a period of two weeks thereafter.
+8. List on 20.01.2026.
+TEJAS KARIA, J
+SEPTEMBER 26, 2025/ ‘A’
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:26

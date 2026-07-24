@@ -1,0 +1,997 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_927_2023
+case_status: PENDING
+n_orders: 22
+
+$~46
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023, I.As. 25870/2023, 25871/2023, 25872/2023,
+25873/2023, 25874/2023, 25875/2023 & 25876/2023
+INCYTE HOLDINGS CORPORATION & ORS. ..... Plaintiffs
+Through: Mr. Hemant Singh, Ms. Mamta Rani
+Jha, Mr. Siddhant Sharma, Mr. Abhay
+Tandon, Mr. Shreyansh Gupta, Advs.
+(M. 9650164880)
+versus
+BDR PHARMACEUTICALS INTERNATIONALS
+PRIVATE LIMITED ..... Defendant
+Through: Mr. Shashikant Yadav and Ms.
+Varsha Jhavar, Advs. (M.
+8999260150)
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 21.12.2023
+1. This hearing has been done through hybrid mode.
+I.A. 25874/2023 (for additional documents)
+2. This is an application seeking leave to file additional documents under
+the Commercial Courts, Commercial Division and Commercial Appellate
+Division of High Courts Act, 2015 (hereinafter, ‘Commercial Courts Act’).
+3. The Plaintiffs, if they wish to file additional documents at a later
+stage, shall do so strictly as per the provisions of the Commercial Courts Act
+and the DHC (Original Side) Rules, 2018.
+4. Application is disposed of.
+I.A.25875/2023 (for filing documents in a sealed cover)
+5. This is an application filed by the Plaintiffs seeking leave to file
+CS(COMM)927/2023 Page1of5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:03
+unredacted version of the RTI response dated 31st August, 2023 as well
+email dated 20th September, 2023 in a sealed cover.
+6. Permission is granted, subject to all just exceptions. Accordingly, this
+application is disposed of.
+I.A.25876/2023 (for exemption)
+7. This is an application field by the Plaintiffs seeking exemption from
+filing the pleadings in the present suit with the seal of the companies.
+8. Permission is granted, subject to all just exceptions. Accordingly, this
+application is disposed of.
+I.A.25872/2023 (u/S 12A of the Commercial Courts Act)
+9. This is an application filed by the Plaintiffs seeking exemption
+instituting pre-litigation mediation under Section 12A of the Commercial
+Courts Act.
+10. Considering the facts and circumstances of the case, the Court is
+satisfied that in terms of the judgment of the Hon’ble Supreme Court in
+Yamini Manohar v. T.K.D Keerthi, SLP(C) 023488/2023, that the present
+suit contemplates urgent interim relief. Thus, the exemption is granted to the
+Plaintiffs.
+11. Accordingly, the application is disposed of.
+I.A.25873/2023 (exemption from advance service to the Defendant)
+12. Ld. counsel for the Defendant has appeared in this case after noticing
+it in the cause list.
+13. Accordingly, this application is disposed of as infructuous.
+I.A.25871/2023 (for Local Commissioner)
+14. This application has been filed by the Plaintiff seeking appointment of
+a local commissioner to visit the premises of the Defendant.
+CS(COMM)927/2023 Page2of5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:03
+15. This application is not pressed by ld. Counsel for the Plaintiffs.
+Accordingly, this application is disposed of.
+CS (COMM) 927/2023
+16. Let the plaint be registered as a suit.
+17. Issue summons to the Defendant. Summons are accepted by Mr.
+Shashikant Yadav, ld. Counsel for the Defendant.
+18. The summons to the Defendant shall indicate that a written statement
+to the plaint shall be positively filed within 30 days from date of receipt of
+summons. Along with the written statement, the Defendant shall also file an
+affidavit of admission/denial of the documents of the Plaintiffs, without
+which the written statement shall not be taken on record.
+19. Liberty is given to the Plaintiffs to file a replication within 15 days of
+the receipt of the written statement(s). Along with the replication, if any,
+filed by the Plaintiffs, an affidavit of admission/denial of documents of the
+Defendant, be filed by the Plaintiffs, without which the replication shall not
+be taken on record. If any of the parties wish to seek inspection of any
+documents, the same shall be sought and given within the timelines.
+20. List before the Joint Registrar for marking of exhibits on 14th
+February, 2024. It is made clear that any party unjustifiably denying
+documents would be liable to be burdened with costs.
+21. List before Court on 30th April, 2024.
+I.A. 25870/2023 (u/O XXXIX Rules 1 & 2 CPC)
+22. Issue notice. Notice is accepted by Mr. Shashikant Yadav, ld. Counsel
+for the Defendant.
+23. The present suit has been filed by the Plaintiffs i.e. Plaintiff No.1 -
+Incyte Holdings Corporation, Plaintiff No.2 - Novartis AG, Plaintiff No.3 -
+CS(COMM)927/2023 Page3of5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:03
+Novartis Healthcare Pvt. Limited seeking protection of the patent bearing
+no. IN 269841. One of the pharmaceutical preparations covered by this
+patent is in claim no.17 of the patent i.e., “a compound which is (R)-3-
+cyclopentyl-3 [4-(7H-pyrrolo[2,3-d]pyrimidin- 4-yl)-1H-pyrazol-1-yl]
+propanenitrile”.
+24. The INN name of this molecule is ‘RUXOLITINIB’.
+25. The said pharmaceutical product is an anti-cancer drug, which is a
+small molecule inhibitor of Janus Kinase sold under the brand name
+‘JAKAVI’ by the Plaintiffs since 2013. It is also stated to have been
+approved by the USFDA in November, 2011.
+26. The present suit is of the nature of an quia timet action as the
+Plaintiffs have acquired information that the Defendant has obtained
+manufacturing approval for manufacturing of the compound
+‘RUXOLITINIB’.
+27. Mr. Hemant Singh, ld. Counsel appearing for the Plaintiffs submits
+that an investigation was conducted by the Plaintiffs, which reveals that the
+‘RUXOLITINIB’ API and/or ‘RUXOLITINIB’ was manufactured by the
+Defendant but the commercialization of the same is yet to take place.
+28. Ld. counsel for the Defendant has appeared after noticing the matter
+in the cause list. A complete set of paper books was served upon the ld.
+counsel and the matter was initially passed over to enable the ld. counsel to
+take instructions and submit as to whether the product has been
+commercially launched by the Defendant.
+29. Ld. counsel for the Defendant after seeking instructions submits that
+the product ‘RUXOLITINIB’ has not been commercially launched by the
+Defendant, though the approval has been obtained.
+CS(COMM)927/2023 Page4of5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:03
+30. In the present case, the suit patent IN269841 has an international
+filing date of 12th December, 2006 and was granted on …… The patent has
+remained unchallenged for the last 17 years. In view thereof, the Court is
+convinced that the Defendant ought to maintain status quo. Accordingly, the
+Defendant shall not commercially manufacture or launch the product
+‘RUXOLITINIB’ API and/or ‘RUXOLITINIB’ without seeking leave of
+this Court till the next date of hearing.
+31. The rights of the Defendant under Section 107A of the Patents Act,
+1970 are, however, protected so long as the strict conditions required under
+the said provision are fully complied with by the Defendant. If the
+Defendant wishes to move an application seeking variation of this order, it is
+permitted to do so.
+32. Reply to the application be filed within four weeks. Rejoinder thereto
+within four weeks thereafter.
+33. List the application before the Court on 30th April, 2024.
+PRATHIBA M. SINGH, J.
+DECEMBER 21, 2023/dk/kt
+CS(COMM)927/2023 Page5of5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:03
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023
+INCYTE HOLDINGS CORPORATION & ORS.
+..... Plaintiff
+Through: Mr. Siddhant Sharma & Mr. Abhay
+Tandon (VC), Advs.
+versus
+BDR PHARMACEUTICALS INTERNATIONALS PRIVATE
+LIMITED
+..... Defendant
+Through: Ms. Varsha Jhavar, Adv.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. AJAY GULATI
+O R D E R
+% 14.02.2024
+Learned Presiding Officer is on leave today.
+Re-notify for purpose already fixed on 09.04.2024.
+Reader to
+SH. AJAY GULATI - I (DHJS)
+FEBRUARY 14, 2024
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:02
+
+===== ORDER =====
+
+$~26
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023
+INCYTE HOLDINGS CORPORATION & ORS.
+..... Plaintiff
+Through: Mr. Siddhant Sharma,
+Mr. Rishabh Paliwal (VC),
+Advocates
+versus
+BDR PHARMACEUTICALS INTERNATIONALS
+PRIVATE LIMITED
+..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 20.03.2024
+I.A. No. 6574/2024 filed on behalf of the defendant for
+condonation of delay of 59 days in filing the written
+statement along with the affidavit of admission-denial.
+Issue notice. Notice accepted by the ld. Counsel for the
+plaintiff.
+Ld. Counsel for the plaintiff submits that he has no
+objection if the application is allowed.
+For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the plaintiff, application is
+allowed. Delay stands condoned. Written statement is taken on
+record alongwith the affidavit of admission / denial of
+documents. Replication be filed within the period permissible, as
+worked out from today.
+IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 20, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:02
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023
+INCYTE HOLDINGS CORPORATION & ORS.
+..... Plaintiff
+Through: Mr. Siddhant Sharma, Mr. Abhay
+Tandon, Advocates
+versus
+BDR PHARMACEUTICALS INTERNATIONALS
+PRIVATE LIMITED
+..... Defendant
+Through: Mr. Tahir A.J, Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 09.04.2024
+Written statement on behalf of the defendant was taken on
+record on 20.03.2024.
+Ld. Counsel for the plaintiff submits that replication shall
+be filed as per rules and within the period permissible.
+Matter is already listed before the Hon’ble Court for
+30.04.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 30.04.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 9, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:01
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023 & I.A. 25870/2023
+INCYTE HOLDINGS CORPORATION & ORS. ..... Plaintiffs
+Through: Mr. Hemant Singh and Ms. Mamta
+Rani Jha, Advocates.
+versus
+BDR PHARMACEUTICALS INTERNATIONALS PRIVATE
+LIMITED ..... Defendant
+Through: Mr. Tahir A. J., Advocate.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 30.04.2024
+1. Pleadings are yet to be completed.
+2. Counsel for Defendant states that no reply to the application I.A.
+25870/2023 under Order XXXIX Rules 1 and 2 of the Code of Civil
+Procedure, 1908, is necessary and the written statement filed by the
+Defendant can be read as their reply to the said application.
+3. At request of the counsel, list the matter before the Joint Registrar for
+completion of pleadings and admission/ denial of documents on 03rd July,
+2024.
+4. Interim order(s), if any, to continue.
+SANJEEV NARULA, J
+APRIL 30, 2024
+d.negi
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:01
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023
+INCYTE HOLDINGS CORPORATION & ORS.
+..... Plaintiff
+Through: Mr. Siddhant Sharma,
+Mr. Rishabh Paliwal (VC),
+Advocates
+versus
+BDR PHARMACEUTICALS INTERNATIONALS
+PRIVATE LIMITED ..... Defendant
+Through: Mr. Tahir A.J., Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 07.05.2024
+I.A.No. 10348/2024 2024 filed by the plaintiffs for
+condonation of delay of 14 days in filing the replication.
+Issue notice.
+Notice accepted by ld. Counsel for the defendant.
+Ld. Counsel for the defendant submits that he has no
+objection if the application is allowed.
+For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the defendant, application is
+allowed. Delay stands condoned. Replication is taken on record.
+IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 7, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:00
+
+===== ORDER =====
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023
+INCYTE HOLDINGS CORPORATION & ORS.
+..... Plaintiff
+Through: Mr. Siddhant Sharma, Mr. Abhay
+Tandon, Advocates
+versus
+BDR PHARMACEUTICALS INTERNATIONALS
+PRIVATE LIMITED ..... Defendant
+Through: Mr. Tahir A J (VC), Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 10.05.2024
+I.A. No. 10749/2024 on behalf of the defendant seeking
+administration of interrogatories.
+Issue notice. Notice accepted by the ld. Counsel for the
+plaintiff, who presses for an opportunity to file a response.
+Let the reply be filed within four weeks, with an advance
+copy of the same to the opposite side. Rejoinder thereto, if any,
+be filed thereafter within two weeks of receiving an advance
+copy of the reply.
+Put up for completion of pleadings on 03.07.2024, the date
+already fixed.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 10, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:59
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023
+INCYTE HOLDINGS CORPORATION & ORS.
+.....Plaintiff
+Through: Mr. Siddhant Sharma, Mr. Abhay
+Tandon, Mr. Rishabh Paliwal,
+Advocates
+versus
+BDR PHARMACEUTICALS INTERNATIONALS
+PRIVATE LIMITED .....Defendant
+Through: Mr. Tahir A.J (VC), Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 03.07.2024
+I.A. No. 10749/2024 on behalf of the defendant seeking
+administration of interrogatories.
+Final opportunity is granted to the plaintiff to file a reply
+within two weeks failing which right to file the reply shall stand
+closed.
+Put up on the next date of hearing.
+I.A. No. 25870/2023 under Order XXXIX Rules 1 and 2.
+Pleadings are complete in the present IA.
+CS(COMM)-927/2023
+Put up for completion of pleadings on 02.09.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 3, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:59
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023
+INCYTE HOLDINGS CORPORATION & ORS.
+.....Plaintiff
+Through: Mr. Abhay Tandon,
+Advocate
+versus
+BDR PHARMACEUTICALS INTERNATIONALS
+PRIVATE LIMITED .....Defendant
+Through: Mr. Tahir A.J, Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 06.08.2024
+I.A. No. 35621/2024 on behalf of the plaintiffs seeking
+condonation of delay of 8 days in filing reply to the I.A. No.
+10749/2024 (seeking administration of interrogatories).
+1. Since final opportunity was granted to the plaintiff to file a
+reply within two weeks vide order dated 03.07.2024 failing
+which the right to file reply was to stand closed, there is no need
+to even issue notice on the present application. Ld. Counsel for
+the plaintiff however submits that subject to imposition of any
+cost which the Court may deem fit, the application may be
+allowed. In the understanding of the Court, this request has to be
+made to the defendant rather than to the Court because the
+Court’s order dated 03.07.2024 is very clear. Ld. Counsel for the
+defendant submits that he is not willing to accept the cost.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:58
+Consequently, this application stands dismissed. The right to file
+a reply thus stands closed in terms of the order dated 03.07.2024.
+IA is disposed off accordingly.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 6, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:58
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023
+INCYTE HOLDINGS CORPORATION & ORS.
+.....Plaintiff
+Through: Mr. Siddhant Sharma, Mr. Abhay
+Tandon (VC), Advocates
+versus
+BDR PHARMACEUTICALS INTERNATIONALS
+PRIVATE LIMITED .....Defendant
+Through: Mr. Tahir A.J (VC), Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 02.09.2024
+1. Documents filed by the parties are in e-form. Parties are
+now directed to file their documents in physical form within four
+weeks.
+2. Put up for admission / denial of documents on 25.10.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 2, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:58
+
+===== ORDER =====
+
+$~31
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023
+INCYTE HOLDINGS CORPORATION & ORS......Plaintiffs
+Through: Mr. Siddhant Sharma, Mr. Abhay
+Tandon, Advocates
+versus
+BDR PHARMACEUTICALS INTERNATIONALS PRIVATE
+LIMITED .....Defendant
+Through: Ms. Rajeshwari, Mr. Tahir A.J,
+Advocates
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 05.09.2024
+O.A. 146/2024-by plaintiff against order dt. 06.08.2024
+List on 06.09.2024.
+SAURABH BANERJEE, J
+SEPTEMBER 5, 2024/rr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:57
+
+===== ORDER =====
+
+$~26
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023
+INCYTE HOLDINGS CORPORATION & ORS. .....Plaintiffs
+Through: Mr. Hemant Singh, Ms. Mamta
+Rani Jha, Mr. Siddhant Sharma and
+Mr. Abhay Tandon, Advocates
+versus
+BDR PHARMACEUTICALS INTERNATIONALS PRIVATE
+LIMITED .....Defendant
+Through: Mr. Rajeshwari H. And Mr. Tahir
+A.J., Advs.
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 06.09.2024
+O.A. 146/2024-by plaintiffs against order dt. 06.08.2024
+1. By virtue of the present application, plaintiffs seek to challenge the
+impugned order dated 06.08.2024 passed by the Joint Registrar whereby
+the reply of the plaintiff to the IA no. 10749/2024 has not been allowed
+and the IA No. 35621/2024 has not been heard.
+2. Considering the averments made in the application as also the law
+laid by the Supreme Court in Civil Appeal Nos. 8435-8436 of 2024 titled
+as Mool Chandra vs Union of India & Anr, the present application is
+allowed, albeit, subject to cost of Rs. 20,000/- to be paid within a period of
+two weeks to the learned counsel for the defendant.
+3. Renotify before the Joint Registrar on the date already fixed, i.e.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:56
+25.10.2024.
+4. List the IA 10749/2024 before this Court on 04.12.2024.
+SAURABH BANERJEE, J
+SEPTEMBER 6, 2024/rr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:56
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023
+INCYTE HOLDINGS CORPORATION & ORS.
+.....Plaintiff
+Through: Mr. Abhay Tandon (VC),
+Advocate
+versus
+BDR PHARMACEUTICALS INTERNATIONALS
+PRIVATE LIMITED ....Defendant
+Through: Mr. Tahir A.J.(VC), Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 25.10.2024
+1. The matter has been listed today for carrying out
+admission / denial of documents. However, admission / denial of
+documents could not be conducted today as documents in
+physical form have been filed by the plaintiff yesterday but the
+defendant is yet to do the needful. Ld. Counsel for the defendant
+seeks four weeks to file its documents in physical form.
+2. Ld. Counsel for the plaintiff submits that without prejudice
+to the right of the plaintiff to contest the matter, the plaintiff
+wants to settle the matter on amicable terms which request is not
+opposed by Ld. Counsel for the defendant. Consequently, the
+matter is referred to the Mediation Centre for a possible
+settlement, on 08.11.2024 at 3.00 p.m.
+3. In view of the Hon’ble Court’s order dated 06.09.2024,
+reply of the plaintiff in IA No. 10749/2024 is taken on record.
+Cost in regard to the same has been received by Ld. Counsel for
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:56
+the defendant. However, in view of the settlement efforts, this IA
+is kept pending and is not being put up for arguments.
+4. Matter is already listed before the Hon’ble Court for
+04.12.2024. In view of the settlement efforts, be placed before
+the Hon’ble Court on the date already fixed i.e. 04.12.2024, for
+further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+OCTOBER 25, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:56
+
+===== ORDER =====
+
+$~35
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023 & I.A. 25870/2023, I.A. 10749/2024
+INCYTE HOLDINGS CORPORATION & ORS. .....Plaintiffs
+Through: Mr. Abhay Tandon, Advocate.
+versus
+BDR PHARMACEUTICALS INTERNATIONALS
+PRIVATE LIMITED ....Defendant
+Through: Ms. Swapnil Gaur, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 04.12.2024
+1. Mediation proceedings are still underway.
+2. Renotify on 31st January, 2025.
+AMIT BANSAL, J
+DECEMBER 4, 2024
+Vivek/-
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:55
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023 with I.A. 25870/2023 & I.A. 10749/2024
+INCYTE HOLDINGS CORPORATION & ORS .....Plaintiffs
+Through: Ms. Mamta Jha, Mr. Siddhant Sharma
+and Mr. Abhay Tandon, Advocates.
+versus
+BDR PHARMACEUTICALS
+INTERNATIONALS PRIVATE LIMITED .....Defendant
+Through: Ms. Nikita Seth, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 31.01.2025
+1. Counsel for the parties submit that mediation proceedings are still
+underway.
+2. Renotify on 25th April, 2025.
+AMIT BANSAL, J
+JANUARY 31, 2025
+Vivek/-
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:55
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023, I.A. 25870/2023 & I.A. 10749/2024
+INCYTE HOLDINGS CORPORATION & ORS. .....Plaintiffs
+Through: Mr. Abhay Tandon, Advocate.
+versus
+BDR PHARMACEUTICALS INTERNATIONALS
+PRIVATE LIMITED .....Defendant
+Through: Ms. Rajeshwari H. and Mr. Tahir
+A.J., Advocates.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 25.04.2025
+1. Counsel for the parties submit that mediation proceedings have not
+been successful.
+2. The matter has been briefly discussed with the counsel for the parties.
+3. Counsel for the defendant seeks time to take instructions.
+4. List on 2nd May, 2025.
+AMIT BANSAL, J
+APRIL 25, 2025
+Vivek/-
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:54
+
+===== ORDER =====
+
+$~26.
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023 with I.A. 25870/2023 & I.A. 10749/2024
+INCYTE HOLDINGS CORPORATION & ORS......Plaintiffs
+Through: Ms. Mamta Rani Jha, Mr. Siddhant
+Sharma, Mr. Abhay Tandon and Mr.
+Sanchit Sharma, Advocates.
+versus
+BDR PHARMACEUTICALS
+INTERNATIONALS PRIVATE LIMITED .....Defendant
+Through: Mr. Chander M. Lall, Sr. Advocate
+with Mr. Tahir A.J., Advocate.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 02.05.2025
+I.A. 10749/2024 (seeking administration of interrogatories)
+1. This application has been filed on behalf of the defendant seeking
+administration of interrogatories under Order XI Rule 2 of the Code of Civil
+Procedure, 1908.
+2. The interrogatories, in respect of which response is sought by the
+defendant, are set out below:
+“1. Who is the API-Plant Head, BRD Pharmaceuticals who has made the
+followingstatement:
+We have state-of-the-art manufacturing unit, specialized in
+Oncology oral formulations and API, located in Vadodara,
+Gujarat State and both the facilities are WHO GMP and EU-GMP
+compliant. BDR Group focuses on development in four specialized
+therapeutic segments, viz. Oncology. Critical care, Gynecology &
+Neurology We have successfully developed Ruxolitinib API in our
+CS(COMM)927/2023 Page1of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:54
+premises and are currently manufacturing it in-house for
+formulationdevelopment.?
+1.1. What is the name, address, mobile number and email ID of such
+person.
+1.2. What was thedateandtimewhenwas theabovestatement made?
+2. Who is the API-Plant Head, BRD Pharmaceuticals who has made the
+followingstatement.
+“We are currently manufacturing Ruxolitinib API for inhouse
+formulation development and we are manufacturing as per the
+requirement of our formulation & Development team. We expect to
+et our product readyby December 2023or January2024”
+Providethename,address,mobilenumber andemail IDof suchperson.
+What was thedateandtimewhenwas theabovestatement made?”
+3. In the reply filed on behalf of the plaintiffs, it has been stated that the
+aforesaid information is not available with the plaintiffs as the investigation
+was carried out by an independent third-party investigator.
+4. Accordingly, the plaintiffs are not in a position to provide the
+aforesaid information.
+5. In view of the aforesaid, the application is disposed of.
+CS(COMM) 927/2023
+6. List before the Joint Registrar on 10th July, 2025 for admission/ denial
+of documents.
+7. List before the Court on 26th September, 2025 for framing on issues.
+AMIT BANSAL, J
+MAY 02, 2025
+Vivek/-
+CS(COMM)927/2023 Page2of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:54
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023
+INCYTE HOLDINGS CORPORATION & ORS.
+.....Plaintiff
+Through: None
+versus
+BDR PHARMACEUTICALS INTERNATIONALS
+PRIVATE LIMITED
+.....Defendant
+Through: Mr. Tahir A.J (VC), Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 10.07.2025
+1. The matter has been listed today for carrying out
+admission / denial of documents.
+2. Though the documents of the plaintiff have been filed in
+physical form, the same are yet to be filed by the defendant. Let
+the same be now filed within four weeks failing which cost of
+Rs.10,000/- shall be imposed. Additionally, ld. Counsel for the
+defendant submits that Joint document schedule is yet to be filed.
+Let the same be also filed within four weeks.
+3. Put up for admission / denial of documents on 22.09.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 10, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:53
+
+===== ORDER =====
+
+$~237
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023
+INCYTE HOLDINGS CORPORATION & ORS.
+.....Plaintiff
+Through: Mr. Siddhant Sharma, Adv. (VC)
+versus
+BDR PHARMACEUTICALS INTERNATIONALS PRIVATE
+LIMITED
+.....Defendant
+Through: Mr. Ansh Sharma, Adv.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+At request, let this matter be sent back to the Hon’ble Court for
+further directions.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:53
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023
+INCYTE HOLDINGS CORPORATION & ORS.
+.....Plaintiff
+Through: Mr. Abhay Tandon, Advocate
+versus
+BDR PHARMACEUTICALS INTERNATIONALS
+PRIVATE LIMITED
+.....Defendant
+Through: Mr. Tahir A.J, Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 22.09.2025
+1. The matter has been listed today for carrying out
+admission / denial of documents. However, ld. counsels submit
+that since both sides have denied the documents of each other,
+physical marking on the documents would not be required.
+2. Joint document schedule, however, is yet to be filed which
+was not filed under the impression that it might not be required
+since all documents on either side have been denied. However,
+Joint document schedule be now filed within four weeks. The
+matter is otherwise at the stage of framing of issues.
+3. Matter is already listed before the Hon’ble Court for
+26.09.2025. Be placed before the Hon’ble Court on the date
+already fixed i.e. 26.09.2025, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 22, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:52
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023 & I.A. 25870/2023
+INCYTE HOLDINGS CORPORATION & ORS. .....Plaintiffs
+Through: Mr. Sanchit Sharma, Advocate
+(through VC)
+versus
+BDR PHARMACEUTICALS INTERNATIONALS PRIVATE
+IMITED .....Defendant
+Through: Mr. Tahir A.J, Advocate
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 26.09.2025
+1. The suit is at the stage of framing of issues.
+2. Learned counsel for the plaintiff seeks an adjournment.
+3. Parties are directed to exchange the proposed issues before the next
+date of hearing.
+4. List for framing of issues on 17.12.2025.
+MANMEET PRITAM SINGH ARORA, J
+SEPTEMBER 26, 2025/mt
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:51
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 927/2023 & I.A. 25870/2023
+INCYTE HOLDINGS CORPORATION & ORS. .....Plaintiffs
+Through: Mr. Hemant Singh, Ms. Mamta Rani
+Jha, Advocates
+versus
+BDR PHARMACEUTICALS INTERNATIONALS PRIVATE
+LIMITED .....Defendant
+Through: Ms. Rajeshwari, H., Mr. Tahir A.J,
+Advocates
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 17.12.2025
+It is already 05:30 P.M.
+No time left.
+List on 17.04.2026.
+BY ORDER
+(COURT MASTER)
+DECEMBER 17, 2025/mt
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:51

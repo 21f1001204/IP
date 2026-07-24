@@ -1,0 +1,1186 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_946_2023
+case_status: PENDING
+n_orders: 22
+
+$~57
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 946/2023, I.As. 26163/2023, 26164/2023, 26165/2023
+IMAGINE MARKETING LIMITED ..... Plaintiff
+Through: Mr. Ankur Singh, Mr. Abhijeet
+Singh, Advs. (M.9311870260)
+versus
+ASHOK KUMAR AND ORS. ..... Defendants
+Through: None.
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 22.12.2023
+1. This hearing has been done through hybrid mode.
+2. Ld. Counsel for the Plaintiff seeks an adjournment to enable him to
+ascertain certain particulars of the Defendants and file the same on record.
+3. As requested, list on 11th January, 2024.
+PRATHIBA M. SINGH, J.
+DECEMBER 22, 2023/dk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:39
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 946/2023
+IMAGINE MARKETING LIMITED ..... Plaintiff
+Through: Mr. Arjun Krishnan, Mr. Ankur Singh
+and Mr. Abhijeet Singh, Advocates.
+versus
+ASHOK KUMAR AND ORS. ..... Defendants
+Through: Mr. Mrinal Ojha, Mr. Debarshi Datta,
+Mr. Anand Raja and Ms. Tanya
+Chaudhary, Advocates for
+GoDaddy.Com LLC.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 11.01.2024
+I.A. 713/2024 (under Order VI Rule 17 r/w Section 151 of CPC for
+amendment of pleadings)
+1. Summons have not been issued in the suit as yet. Plaintiff has filed the
+present application seeking to introduce certain amendments relating to
+particulars and description of Defendants through an amended memo of
+parties and amended plaint.
+2. For the grounds and reasons stated therein, the application is allowed.
+Amended plaint along with amended memo of parties are taken on record.
+Registry is directed to place the same in the correct portfolio.
+3. Disposed of.
+I.A. 26164/2023(under Section 12A of the Commercial Courts Act, 2015 r/w
+CS(COMM)946/2023 Page1of6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:39
+Section 151 of CPC)
+4. As the present suit contemplates urgent interim relief, in light of the
+judgment of Supreme Court in Yamini Manohar v. T.K.D. Krithi,1
+exemption from attempting pre-institution mediation is granted.
+5. Disposed of.
+I.A. 26165/2023(u/S 151 of CPC seeking exemption)
+6. The Plaintiff seeks exemption from serving statutory notice under
+Section 80 of the Code of Civil Procedure, 1908 (“CPC”) to Defendant Nos.
+275 (Department of Telecommunication), 276 (Ministry of Electronics and
+Information Technology) and 277 (National Internet Exchange of India) (as
+per the original memo of parties), as no immediate relief is sought against
+these parties.
+7. Issue notice to aforenoted Defendants, by all permissible modes, upon
+filing of process fee, returnable on the next date of hearing.
+CS(COMM) 946/2023
+8. Let the plaint be registered as a suit.
+9. Issue summons. Mr. Mrinal Ojha, Advocate, accepts summons on
+behalf of Defendant No. 234 (GoDaddy.com LLC) (as per amended memo
+of parties). Upon filing of process fee, issue summons to the Defendants by
+all permissible modes. Summons shall state that the written statement(s)
+shall be filed by the Defendants within 30 days from the date of receipt of
+summons. Along with the written statement(s), the Defendants shall also file
+12023SCCOnLineSC1382.
+CS(COMM)946/2023 Page2of6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:39
+affidavit(s) of admission/denial of the documents of the Plaintiff, without
+which the written statement(s) shall not be taken on record.
+10. Liberty is given to the Plaintiff to file replication(s) within 15 days of
+the receipt of the written statement(s). Along with the replication(s), if any,
+filed by the Plaintiff, affidavit(s) of admission/denial of documents of the
+Defendants, be filed by the Plaintiff, without which the replication(s) shall
+not be taken on record. If any of the parties wish to seek inspection of any
+documents, the same shall be sought and given within the timelines.
+11. List before the Joint Registrar for marking of exhibits on 14th March,
+2024. It is made clear that any party unjustifiably denying documents would
+be liable to be burdened with costs.
+12. List before Court for framing of issues thereafter.
+I.A. 26163/2023(u/O XXXIX Rules 1 and 2 of CPC)
+13. Counsel for Plaintiff states that as of now, he is pressing for relief
+only against Defendants No. 8 <www.boathubs.com>, 54
+<www.boatlive.in>, 159 <www.doatdastistayl.com>, 161 <www.zcob.in>
+and 176 <www.limiteddeal.in> as per amended memo of parties. The case
+set out by Plaintiff is as follows:
+(a) Plaintiff company is engaged in the business of importing, trading,
+manufacturing, selling, distribution, design and development of consumer
+electronic and lifestyle products such as wired/wireless earphones, Bluetooth
+speakers, power-banks, smart watches, trimmers, under the brand name of
+“boat”. The Plaintiff is the proprietor of / “boAt” trademarks
+registered under Class 9, 14 and 35. The Plaintiff therefore has the exclusive
+rights of use of the said trademarks. Plaintiff submits that its annual
+CS(COMM)946/2023 Page3of6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:39
+turnover, and expenditure on marketing/advertising in the past 3 years is as
+follows:
+(b) Plaintiff, through its domain name/website i.e., <www.boat-
+lifestyle.com>, offers a wide range of consumer electronics and services.
+Plaintiff exclusively offers its products and services under the brand name
+and trademark “boAt” for sale only through its authorized and recognised
+website, and authorized e-commerce platforms such as Amazon, Flipkart,
+Nykaa, Myntra, Blinkit, Tata Cliq, Snapdeal, First Cry, Shop Disney, Cred,
+Snapmint, etc. Plaintiff submits that it has not authorized any other
+website/domain name/portal for the said purpose, and every other channel of
+distribution of its products is unauthorised and illegal.
+(c) The Plaintiff is principally aggrieved by the following illegal actions
+on the part of the Defendants: (i) infringement of Plaintiff’s trademark
+"boAt" by registration and use of deceptively similar domain names per se;
+and (ii) infringement of Plaintiff’s trademarks by fake and unauthorised
+website which either sell spurious/counterfeit products or are simply
+scam/fraudulent websites where fake product listings are made without any
+actual underlying product.
+(d) The Defendants’ fake websites are live for a brief period, and
+Defendants employ tools such as “Google AdSense” to promote the website
+CS(COMM)946/2023 Page4of6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:39
+on search engines. URLs and domain names are deceptively similar to the
+Plaintiff’s brand and therefore, customers visit these websites while
+assuming them to be genuine and authorised e-commerce platforms.
+Products are listed at heavily discounted prices to lure the customer in
+making the purchase, and generally, only pre-payment options through
+credit/debit cards, UPI, etc. are available to complete the purchase, instead
+of cash on delivery. Customers are thus trapped in paying the entire price
+before receiving the goods or verifying the genuineness of the product, and
+they end up with fake counterfeit products or with no product at all. This
+causes an obvious loss to the victim as well as loss of revenue and
+irreparable harm to the goodwill of the Plaintiff.
+14. In light of the above, the Court is of the view that Plaintiff has made
+out a prima facie case for grant of injunction. If an injunction is not granted
+at this stage, irreparable harm would be caused to the Plaintiff. Balance of
+convenience lies in the favour of Plaintiff. Accordingly, Defendants No. 8
+<www.boathubs.com>, 54 <www.boatlive.in>, 159
+<www.doatdastistayl.com>, 161 <www.zcob.in> and 176
+<www.limiteddeal.in> (as per amended memo of parties) are restrained in
+terms of prayers (a)-(d) of the present application, and are restricted from
+operating any domain names/websites which use identical or deceptively
+similar marks to that of the Plaintiff’s registered marks and its other
+formative marks or goods/services, as described in the application, in any
+manner or form.
+15. Defendant Nos. 233-240 (DNRs) are directed to lock and suspend the
+domain names specified in Paragraph 14 of this Order, which have been
+registered through them, within ten days of receiving this Order. Further, for
+CS(COMM)946/2023 Page5of6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:39
+the respective domain names registered through them, they shall also furnish
+the details of registrants including KYC details available with them. The
+same be filed before this Court, in a sealed cover, within two weeks from
+today.
+16. Compliance with Order XXXIX Rule 3 of CPC be done with a period
+of four weeks.
+17. List before the Court on 16th May, 2024.
+SANJEEV NARULA, J
+JANUARY 11, 2024
+d.negi
+CS(COMM)946/2023 Page6of6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:39
+
+===== ORDER =====
+
+$~8
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 946/2023
+IMAGINE MARKETING LIMITED .... Plaintiff
+Through: Mr. Ankur Singh, Mr. Abhijeet
+Singh, Advocates
+versus
+ASHOK KUMAR AND ORS. ..... Defendant
+Through: Mr. Mrinal Ojha, Mr. Debarshi
+Datta, Ms. Tanya Chaudhry,
+Advocates for D-234/
+GoDaddy.com LLC.
+Ms. Shivani Rawat, Mr. Vivek
+Krishnani, Advocates for D-241.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 14.03.2024
+Amended plaint and amended memo has come on record.
+Defendant nos. 1 to 232 are John Does / Ashok Kumar. Their
+service report is awaited.
+Defendant nos. 233 to 240 are domain name registrars. Of
+these, defendant no. 234 had accepted notice before the Hon’ble
+Court and defendant no. 238 has been subsequently served.
+Service report regarding the rest is awaited.
+Defendant nos. 241, 242, 243 & 244 have been served i.e.
+ICANN, Department of Telecommunications, Ministry of
+Information Technology and NIXI.
+Let the written statements by the served defendants be
+filed as per rules.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:38
+Affidavit of compliance has been filed by the plaintiff and
+is on record.
+Affidavit of compliance has also been filed by defendant
+no. 234.
+Put up for completion of pleadings on 10.05.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 14, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:38
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 946/2023
+IMAGINE MARKETING LIMITED .... Plaintiff
+Through: Mr. Ankur Singh, Mr. Abhijeet
+Singh, Advocates
+versus
+ASHOK KUMAR AND ORS. ..... Defendant
+Through: Mr. Mrinal Ojha, Mr. Debarshi
+Dutta, Mr. Samyak Bilala,
+Advocates for D-234.
+Ms. Tine Abraham, Ms. Shivani
+Rawat, Mr. Mohanakrishna C.,
+Mr. Vivek Krishnani, Advocates
+for D-241.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 10.05.2024
+Ld. Counsel for the plaintiff submits that defendant no. 1
+to 252 which are John Doe could not be served since the details
+supplied regarding them are insufficient for the purpose of
+service. Details have been supplied by the respective DNRs i.e.
+defendant no. 233 to 240. However, of these DNRs, only 234
+and 238 have been served with physical summons.
+Ld. Counsel for defendant no. 234 submits that written
+statement has been filed yesterday. There is no appearance on
+behalf of defendant no. 238. Rest of the DNRs have been served
+through email. Let the affidavit of service be filed within a week.
+On the oral request of ld. Counsel for defendant no. 234,
+the delay in filing the written statement on behalf of defendant
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:37
+no. 234 stands condoned. Registry is directed to take the written
+statement on record. Plaintiff is directed to file replication within
+the permissible period as worked out from today.
+Ld. Counsel for defendant no. 241 submits that written
+statement shall be filed as per rules.
+Matter is already listed before the Hon’ble Court for
+16.05.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 16.05.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 10, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:37
+
+===== ORDER =====
+
+$~29
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 946/2023
+IMAGINE MARKETING LIMITED ..... Plaintiff
+Through: Mr. Arjun Krishnan, Mr. Ankur Singh
+& Mr. Abhijeet Singh, Advocates.
+versus
+ASHOK KUMAR AND ORS. ..... Defendant
+Through:
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 16.05.2024
+1. It is already 04:30 PM. Due to paucity of time, it is not possible to
+take up this matter today.
+2. Re-notify on 09th August, 2024.
+SANJEEV NARULA, J
+MAY 16, 2024/Ni
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:37
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 946/2023
+IMAGINE MARKETING LIMITED .... Plaintiff
+Through: Mr. Ankur Singh, Mr. Arpit
+Lahoti, Mr. Abhijeet Singh,
+Mr. Mohana Krishna.C (VC),
+Advocate
+versus
+ASHOK KUMAR AND ORS. ..... Defendant
+Through: Mr. Mrinal Ojha, Mr. Debarshi
+Dutta, Mr. Samyak Bilala,
+Advocates for D-234.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 21.05.2024
+I.A. No. 30020/2024 filed by D-234 to condone the delay of 89
+days in filing the written statement.
+Ld. Counsel for defendant no. 234 submits that present
+application has become infructuous as the delay has been
+condoned by the undersigned on 10.05.2024.
+In view thereof, present application is disposed off being
+infructuous.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 21, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:36
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 946/2023
+IMAGINE MARKETING LIMITED ....Plaintiff
+Through: Mr. Ankur Singh, Mr. Abhijeet
+Singh, Advocates
+versus
+ASHOK KUMAR AND ORS. .....Defendant
+Through: Mr. Mrinal Ojha, Mr. Debarshi
+Dutta, Mr. Samyak Bilala,
+Advocates for D-234.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 15.07.2024
+I.A. No. 33199/2024 filed by the plaintiff to condone the
+delay of 7 days in filing the replication to the written
+statement of defendant no. 234.
+1. Issue notice.
+2. Notice accepted by ld. Counsel for defendant no. 234.
+3. Ld. Counsel for defendant no. 234 submits that he has no
+objection if the application is allowed.
+4. For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for defendant no. 234, application is
+allowed. Delay stands condoned. Replication is taken on record.
+5. IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 15, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:36
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 946/2023
+IMAGINE MARKETING LIMITED .....Plaintiff
+Through: Mr. Abhijeet Singh (VC),
+Mr. Ankur Singh, Advocates
+versus
+ASHOK KUMAR AND ORS. .....Defendant
+Through: Ms. Shivani Rawat, Mr. Vivek
+Krishnani, Advocates for D-241.
+Mr. Mrinal Ojha, Mr. Debarshi
+Dutta, Mr. Samyak Bilala,
+Advocates for D-234.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 23.07.2024
+I.A. No. 33985/2024 filed by defendant no. 241 to condone the
+delay of 60 days in filing the written statement.
+1. Issue notice. Notice accepted by ld. Counsel for the
+plaintiff. Ld. Counsel for the plaintiff submits that he has no
+objection if the application is allowed.
+2. For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the plaintiff, application is
+allowed. Delay stands condoned. Written statement is taken on
+record. Replication be filed within the period permissible, as
+worked out from today.
+3. IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 23, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:35
+
+===== ORDER =====
+
+$~26
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 946/2023, I.A. 26165/2023-Exempt plaintiff from
+serving statutory notice to D-275 to 277
+IMAGINE MARKETING LIMITED .....Plaintiff
+Through: Mr. Arjun Krishnan, Mr. Ankur
+Singh and Mr. Abhijeet Singh,
+Advocates
+versus
+ASHOK KUMAR AND ORS. .....Defendants
+Through: Mr. Mrinal Ojha, Mr. Debarshi
+Dutta and Mr. Arjun Mookerjee,
+Advocates for D-234.
+Mr. Shivam Rawat, Mr.
+Mohanakrishna L., Mr. Vivek
+Krishnan and Mr. A. Singh,
+Gautam, Advocates for D-241
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 09.08.2024
+I.A. 11219/2024-Addl.doc.
+1. By virtue of the present application, the plaintiff seeks to bring on
+record the following documents of the defendants: -
+“Defendant No.7 <www.boatshoppy.in>; Defendant No.11
+<www.boatsoundmusic.com>; Defendant No.13
+<www.boatsounds.in>; Defendant No.30
+<www.lifebassmusicboat.com>; Defendant No.35
+<www.boatshope.in>; Defendant No.61 <www.boatmusic.in>;
+Defendant No.80 <www.boatkart77.myshopify.com>; Defendant
+No.95 <www.boatmusic1199.myshopify.com>; Defendant No.96
+CS(COMM) 946/2023 Page 1 of 9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:34
+<www.boatmusic9191.myshopify.com>; Defendant No.146
+<www.soundmusic.in>: Defendant No.152
+<www.soundlife.store>; Defendant No.153 <www.beat-
+lifestyle.com>; Defendant No.162 <www.chikarapro.in>;
+Defendant No.163 <www.metrofashions.co.in>; Defendant
+No.167 <www.thestreetsaga.com>; Defendant No.170
+<www.musicalwave.shop>; Defendant No.178
+<www.sayonn.shop>; Defendant No.185 <www.one-
+musicbox.myshopify.com>; Defendant No.229 <www.air-
+roc.myshopify.com>; Defendant No.2 <https://boat-
+nirvana.myshopify.com/>; Defendant No.43 <www.boat-app-
+tau.vercel.app>; Defendant No.145 <www.justjaldi.com>;
+Defendant No.173 <https://grozzbuy.com/product/boat-l21-t2-
+m10-tws-wireless-high-bass-bluetooth-headset-best-quality-
+bluetooth-headset-black-true-wireless/>; Defendant No.174
+<https://www.queenbabys.in/products/boat-airdopes-443-or-
+wireless-earbuds>; Defendant No.232
+<https://grossper.com/?s=boat&product_cat=&post_type=product
+>”.
+2. Considering the nature of the case and also since the plaintiff has
+been able to ascertain about the particulars of already impleaded
+defendants at this stage only, let the documents be taken on record.
+3. Accordingly, the present application is allowed and disposed of.
+CS(COMM) 946/2023
+4. Learned counsel appearing for the plaintiff seeks and is granted four
+CS(COMM) 946/2023 Page 2 of 9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:34
+weeks for filing replication to the written statement of defendant no.241.
+5. Renotify before the learned Joint Registrar for completion of
+service of defendant nos. 235 to 240 and defendant nos. 242 to 244 on
+15.10.2024.
+I.A. 26163/2023-Stay
+6. By virtue of the present application the plaintiff is seeking the
+following reliefs:
+a. an order of injunction restraining the Defendant Nos. 1 -272 and
+their employees, servants, agents, representatives, assignees,
+through themselves and through assigns and representatives and
+all other servants, agents, acting for and on their behalf from
+using Plaintiffs' Trade Mark "boAt" and its other formative marks
+or activities and services bearing the Plaintiff's registered Trade
+Marks or identical or deceptively similar to such Trade Marks, as
+described in the application, in any manner or form;
+b. an order of injunction restraining the Defendant Nos. 1 - 272 and
+their employees, servants, agents, representatives, assignees,
+through themselves and through assigns and representatives and
+all other servants, agents, acting for and on their behalf from
+taking unfair advantage of and/or cause detriment to the
+distinctive character and reputation of the Plaintiff's Trade Mark
+"boAt" and from doing any other thing as is likely to cause
+confusion or deception leading to passing off of the Defendants
+No. 1-272'products I services I activities as those of the Plaintiff;
+c. an order of injunction restraining the Defendant Nos. 1 - 272 and
+their employees, servants, agents, representatives, assignees,
+through themselves and through assigns and representatives and
+all other servants, agents, acting for and on their behalf from
+misrepresenting and impersonating as the Plaintiff and/or its
+authorized agents, technicians, affiliates, agents, employees, etc.
+in any manner or form, whatsoever;
+d. an order of injunction restraining the Defendant Nos. 1 - 272 and
+their employees, servants, agents, representatives, assignees,
+through themselves and through assigns and representatives and
+all other servants, agents, acting for and on their behalf from
+accessing or operating their respective domain names/websites as
+set out in paragraph 26 in the present suit, for any purpose
+whatsoever;
+e. an order of injunction directing the Defendant Nos. 265 to 272
+and their employees, servants, agents, representatives, assignees,
+CS(COMM) 946/2023 Page 3 of 9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:34
+through themselves and through assigns and representatives and
+all other servants, agents, acting for and on their behalf from
+registering or allowing registration of any domain names/websites
+which are identical or deceptively similar to the Plaintiffs Trade
+Marks and its other formative marks or activities and services
+bearing the Plaintiffs registered Trade Marks, as described in the
+application, in any manner or form;
+f. an order in the nature of interim directions to Defendant Nos. 265
+to 272 to block/delete and not to offer for registration the domain
+names/websites as set out in paragraph 26 in the present
+application;
+g. an order in the nature of interim directions to Defendant Nos. 265
+to 272 to reveal the details of the Registrants arrayed as
+Defendant No. 1 to 264, including payment details of purchase
+and sale details, along with complete Shopper ID information, for
+the domain names/websites as set out in paragraph 26 in the
+present application;”
+7. Learned counsel for plaintiff states that as of now, he is pressing for
+relief only against Defendant No.7 <www.boatshoppy.in>;
+Defendant No.11 <www.boatsoundmusic.com>; Defendant No.13
+<www.boatsounds.in>; Defendant No.30
+<www.lifebassmusicboat.com>; Defendant No.35
+<www.boatshope.in>; Defendant No.61 <www.boatmusic.in>;
+Defendant No.80 <www.boatkart77.myshopify.com>; Defendant
+No.95 <www.boatmusic1199.myshopify.com>; Defendant No.96
+<www.boatmusic9191.myshopify.com>; Defendant No.146
+<www.soundmusic.in>: Defendant No.152
+<www.soundlife.store>; Defendant No.153 <www.beat-
+lifestyle.com>; Defendant No.162 <www.chikarapro.in>;
+Defendant No.163 <www.metrofashions.co.in>; Defendant
+No.167 <www.thestreetsaga.com>; Defendant No.170
+<www.musicalwave.shop>; Defendant No.178
+CS(COMM) 946/2023 Page 4 of 9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:34
+<www.sayonn.shop>; Defendant No.185 <www.one-
+musicbox.myshopify.com>; Defendant No.229 <www.air-
+roc.myshopify.com>; Defendant No.2 <https://boat-
+nirvana.myshopify.com/>; Defendant No.43 <www.boat-app-
+tau.vercel.app>; Defendant No.145 <www.justjaldi.com>;
+Defendant No.173 <https://grozzbuy.com/product/boat-l21-t2-
+m10-tws-wireless-high-bass-bluetooth-headset-best-quality-
+bluetooth-headset-black-true-wireless/>; Defendant No.174
+<https://www.queenbabys.in/products/boat-airdopes-443-or-
+wireless-earbuds>; Defendant No.232
+<https://grossper.com/?s=boat&product_cat=&post_type=product
+>” as per amended memo of parties.
+8. Learned counsel for the plaintiff is a company engaged in the
+business of importing, trading, manufacturing, selling, distribution, design
+and development of consumer electronic and lifestyle products such as
+wired/wireless earphones, Bluetooth speakers, power-banks, smart
+watches, trimmers, under the brand name of “boat”. The plaintiff is the
+proprietor of “boAt” trade marks registered under Classes 9, 14
+and 35. The plaintiff therefore has the exclusive rights of use of the said
+trade marks. The annual turnover and expenditure on
+marketing/advertising in the past three years of the plaintiff is as follows:
+CS(COMM) 946/2023 Page 5 of 9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:34
+9. As per learned counsel for the plaintiff, the plaintiff through its
+domain name/ website i.e., www.boat-lifestyle.com, offers a wide range of
+consumer electronics and services. Plaintiff exclusively offers its products
+and services under the brand name and trade mark “boAt” for sale only
+through its authorized and recognised website, and authorized e-commerce
+platforms such as Amazon, Flipkart, Nykaa, Myntra, Blinkit, Tata Cliq,
+Snapdeal, First Cry, Shop Disney, Cred, Snapmint, etc. As per the counsel
+for the plaintiff, the plaintiff has not authorized any other website/domain
+name/portal for the said purpose, and every other channel of distribution
+of its products is unauthorised and illegal.
+10. This Court has heard the submissions of the learned counsel for the
+plaintiff and perused the documents on record.
+11. The plaintiff is principally aggrieved by the following illegal
+actions on the part of the defendants: (i) infringement of plaintiff’s trade
+mark "boAt" by registration and use of deceptively similar domain names
+per se; and (ii) infringement of plaintiff’s trade marks by fake and
+unauthorised website which either sell spurious/ counterfeit products or
+are simply scam/ fraudulent websites where fake product listings are made
+without any actual underlying product.
+12. The defendants’ fake websites are live for a brief period, and
+CS(COMM) 946/2023 Page 6 of 9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:34
+defendants employ tools such as “Google AdSense” to promote the
+website on search engines. URLs and domain names are deceptively
+similar to the plaintiff’s brand and therefore, customers visit these
+websites while assuming them to be genuine and authorised e-commerce
+platforms. Products are listed at heavily discounted prices to lure the
+customer in making the purchase, and generally, only pre-payment options
+through credit/ debit cards, UPI, etc. are available to complete the
+purchase, instead of cash on delivery. Customers are thus trapped in
+paying the entire price before receiving the goods or verifying the
+genuineness of the product, and they end up with fake counterfeit products
+or with no product at all. This causes an obvious loss to the victim as well
+as loss of revenue and irreparable harm to the goodwill of the plaintiff.
+13. In light of the above, this Court is of the view that the plaintiff has
+made out a prima facie case for grant of an injunction. If an injunction is
+not granted at this stage, irreparable harm would be caused to the plaintiff
+the balance of convenience also lies in favour of the plaintiff.
+14. Accordingly, Defendant No.7 <www.boatshoppy.in>;
+Defendant No.11 <www.boatsoundmusic.com>; Defendant No.13
+<www.boatsounds.in>; Defendant No.30
+<www.lifebassmusicboat.com>; Defendant No.35
+<www.boatshope.in>; Defendant No.61 <www.boatmusic.in>;
+Defendant No.80 <www.boatkart77.myshopify.com>; Defendant
+No.95 <www.boatmusic1199.myshopify.com>; Defendant No.96
+<www.boatmusic9191.myshopify.com>; Defendant No.146
+<www.soundmusic.in>; Defendant No.152
+CS(COMM) 946/2023 Page 7 of 9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:34
+<www.soundlife.store>; Defendant No.153 <www.beat-
+lifestyle.com>; Defendant No.162 <www.chikarapro.in>;
+Defendant No.163 <www.metrofashions.co.in>; Defendant
+No.167 <www.thestreetsaga.com>; Defendant No.170
+<www.musicalwave.shop>; Defendant No.178
+<www.sayonn.shop>; Defendant No.185 <www.one-
+musicbox.myshopify.com>; Defendant No.229 <www.air-
+roc.myshopify.com>; Defendant No.2 <https://boat-
+nirvana.myshopify.com/>; Defendant No.43 <www.boat-app-
+tau.vercel.app>; Defendant No.145 <www.justjaldi.com>;
+Defendant No.173 <https://grozzbuy.com/product/boat-l21-t2-
+m10-tws-wireless-high-bass-bluetooth-headset-best-quality-
+bluetooth-headset-black-true-wireless/>; Defendant No.174
+<https://www.queenbabys.in/products/boat-airdopes-443-or-
+wireless-earbuds>; Defendant No.232
+<https://grossper.com/?s=boat&product_cat=&post_type=product
+>” (as per amended memo of parties) are restrained in terms of prayers
+(a)-(d) of the present application, and are restricted from operating any
+domain names/websites which use identical or deceptively similar marks
+to that of the plaintiff’s registered marks and its other formative marks or
+goods/ services, as described in the application, in any manner or form.
+15. Additionally, the defendant Nos.233-240 (DNRs) are directed to
+lock and suspend the domain names specified in paragraph 7 of the
+present order, which have been registered through them, within ten days of
+receipt of this order. Further, for the respective domain names registered
+CS(COMM) 946/2023 Page 8 of 9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:34
+through them, they shall also furnish the details of the registrants
+including KYC details available with them. The same be filed before this
+Court, in a sealed cover, within two weeks from today.
+16. The provisions of Order XXXIX Rule 3 of CPC be complied within
+a period of four weeks.
+17. List before the Court on 10.12.2024.
+SAURABH BANERJEE, J
+AUGUST 9, 2024/akr
+CS(COMM) 946/2023 Page 9 of 9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:34
+
+===== ORDER =====
+
+$~28
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 946/2023 with I.A. 40767/2024
+IMAGINE MARKETING LIMITED .....Plaintiff
+Through: Mr Ankur Singh and Mr Abhijeet
+Singh, Advocates
+versus
+ASHOK KUMAR AND ORS. .....Defendants
+Through: Mr Mrinal Ojha, Mr Debarshi Dutta,
+Ms Nikita Rathi, Mr Arjun Mookerjee
+and Mr Samyak B., Advocates for D-
+234
+Mr. Mohanakrishna L., Advocate for
+D-241
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 27.09.2024
+I.A. 40767/2024 (Delay of 16 days in filing of replication to written
+statement)
+1. The present application has been filed under Section 5 of the
+Limitation Act, 1963 seeking condonation of delay in filing replication to
+the written statement filed on behalf of the defendant no.241.
+2. Issue notice.
+3. Mr. Mohanakrishna L., counsel appearing on behalf of the defendant
+no.241, accepts notice and submits that he has no objection if the replication
+is taken on record.
+4. In view of the above, the application is allowed and delay of 16 days
+CS(COMM)946/2023 Page1of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:34
+in filing replication to the written statement is condoned.
+CS(COMM) 946/2023
+5. Replication filed on behalf of the plaintiff to the written statement of
+defendant no.241 is taken on record.
+6. List on the date already fixed, i.e., 10th December, 2024.
+AMIT BANSAL, J
+SEPTEMBER 27, 2024/ds
+CS(COMM)946/2023 Page2of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:34
+
+===== ORDER =====
+
+$~8
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 946/2023
+IMAGINE MARKETING LIMITED .....Plaintiff
+Through: Mr. Ankur Singh, Mr. Abhijeet
+Singh, Advocates
+Versus
+ASHOK KUMAR AND ORS. .....Defendant
+Through: Mr. Mrinal Ojha, Mr. Debarshi
+Dutta, Ms. Nikita Rathi,
+Advocates for D-234.
+Ms. Shivani Rawat,
+Mr. Mohanakrishna C,
+Mr. Vivek Krishnani, Advocates
+for D-241.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 15.10.2024
+1. Matter has been listed today for the purpose of service of
+defendants no. 235 to 240 and defendants no. 240 to 244, in
+terms of the order dated 09.08.2024 passed by the Hon’ble Court.
+2. It needs a highlight in this regard that defendants no. 235
+to 240, all of which are DNRs, have been served with summons
+through email on 08.02.2024, as per the affidavit of service filed
+by the plaintiff. Further, defendants no. 242 to 244 have been
+served through the ordinary mode on 09.02.2024, 23.02.2024 and
+12.02.2024 respectively.
+3. Matter is already listed before the Hon’ble Court for
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:33
+10.12.2024. Be placed before the Hon’ble Court on the date
+already fixed i.e.10.12.2024, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+OCTOBER 15, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:33
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 946/2023 with I.A. 26163/2023, I.A. 26165/2023
+IMAGINE MARKETING LIMITED .....Plaintiff
+Through: Mr. Ankur Singh, Mr. Abhijeet
+Singh, Advocates
+versus
+ASHOK KUMAR AND ORS. .....Defendants
+Through: Mr. Mrinal Ojha, Mr. Debarshi Dutta,
+Mr. Arjun Mookerjee and Mr. Nikhil
+Gupta, Advs. for D-234
+Ms. Shivani Rawat, Mr.
+Mohanakrisha C. and Mr. Vivek
+Krishnani, Advs. for D-241
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 10.12.2024
+1. As per the order passed by the Joint Registrar on 15th October, 2024,
+defendants no. 233 to 240, who are DNRs, have been served.
+2. Mr. Mrinal Ojha, Advocate enters appearance for the defendant
+no.234. None of the remaining defendants have appeared despite service.
+3. In view of the above, the defendants no.233 and 235 to 240 are
+proceeded against ex-parte.
+4. Mr. Mrinal Ojha, counsel appearing on behalf of defendant no.234
+seeks a short accommodation in order to comply with the order passed on 9th
+August, 2024.
+5. Let a compliance affidavit be filed within three weeks from today
+with a copy to the counsel for the plaintiff.
+CS(COMM)946/2023 Page1of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:32
+6. List before the concerned Joint Registrar on 3rd February, 2025 for
+marking of exhibits.
+7. List before the Court on 20th March, 2025.
+AMIT BANSAL, J
+DECEMBER 10, 2024
+tp
+CS(COMM)946/2023 Page2of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:32
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 946/2023
+IMAGINE MARKETING LIMITED .....Plaintiff
+Through: Mr. Sharad Tyagi, Mr. Arpit Lahoti, Ms.
+Archana Tyagi, Mr. K. Gayatri & Mr.
+Samarth Gogia, Advocates.
+versus
+ASHOK KUMAR AND ORS. .....Defendants
+Through: Mr. Mrinal Ojha, Mr. Debarshi Dutta & Mr.
+Rishabh Agarwal, Advocates for D-2 &
+D-4.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 13.12.2024
+Ld. Presiding officer is on leave today.
+Re-notify on 03.02.2024, the date already fixed.
+Reader to
+Dr. AJAY GULATI,
+JOINT REGISTRAR (JUDICIAL)
+DECEMBER 13, 2024/Ni
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:32
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 946/2023
+IMAGINE MARKETING LIMITED .....Plaintiff
+Through: None
+versus
+ASHOK KUMAR AND ORS. .....Defendant
+Through: Mr. Mohankrishna C, Mr. Vivek
+Krishnani, Advocates for D-241
+Mr. Mrinal Ojha, Mr. Debarshi
+Dutta, Mr. Rishabh Agarwal,
+Ms. Nikita Rathi, Advocates for
+D-234.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 15.01.2025
+I.A. No. 866/2025 on behalf of defendant no. 241 for deletion
+of defendant no. 241 from the captioned suit.
+1. Issue notice to ld. Counsel for the plaintiff. Notice be
+issued through email only. PF be filed within two days. Reply be
+filed within two weeks of receiving the notice. An advance copy
+of the reply be supplied to ld. Counsel for the plaintiff who may
+file a rejoinder within two weeks of receiving advance copy of
+the reply.
+2. Put up for completion of pleadings on 03.02.2025, the date
+already fixed.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 15, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:31
+
+===== ORDER =====
+
+$~4
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 946/2023
+IMAGINE MARKETING LIMITED ....Plaintiff
+Through: Mr. Ankur Singh, Mr. Abhijeet
+Singh, Advocates
+versus
+ASHOK KUMAR AND ORS. .....Defendant
+Through: Mr. Sharad Tyagi, Ms. Archana
+Tyagi, K. Gayatri Samarth Gogia
+(VC), Advocates for D-162
+Mr. Mrinal Ojha, Mr. Debarshi
+Dutta, Mr. Yogesh Singh,
+Mr. Rishabh Agarwal,
+Mr. Arjun Mookerjee, Ms. Nikita
+Rathi, Advocates for D-234.
+Mr. Mohanakrishna C., Mr. Abhi
+Udai Singh Gautam, Advocates
+for D-241
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 03.02.2025
+I.A. No. 866/2025 on behalf of defendant no. 241 for deletion
+of defendant no. 241 from the captioned suit.
+1. Ld. Counsel for the plaintiff prays for one week more to
+file a reply. An advance copy of the reply be supplied to ld.
+Counsel for the defendant. Rejoinder, if any, be now filed within
+three weeks after receiving an advance copy of the reply. Put up
+again for completion of pleadings.
+I.A. No. 48284/2024 on behalf of defendant no. 162 for
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:31
+removal from the array of parties.
+2. The present IA has become infructuous for the reason that
+Smartprix Web Private Limited which was initially arrayed as
+defendant no. 162 as Registrar of Smartprix.in, has since been
+deleted vide IA No. 713/2024 alongwith which an amended
+memo of parties was filed. The IA was allowed by the Hon’ble
+Court on 11.01.2024. As on today, as per the amended memo,
+defendant no. 162 is Chikarapro.in. Consequently, IA is disposed
+off being infructuous.
+I.A. No. 48285/2024 on behalf of defendant no. 162 seeking
+exemption from filing originals of the annexures.
+3. The present IA has become infructuous in view of IA no.
+48284/2024 being disposed off as infructuous. Consequently, IA
+is disposed off accordingly.
+CS(COMM)- 946/2023
+4. The matter has been listed today for carrying out
+admission / denial of documents between the plaintiff and
+defendant nos. 234 & 241.
+5. Defendant nos. 1 to 232 are John Doe. Defendant nos. 233
+and 235 to 240 have been proceeded against ex-parte. Defendant
+nos. 242 to 244 were served in February’ 2024. No written
+statement has been filed on their behalf. Since the maximum
+permissible period to do so has expired for all these defendants,
+right to file a written statement stands closed for defendant nos.
+242 to 244.
+6. Parties are yet to file their documents in physical form.
+Plaintiff and defendant nos. 234 & 241 are directed to file their
+documents in physical form within four weeks. Joint document
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:31
+schedule be also filed within four weeks and also in physical
+form.
+7. Documents in sealed cover have been filed on behalf of
+defendant no. 234. Same is taken on record. However, a
+compliance affidavit in this regard is yet to be filed. Let the same
+be also filed within two weeks.
+8. Matter is already listed before the Hon’ble Court for
+20.03.2025. Be placed before the Hon’ble Court on the date
+already fixed i.e. 20.03.2025, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 3, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:31
+
+===== ORDER =====
+
+$~26
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 946/2023 with I.A. 26163/2023 and I.A. 866/2025
+IMAGINE MARKETING LIMITED .....Plaintiff
+Through: Mr. Ankur Singh, Advocate
+versus
+ASHOK KUMAR AND ORS. .....Defendants
+Through: Mr. Mrinal Ojha, Mr. Debarshi Dutta,
+Mr. Arjun Mookerjee and Ms. Nikita
+Rathi, Advocates for D-234
+Ms. Tine Abraham, Ms. Shivani
+Rawat, Mr. Mohanakrishan C. and
+Mr. Vivek Krishnani, Advocates for
+D-241
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 20.03.2025
+I.A. 866/2025 (seeking deletion of defendant No.241 from the suit)
+1. Counsel for the defendant no.241 seeks two weeks’ time to file
+rejoinder.
+2. List before the Joint Registrar on 23rd April, 2025.
+3. List before Court on 29th August, 2025.
+CS(COMM) 946/2023 and I.A. 26163/2023 (under Order XXXIX Rules 1
+& 2)
+4. Let a copy of the compliance affidavit filed on behalf of defendant
+no.234 be supplied to counsel for the plaintiff.
+5. List before the Joint Registrar on 23rd April, 2025.
+CS(COMM)946/2023 Page1of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:30
+6. List before Court on 29th August, 2025.
+AMIT BANSAL, J
+MARCH 20, 2025/ds
+CS(COMM)946/2023 Page2of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:30
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 946/2023
+IMAGINE MARKETING LIMITED
+.....Plaintiff
+Through: Mr. Ankur Singh, Mr. Abhijeet
+Singh, Advocates
+versus
+ASHOK KUMAR AND ORS.
+.....Defendant
+Through: Ms. Tine Abraham, Ms. Shivani
+Rawat, Mr. Mohanakrishna C.,
+Mr. Vivek Krishnani, Advocates
+for D-241
+Mr. Mrinal Ojha, Mr. Debarshi
+Dutta, Ms. Nikita Rathi,
+Mr. Nikhil Gupta, Mr. Yogesh
+Singh, Advocates for D-234.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 23.04.2025
+I.A. 866/2025 (seeking deletion of defendant no. 241 from the
+suit).
+1. Pleadings are now complete. The IA has to be placed
+before the Hon’ble Court for further directions.
+CS(COMM) 946/2023
+2. The matter has been listed today for carrying out
+admission / denial of documents on behalf of the plaintiff and
+defendant nos. 234 & 241.
+3. Documents in physical form have been filed on behalf of
+the parties. However, ld. Counsel for defendant no. 241 submits
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:29
+that additional affidavit of admission / denial to the additional
+documents filed by the plaintiff is yet to be filed. Since
+defendant no. 241 is based in California, six weeks are granted
+for the said purpose. Joint document schedule be also filed
+before the next date.
+4. Put up for admission / denial of documents on 14.08.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 23, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown
+
+[TRUNCATED — rights are established in the opening orders above]

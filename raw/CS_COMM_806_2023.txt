@@ -1,0 +1,1257 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_806_2023
+case_status: DISPOSED
+n_orders: 26
+
+$~25
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023
+YONEX CO LTD & ANR. ..... Plaintiffs
+Through: Mr. R.K. Aggarwal, Ms.
+Ayushi Bansal, Mr. Saurabh and Mr. Vinay
+Padam Pareekh, Advs.
+versus
+SUNLIGHT SPORTS PVT LTD ..... Defendant
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 07.11.2023
+1. The plaintiff has neither complied with the requirement of pre-
+institution mediation as envisaged by Section 12A of the Commercial
+Courts Act nor moved any application seeking exemption in that
+regard.
+2. An adjournment is sought in order to move an appropriate
+application.
+3. Re-notify on 10 November 2023.
+C. HARI SHANKAR, J.
+NOVEMBER 7, 2023
+dsn
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:51
+
+===== ORDER =====
+
+$~54
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023 & I.A. 22455/2023
+YONEX CO LTD & ANR. ..... Plaintiffs
+Through:
+versus
+SUNLIGHT SPORTS PVT LTD ..... Defendant
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 09.11.2023
+1. There is no appearance on behalf of the applicant in this matter
+when the matter is called out. As the Court is sitting only for half an
+hour today in view of the elevation of Hon’ble the Chief Justice as a
+Judge of the Supreme Court of India, it is not possible to pass over the
+matter.
+2. Re-notify on 10 November 2023 as the matter is already listed
+for tomorrow.
+C.HARI SHANKAR, J
+NOVEMBER 9, 2023
+ar
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:50
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023
+YONEX CO LTD & ANR. ..... Plaintiffs
+Through: Mr. R K Aggarwal, Mr. Ayushi
+Bansal, Mr. Sourabh Pareek and Mr. Vinay
+Kumar Padam, Advs.
+versus
+SUNLIGHT SPORTS PVT LTD ..... Defendant
+Through:
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 10.11.2023
+CS(COMM) 806/2023
+1. Plaintiff 1 is a Japanese company and Plaintiff 2, which is based
+in Singapore and is a subsidiary of Plaintiff 1, is the sole distributor of
+Plaintiff 1 in India.
+2. On 30 August 2016, Plaintiff 2 applied for registration of the
+device mark on proposed to be used basis. The mark
+was registered on 7 March 2018, with effect from the date of
+application for registration, i.e. 30 August 2016.
+3. The plaint avers that the mark is used for
+shoes which are designed to be worn by professional badminton
+players so as to secure a firm grip on the playing turf. Para 15 of the
+plaint enumerates the following distinctive features of the plaintiffs’
+CS(COMM) 806/2023 Page 1 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:49
+footwear:
+“a) Power cushion technology to absorb the shocks/impact;
+b) Plaintiffs designed the sole shape in a different way (Sole
+shape is round at toe and heel area). In new shape, players gets
+better fitting and energy transfer. Hence, with better fitting, the
+player moves on the court freely;
+c) Ergonomical shape is the concept which is developed by
+the Plaintiffs for badminton shoes. In this concept, specially
+designed shape is provided at forefoot and toe area of shoe. With
+this new shape, players get following key benefits: better shoe
+fitting for different shape and sizes, better comfort and good
+stability;
+d) Hexagonal shape on outer sole gives best possible pattern
+on sole. Hexagonal shape offers best traction force and gripping
+action;
+e) Its upper is made of a combination of PU and microfiber
+material. PU gives flexibility while microfiber provides durability
+to upper material of the shoes for extended use.”
+4. The plaint further asserts that, since the time of inception, the
+mark , for the above noted distinctive range of
+footwear has been in continuous use in the Indian market.
+5. Sales of footwear bearing the mark have
+resulted in returns, to the plaintiffs, of over ₹ 49 crores, in the year
+2022-23 alone.
+6. The plaintiffs, therefore, submit that the mark
+has earned considerable goodwill and reputation and has become a
+source identifier for the plaintiffs.
+7. In October 2023, the plaintiffs claim to have come to learn of
+CS(COMM) 806/2023 Page 2 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:49
+the use, by the defendant, of the mark , printed in a
+format which is identical to the format used by the plaintiffs.
+Additionally, “COURT ACE” has also been printed in the inner lining
+of the shoes. Photographs of the defendant’s shoes, which show the
+clearly infringing manner in which the mark COURT ACE has been
+used by the defendant, has thus been provided along with the plaint,
+thus:
+8. The plaintiffs sell their shoes as YONEX COURT ACE,
+whereas the defendant is selling its shoes under the name HUNDRED
+Court Ace. In any case, the use of “COURT ACE” by the defendant,
+especially in a manner which is identical to the
+device mark of the planitiffs, is prima facie infringing in nature.
+9. The plaint further seeks to underscore the defendant’s mala
+fides by pointing out that the defendant has also resorted to use of a
+sub brand "INFINITY PRO", which is intended to confuse buyers
+with the plaintiffs’ sub brand "Power Cushion INFINITY".
+CS(COMM) 806/2023 Page 3 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:49
+10. Predicated on these submissions and assertions, the plaintiffs
+allege infringement as well as passing off, by the defendant, of its
+goods as those of the plaintiffs. The use of the mark COURT ACE,
+by the defendant, in a format which is identical to the format
+employed by the plaintiffs, it is submitted, is clearly intended to result
+in market confusion and in dilution of the plaintiffs’ brand value.
+11. The plaintiffs, therefore, seek, by means of the present suit, a
+decree of permanent injunction restraining the defendant from using
+the mark COURT ACE or any other mark which is identical or
+deceptively similar to the said mark in respect of the sports shoes, any
+other sports apparel or any other allied or cognate goods or services.
+12. When this matter had come up before the Court on 7 November
+2023, it was noticed that the plaintiffs had neither complied with the
+requirement of pre-litigation mediation as envisaged by Section 12A
+of the Commercial Courts Act, 2015, nor moved any application for
+exemption from complying with the said requirement. Accordingly,
+the matter was renotified for today, so that the plaintiffs could move
+the appropriate application for exemption.
+13. The plaintiffs have, in the interregnum, moved IA 22455/2023
+seeking exemption from the requirement of compliance with Section
+12A of the Commercial Courts Act.
+14. Let the plaint be registered as a suit. Issue summons in the suit.
+Summons be served on the defendant by all modes including dasti as
+the defendant is situated within Delhi.
+CS(COMM) 806/2023 Page 4 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:49
+15. Written statement, accompanied by affidavit of admission and
+denial of the documents filed by the plaintiffs be filed within 30 days
+with advance copy to learned Counsel for the plaintiffs who may file
+replication thereto, accompanied by affidavit of admission and denial
+of the documents filed by the defendant within 30 days thereof.
+16. List before the learned Joint Registrar (Judicial) for completion
+of the pleadings, admission and denial of documents and marking of
+exhibits on 12 January 2024, whereafter the matter would be placed
+before the Court for case management hearing and further
+proceedings.
+I.A. 22162/2023 (Order XXXIX Rules 1 and 2 of the CPC)
+17. Inasmuch as the goods in question are counterfeit, in which the
+defendant has directly copied the plaintiffs’ registered
+device mark, and thereby sought to pass off its shoes
+as the shoes of the plaintiffs, ergo, applying the principle contained in
+para 14 of Laxmikant V. Patel v. Chetanbhai Shah1 and para 5 of
+Midas Hygiene Industries (P) Ltd v. Sudhir Bhatia2, the plaintiffs
+would be entitled to interlocutory injunction as sought. A prima face
+case of infringement and passing off is made out on the basis of the
+averments of the plaint as already noted hereinabove.
+18. This Court has already in Louis Vuitton Malletier v. Capital
+1 (2002) 3 SCC 65
+2 (2004) 3 SCC 90
+CS(COMM) 806/2023 Page 5 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:49
+General Store3 observed that counterfeiting is an economic crime and
+has to be dealt with seriously. The Division Bench of this Court has,
+vide order dated 10 April 2023 in FAO (OS) (COMM) 65/2023
+(Jawed Ansari v. Louis Vuitton Malletier & Ors.) has also, in appeal,
+endorsed the said observation.
+19. In that view of the matter, the balance of convenience would
+also be in favour of grant of ex parte injunction, as, were injunction
+not to be granted, further counterfeit products would be released in the
+market, which would result in irreparable injury to the plaintiffs and
+further dilute its brand value.
+20. Issue notice, returnable before the Court on 19 February 2024.
+21. Reply, if any, be filed within a period of four weeks with
+advance copy to learned Counsel for the plaintiffs, who may file
+rejoinder thereto, if any, within a period of four weeks thereof.
+22. Accordingly, till the next date of hearing, the defendant as well
+as all other acting on its behalf shall stand restrained from using the
+mark “COURT ACE” in respect of sports shoes, sports apparel or any
+other allied or cognate goods.
+23. Let compliance under Order XXXIX Rule 3 of the CPC be
+effected within a period of ten days from today.
+I.A. 22163/2023 (Exemption)
+3 (2023) 302 DLT 172
+CS(COMM) 806/2023 Page 6 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:49
+24. As the present case deals with counterfeit products, and service
+of papers in advance on the defendant might result in further
+counterfeit products being released in the market, a case for exemption
+from advance service is made out.
+25. This application is accordingly allowed.
+I.A. 22164/2023 (Exemption)
+26. Subject to the plaintiffs filing legible copies of any dim or
+illegible documents within 30 days, exemption is granted for the
+present.
+27. The application is disposed of.
+I.A. 22165/2023 (Order XI Rule 1(4) of the CPC)
+28. This application seeks permission to file additional documents.
+The plaintiffs are permitted to place additional documents on record in
+accordance with Order XI Rule 1(4) of the CPC as amended by the
+Commercial Courts Act within four weeks from today.
+29. The application stands disposed of accordingly.
+I.A. 22455/2023 (Section 12A of the Commercial Courts Act, 2015)
+30. By this application, the plaintiffs seek exemption from the
+requirement of pre-institution mediation as envisaged by Section 12A
+of the Commercial Courts Act, 2015.
+CS(COMM) 806/2023 Page 7 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:49
+31. Though pre-institution mediation is ordinarily to be undertaken
+under Section 12A, in matters of pressing urgency, the Court is
+empowered to grant exemption from the said requirement. The
+Supreme Court in its recent decision in Yamini Manohar v TKD
+Keerthi4 has, however, cautioned Courts, on being worried of
+plaintiffs creating artificial cases on ground of urgency in order to
+escape the requirement of compliance with Section 12A.
+32. In the present case, as the goods of the defendant are
+counterfeit, I am of the opinion that any requirement of compliance
+with Section 12A of the Commercial Courts Act would be an exercise
+in futility. Accordingly, the prayer for exemption from the
+requirement of pre-institution mediation is allowed.
+C.HARI SHANKAR, J
+NOVEMBER 10, 2023
+rb
+Click here to check corrigendum, if any
+4 2023 SCC OnLine SC 1382
+CS(COMM) 806/2023 Page 8 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:49
+
+===== ORDER =====
+
+$~30
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023 & I.A. 25259/2023, I.A. 25262/2023
+YONEX CO LTD & ANR. ..... Plaintiffs
+Through:
+versus
+SUNLIGHT SPORTS PVT LTD ..... Defendant
+Through: Mr. Saharsh Jauhari and Mr.
+Kapil Wadhwa, Advs.
+CORAM:
+HON'BLE MR. JUSTICE C. HARI SHANKAR
+O R D E R
+% 15.12.2023
+1. The Hon’ble Judge is not holding the Court today.
+2. Re-notify on 20 December 2023.
+BY ORDER
+COURT MASTER
+DECEMBER 15, 2023
+dsn
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:49
+
+===== ORDER =====
+
+$~49
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023 & I.As. 25259/2023, 25262/2023
+YONEX CO LTD & ANR. ..... Plaintiffs
+Through: Mr. R.K. Aggarwal, Ms. Ayushi
+Bansal, Mr. Saurabh and Mr. Vinay
+Padam Pareekh, Advs.
+versus
+SUNLIGHT SPORTS PVT LTD ..... Defendant
+Through: Mr. Satvik Varma, Sr. Adv. with Mr.
+Saharsh Jauhari, Mr. Kapil Wadhwa
+& Mr. Gazal Ghai, Advs. (M:
+9811982989)
+CORAM:
+JUSTICE PRATHIBAM. SINGH
+O R D E R
+% 20.12.2023
+1. This hearing has been done through hybrid mode.
+2. I.A. 25259/2023 is an application under Order XXXIX Rule 4 which has
+been listed in the typed supplementary list.
+3. List before the Roster Bench on 21st December, 2023.
+PRATHIBAM. SINGH, J.
+DECEMBER 20, 2023
+dj
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:48
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023
+YONEX CO LTD & ANR. ..... Plaintiffs
+Through: Mr. R K Aggarwal, Mr. Ayushi
+Bansal and Mr. Vinay Kumar Padam, Advs.
+versus
+SUNLIGHT SPORTS PVT LTD ..... Defendant
+Through: Mr. Satvik Varma, Sr. Adv.
+with Mr. Saharsh Jauhari, Mr. Kapil
+Wadhwa, Ms. Gazal Ghai and Ms.
+Rudrakshi Deo, Advs.
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 21.12.2023
+I.A. 25259/2023 (under Order XXXIX Rule 4 of CPC) & I.A.
+25262/2023 (under Order VII Rule 11 (d) of CPC)
+1. Issue notice. Notice is accepted, on behalf of the plaintiffs/non-
+applicants, by Mr. Aggarwal.
+2. Reply, if any, be filed within four weeks with advance copy to
+learned Counsel for the defendant/applicant, who may file rejoinder
+thereto, if any, before the next date of hearing.
+3. Re-notify on the date already fixed i.e. 19 February 2024 for
+hearing and disposal of these applications.
+4. No extension of time for filing of reply or rejoinder shall be
+CS(COMM)806/2023 Page1of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:48
+granted.
+5. It is made clear that these applications would be taken up for
+hearing and disposal on the next date.
+C. HARI SHANKAR, J.
+DECEMBER 21, 2023
+dsn
+Click here to check corrigendum, if any
+CS(COMM)806/2023 Page2of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:48
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023
+YONEX CO LTD & ANR.
+..... Plaintiff
+Through: Ms. Ayushi Bansal and Mr.
+Vinay Padam, Advs.
+versus
+SUNLIGHT SPORTS PVT LTD
+..... Defendant
+Through: Mr. Saharsh Jauhari, Adv.
+through VC.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 03.01.2024
+List the matter for the purpose fixed on the date fixed i.e.
+12.01.2024
+IA No.87/2024 (u/order 1 Rule 10 r/w Section 151 CPC for
+impleading of P-3 & D-2 by plaintiff )
+The application is for the impleadment of proposed plaintiff
+no.3 and proposed defendant no.2. Accordingly issue notice to
+proposed plaintiff no.3 and proposed defendant no.2, through all
+permissible modes.
+The counsel for the defendant states that he opposes this
+application and wishes to file a reply. He is permitted to file a
+reply, which be filed before the next hearing.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 3, 2024/ss
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:47
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:47
+
+===== ORDER =====
+
+$~32
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023 &
+YONEX CO LTD & ANR. ..... Plaintiffs
+Through: Ms. Ayushi Bansal and Mr. Vinay
+Padam, Advs
+versus
+SUNLIGHT SPORTS PVT LTD ..... Defendant
+Through: Mr. Satvik Varma, Sr. Advocate with
+Mr. Saharsh Javhari, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 08.01.2024
+I.A. 328/2024 (Application for seeking amendment in the plaint)
+1. This application has been filed by the plaintiff under Order 6 Rule 17 of
+the CPC read with Section 151 seeking amendment of the plaint.
+2. Issue notice. Notice is accepted by the counsel for the defendant.
+3. Mr. Satvik Varma, Senior Counsel for the defendant has objected to the
+said application and seeks time to file response which may be filed within the
+next three weeks with an advance copy to the learned counsel for the plaintiff,
+who may file rejoinder, if necessary, before the next date of hearing.
+4. List on 19.02.2024, the date already fixed.
+5. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+JANUARY 8, 2024/RK
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:47
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023
+YONEX CO LTD & ANR.
+..... Plaintiff
+Through: Mr. R.K. Aggarwal, Ms.
+Ayushi Bansal and Mr.
+Vinay Padam, Advs.
+versus
+SUNLIGHT SPORTS PVT LTD
+..... Defendant
+Through: Mr. Saharsh Jauhari, Adv.
+through VC.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 12.01.2024
+IA No. 87/2024 (by plaintiff u/order 1 Rule 10 r/w Section 151
+CPC for impleadment of P-3 and D-2)
+The service report of proposed defendant no.2 is awaited.
+The proposed plaintiff no.3 had filed the vakalatnama vide
+diary no. 34824/24.
+The counsel for the defendant seeks further time to file the
+reply. That be filed before the next hearing.
+List on 08.02.2024.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 12, 2024/ss
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:46
+
+===== ORDER =====
+
+$~48
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023
+YONEX CO LTD & ANR. ..... Plaintiff
+Through: Mr. R K Aggarwal, Mr. Vinay K.
+Padam & Ms. Ayushi Bansal, Advs.
+versus
+SUNLIGHT SPORTS PVT LTD ..... Defendant
+Through: Mr. Saharsh Jauhaari, Adv.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 18.01.2024
+I.A. 1267/2024
+1. This application has been filed by the plaintiff under Order XXXIX
+Rule 2A CPC against the defendant alleging disobedience and breach of
+order dated 10th November, 2023 passed by this Court.
+2. By order dated 10th November, 2023, this Court had restrained the
+defendant as well as all acting on its behalf from using the mark 'COURT
+ACE’ in respect of sports shoes, sports apparel or any other allied or cognate
+goods. The defendant had been selling the infringing products under the
+brand name ‘Hundred Court Ace’.
+3. The plaintiff states in the instant application that defendant’s products
+continue to be listed on various e-commerce websites as ‘Hundred Court
+Star’, however, the product i.e. sport shoes which are being sold under the
+said modified mark, still has 'COURT ACE’ inscribed on the shoe. As per
+the plaintiff, the defendant has been using this clever device in order to
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:46
+circumvent the orders passed by this Court.
+4. The mere change of the defendant’s mark from ‘Hundred Court Ace’
+(which was injuncted) to ‘Hundred Court Star’ does not amount to proper
+and complete compliance of the order, considering the product itself being
+sold under ‘Hundred Court Star’ still contains the 'COURT ACE’ mark.
+5. Counsel for the defendant accepts notice and states that pursuant to the
+said order dated 10th November, 2023, they had issued instructions to e-
+commerce websites to discontinue the sale of their products in view of the
+Court’s order. He states that he will file a detailed status in this regard with
+communications that were addressed and any follow up which was done by
+them on the same.
+6. In view of these circumstances, it is further directed that the defendant
+no.1 shall make sure that they issue fresh communication to all e-commerce
+websites where their products are listed, notifying them of the order dated
+10th November, 2023 and also of the order passed today, in order to ensure
+that these e-commerce websites are not selling infringing products through
+defendant no.1’s listings.
+7. Counsel for the plaintiff submits that their objection is only to the
+'COURT ACE’ mark being used on their product and they have no objection
+to defendant no.1 using the modified mark ‘Hundred Court Star’.
+8. Counsel for the defendant shall further disclose their sales of their
+products, post the injunction, carrying 'COURT ACE’ mark including
+through the modified listings under mark ‘Hundred Court Star’, if any, as
+part of their reply to this application.
+9. Reply be filed within 2 weeks with copy to the opposing counsel who
+may file rejoinder, if so desired, before the next date.
+10. Counsel for the defendant shall also seek instructions if the matter can
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:46
+be resolved amicably with the plaintiff and for that purpose, he is at liberty to
+contact the counsel for the plaintiff. In the event, the parties are able to
+arrive at an amicable settlement before the date fixed, they are at liberty to
+approach this Court by way of an appropriate application on that behalf.
+11. List on 19th February, 2024, the date already fixed.
+12. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+JANUARY 18, 2024/sm/na
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:46
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023
+YONEX CO LTD & ANR.
+..... Plaintiff
+Through: None.
+versus
+SUNLIGHT SPORTS PVT LTD
+..... Defendant
+Through: None.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 08.02.2024
+List the matter for further proceedings on 25.04.2024.
+IA No. 87/2024 (u/order 1 Rule 10 CPC r/w Section 151 CPC)
+The reply has already been filed by the original defendant,
+vide diary no. 208495/24. Its rejoinder be now filed within four
+weeks.
+The proposed plaintiff no. 3 has yet not filed any reply. If it
+intends to file any reply, that be filed within four weeks, whereafter
+the rejoinder be then filed in the next two weeks.
+The service report of the proposed defendant no. 2 is
+awaited. The details of this proposed defendant no. 2 are mentioned
+by the original defendant in its document no. 5 filed alongside IA
+no. 25259/2023. The plaintiff is thus directed to get this proposed
+defendant no. 2 served through all permissible modes, subject to
+the filing of the PF.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:45
+If served, the proposed defendant no. 2 shall file the reply
+within four weeks, whereafter the rejoinder be the filed in the next
+two weeks.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 8, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:45
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023, I.A. 22162/2023, I.A. 25259/2023, I.A.
+25262/2023 , I.A. 87/2024 ,I.A. 328/2024 & I.A. 1267/2024.
+YONEX CO LTD & ANR. ..... Plaintiffs
+Through: Mr. R K Aggarwal, Mr. Vinay K.
+Padam & Ms. Ayushi Bansal, Advs.
+versus
+SUNLIGHT SPORTS PVT LTD ..... Defendant
+Through: Mr. Neel Mason, Mr. Ankit Rashtogi,
+Mr. Vishal Sharma, Ms. Vidhi
+Udayshankar and Mr. Saharsh Jauhri,
+Advs.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 19.02.2024
+1. Counsel for the parties state that settlement talks are underway and
+they are optimistic about reaching a settlement soon.
+2. Accordingly, list on 25th July, 2024.
+3. In the meantime, if the parties achieve a settlement, they will be at
+liberty to file an appropriate application before this Court.
+4. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+FEBRUARY 19, 2024/MK
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:45
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023
+YONEX CO LTD & ANR.
+..... Plaintiff
+Through: None.
+versus
+SUNLIGHT SPORTS PVT LTD
+..... Defendant
+Through: Appearance not given.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 22.02.2024
+List the matter for the purpose fixed on the date fixed i.e.
+25.04.2024.
+IA No. 4188/2024 (by defendant u/s 151 CPC for condonation
+of delay in filing reply to IA No. 1267/2024)
+Issue notice to the plaintiff through counsel, via
+e-mail/whatsapp, subject to the filing of the PF.
+IA No. 4220/2024 (u/o 8 Rule 1 CPC r/w the Commercial
+Courts Act for seeking condonation of delay in filing the
+written statement)
+Issue notice to the plaintiff through counsel, via
+e-mail/whatsapp, subject to the filing of the PF.
+IA No. 4229/2024 (by defendant u/s 151 CPC for condonation
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:44
+of delay in filing reply to IA No. 22162/2023)
+Issue notice to the plaintiff through counsel, via
+e-mail/whatsapp, subject to the filing of the PF.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 22, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:44
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023
+YONEX CO LTD & ANR. ..... Plaintiff
+Through: Ms. Ayushi Bansal, Advocate
+versus
+SUNLIGHT SPORTS PVT LTD ..... Defendant
+Through: Mr. Saharsh Jauhari (VC),
+Advocate for D-1
+Email: advsaharshjauhari@gmail.com;
+Mobile no. 9811982989
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 25.04.2024
+IA No. 4188/2024 (by defendant for condonation of delay in
+filing reply to IA No. 1267/2024).
+Ld. Counsel for the plaintiff submits that she has no
+objection if the application is allowed as the inter-se settlement is
+under process.
+For the reason stated as above, application is allowed.
+Delay stands condoned. Reply is taken on record.
+IA stands disposed off.
+IA No. 4220/2024 (by defendant for seeking condonation of
+delay in filing the written statement).
+Ld. Counsel for the plaintiff submits that she has no
+objection if the application is allowed as the inter-se settlement is
+under process.
+For the reason stated as above, application is allowed.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:43
+Delay stands condoned. Written statement is taken on record.
+Replication be filed within the period permissible, as worked out
+from today.
+IA stands disposed off.
+IA No. 4229/2024 (by defendant for condonation of delay in
+filing reply to IA No. 22162/2023).
+Ld. Counsel for the plaintiff submits that she has no
+objection if the application is allowed as the inter-se settlement is
+under process.
+For the reason stated as above, application is allowed.
+Delay stands condoned. Reply is taken on record.
+IA stands disposed off.
+IA No. 87/2024 (u/order 1 Rule 10 CPC r/w Section 151
+CPC).
+Service report of the notice issued to proposed defendant
+no. 2 is still awaited.
+CS(COMM) 806/2023
+Since the parties are trying to settle the matter outside the
+court and are likely to settle, put up before the Hon’ble Court on
+the date already fixed i.e. 25.07.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 25, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:43
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023, I.A. 22162/2023, I.A. 25259/2023, I.A.
+25262/2023, I.A. 87/2024, I.A. 328/2024 & I.A. 1267/2024
+YONEX CO LTD & ANR. .....Plaintiffs
+Through: Mr. R.K. Aggarwal, Mr. Vinay Kr.
+Padam, Advs.
+M: 8527168991
+Email:
+contact@aggarwalassociates.com
+versus
+SUNLIGHT SPORTS PVT. LTD. .....Defendant
+Through: Mr. Neel Mason, Mr. Ankit Rastogi,
+Mr. Saharsh Jahauri, Mr. Siddharth
+Vardhman and Mr. Shivam Issar,
+Advs.
+M: 9953071864
+Email: shivam.issar@mason.co.in
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 25.07.2024
+1. Learned counsels appearing for the parties submit that though the
+parties have been trying to settle the matter amicably outside the Court,
+however, they submit, that the matter be referred to the Delhi High Court
+Mediation and Conciliation Centre.
+2. The present is a suit for infringement of trademark, passing off, and
+rendition of accounts under The Trademarks Act, 1999, seeking decree
+against the defendant, restraining them from using the word mark ‘COURT
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:43
+ACE’ used by the plaintiffs.
+3. With the consent of the parties, the present matter is referred to the
+Delhi High Court Mediation and Conciliation Centre, to be listed before a
+Senior Mediator, on 05th August, 2024.
+4. List before the Court on 15th October, 2024.
+5. Copy of this order shall be sent to Delhi High Court Mediation and
+Conciliation Centre, forthwith.
+MINI PUSHKARNA, J
+JULY 25, 2024/kr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:43
+
+===== ORDER =====
+
+$~35
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023, I.A. 22162/2023, I.A. 25259/2023, I.A.
+25262/2023, I.A. 87/2024, I.A. 328/2024 & I.A. 1267/2024
+YONEX CO LTD & ANR. .....Plaintiffs
+Through: Mr. VinayKumar, Adv.
+M: 8527168991
+Email:
+contact@aggarwalassociates.com
+versus
+SUNLIGHT SPORTS PVT. LTD. .....Defendant
+Through: Mr. Saharsh Jauhari, Adv. for D-1.
+(Through VC)
+M: 9811982989
+Email: advsaharshjauhari@gmail.com
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 15.10.2024
+1. Learned counsel appearing for the plaintiff submits that the matter is
+still pending before the learned Mediator, the next date being 24th October,
+2024.
+2. He submits that substantial progress has been made towards the
+settlement and the parties are likelyto reach the settlement shortly.
+3. At request, re-notifyon 20th November, 2024.
+MINI PUSHKARNA, J
+OCTOBER 15, 2024/kr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:42
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023 & I.A. Nos. 22162/2023, 25259/2023,
+25262/2023, 87/2024, 328/2024 & 1267/2024
+YONEX CO LTD & ANR. .....Plaintiffs
+Through: Mr. V.K. Padam, Advocate.
+versus
+SUNLIGHT SPORTS PVT LTD .....Defendant
+Through: Mr. Saharsh Jauhari, Advocate.
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 20.11.2024
+1. Learned counsels appearing for the parties submit that the settlement
+terms are almost final between the parties.
+2. Accordingly, list on 18th December, 2024.
+MINI PUSHKARNA, J
+NOVEMBER 20, 2024
+c
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:42
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023, I.A. 22162/2023, I.A. 25259/2023, I.A.
+25262/2023, I.A. 87/2024, I.A. 328/2024 & I.A. 1267/2024
+YONEX CO LTD & ANR. .....Plaintiffs
+Through: Mr. VinayKumar, Adv. (Through
+VC)
+versus
+SUNLIGHT SPORTS PVT. LTD. .....Defendant
+Through: Mr. Saharsh Jauhari, Adv. for D-1
+(Through VC)
+Email:
+advsaharshjauhari@gmail.com
+M: 9811982989
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 18.12.2024
+1. Mediation Report dated 11th December, 2024 has been received, as
+per which, the next date before the learned Mediator is, 23rd December,
+2024.
+2. Accordingly, re-notify on 08th April, 2025.
+MINI PUSHKARNA, J
+DECEMBER 18, 2024/kr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:41
+
+===== ORDER =====
+
+$~26
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023, I.A. 22162/2023-Stay, I.A. 25259/2023-O
+39 R 4, I.A. 25262/2023-O 7 R 11(d), I.A. 87/2024-O1 R 10 by
+plaintiff, I.A. 328/2024-O 6 R 17 for amendment in the plaint, I.A.
+1267/2024-O 39 R 2A
+YONEX CO LTD & ANR. .....Plaintiffs
+Through: Appearance not given.
+versus
+SUNLIGHT SPORTS PVT LTD .....Defendant
+Through: Appearance not given.
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 08.04.2025
+1. Learned counsel for the parties submit that the parties are in the
+midst of negotiation talks before the Delhi High Court Mediation and
+Conciliation Centre (DHCMCC) for settling the matter amicably.
+2. Accordingly, renotify on 25.07.2025.
+SAURABH BANERJEE, J.
+APRIL 8, 2025/R
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:41
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023 with I.A. 22162/2023, 25259/2023, I.A.
+25262/2023, I.A. 87/2024, I.A. 328/2024 & I.A. 1267/2024
+YONEX CO LTD & ANR. .....Plaintiffs
+Through: Mr. R.K. Aggarwal, Mr. Vinay
+Kumar & Mr. L.G. Sujatha,
+Advocates.
+versus
+SUNLIGHT SPORTS PVT LTD. .....Defendant
+Through: Mr. Saharsh Jauhari, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 25.07.2025
+1. The learned Counsel for the Parties submit that the Parties have
+settled the matter and are in the process of finalizing the Terms of the
+Settlement.
+2. At the joint request made by the learned Counsel for the Parties, list
+on 23.09.2025.
+TEJAS KARIA, J
+JULY 25, 2025
+ap
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:40
+
+===== ORDER =====
+
+$~192
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023
+YONEX CO LTD & ANR.
+.....Plaintiff
+Through: None
+versus
+SUNLIGHT SPORTS PVT LTD
+.....Defendant
+Through: Ld. Counsel for the defendant.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the plaintiff when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:40
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023, I.A. 22162/2023, I.A. 25259/2023, I.A.
+25262/2023, I.A. 87/2024, I.A. 328/2024 & I.A. 1267/2024
+YONEX CO LTD & ANR. .....Plaintiffs
+Through: Mr. R.K. Aggarwal,Mr. Vinay Kumar
+& Mr. L.G. Sujatha, Advocates.
+versus
+SUNLIGHT SPORTS PVT LTD .....Defendant
+Through: Mr. Neel Mason and Mr. Vatsalya
+Vishal and Saharsh Jauhari,
+Advocates.
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 23.09.2025
+AttherequestofthelearnedCounselfortheParties,liston13.10.2025.
+TEJAS KARIA, J
+SEPTEMBER 23, 2025
+ap
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:39
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023, I.A. 22162/2023, I.A. 25259/2023, I.A.
+25262/2023, I.A. 87/2024, I.A. 328/2024 & I.A. 1267/2024
+YONEX CO LTD & ANR. .....Plaintiffs
+Through: Mr. R.K. Aggarwal & Mr. Vinay
+Kumar Padam, Advocates.
+Versus
+SUNLIGHT SPORTS PVT LTD .....Defendant
+Through: Mr. Neel Mason, Mr. Ankit Rastogi,
+Mr. Saharsh Jauhari & Mr. Udit
+Tewari, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 13.10.2025
+1. The learned Counsel for the Parties seek an adjournment on the ground
+that the matter is likely to be settled.
+2. Accordingly, at their request, list on 14.11.2025.
+TEJAS KARIA, J
+OCTOBER 13, 2025
+‘gsr’
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:39
+
+===== ORDER =====
+
+$~8
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023, I.A. 22162/2023, I.A. 25259/2023, I.A.
+25262/2023, I.A. 87/2024, I.A. 328/2024 & I.A. 1267/2024
+YONEX CO LTD & ANR. .....Plaintiffs
+Through: Mr. R.K. Aggarwal, Advocate.
+versus
+SUNLIGHT SPORTS PVT LTD .....Defendant
+Through: Mr. Ankit Rastogi and Mr. Udit
+Tewari, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 14.11.2025
+1. ThelearnedCounselforthePartiessubmitthatthePartiesrequiresome
+moretimetomoveaJointApplicationforSettlementarrivedatbetweenthem.
+2. AttherequestofthelearnedCounselfortheParties,liston16.12.2025.
+TEJAS KARIA, J
+NOVEMBER 14, 2025
+ap
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:38
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023, I.A. 22162/2023, I.A. 25259/2023, I.A.
+25262/2023, I.A. 87/2024, I.A. 328/2024 & I.A. 1267/2024
+YONEX CO LTD & ANR. .....Plaintiffs
+Through: Mr. R. K. Aggarwal, Advocate.
+versus
+SUNLIGHT SPORTS PVT LTD .....Defendant
+Through: Mr. Neel Mason, Mr. Ankit Rastogi,
+Mr. Udit Tewari, Mr. Nikhil Bharti
+and Mr. Saharsh Jauhari, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 16.12.2025
+1. The learned Counsel for the Defendant submits that the Parties have
+arrived at a Settlement and a joint Application under Order XXIII Rule 3 of
+the Code of Civil Procedure, 1908 has been filed vide Diary No.
+9062818/2025. The Registry is directed to place the same on record.
+2. List on 17.12.2025 in the Supplementary List.
+TEJAS KARIA, J
+DECEMBER 16, 2025/sms
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:38
+
+===== ORDER =====
+
+$~57
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 806/2023, I.A. 22162/2023, I.A. 25259/2023, I.A.
+25262/2023 & I.A. 1267/2024
+YONEX CO LTD & ANR. .....Plaintiffs
+Through: Mr. Vinay Kumar Padam & Mr.
+Arkam Pasha, Advocates.
+versus
+SUNLIGHT SPORTS PVT LTD .....Defendant
+Through: Mr. Neel Mason, Mr. Ankit Rastogi,
+Mr. Udit Tewari & Mr. Nikhil Bharti,
+Advocates.
+Mr. Saharsh Jauhari, Advocate for
+Defendants (through VC).
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 17.12.2025
+I.A. 87/2024
+1. This is an Application under Order 1 Rule 10 read with Section 151 of
+the Code of Civil Procedure, 1908 (“CPC”) for impleadment of M/s.
+Sunrise & Co. (PTE) Ltd., Singapore as Plaintiff No. 3 and for impleadment
+of M/s Hyaku Sports Pte Ltd., Singapore as Defendant No. 2 in the present
+Suit.
+2. For the reasons stated in the Application, the same is allowed.
+3. The Amended Memo of Parties filed along with Replications is taken
+on record.
+4. The Application stands disposed of.
+CS(COMM)806/2023 Page1of3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:37
+I.A. 328/2024
+5. This is an Application under Order 6 Rule 17 read with Section 151 of
+the CPC seeking amendment of the Plaint.
+6. For the reasons stated in the Application, the present Application is
+allowed.
+7. The Amended Plaint filed along with this Application is taken on
+record.
+8. The Application stands disposed of.
+I.A. 31710/2025
+9. This is a joint Application under Order XXIII Rule 3 read with
+Section 151 of the CPC.
+10. The learned Counsel for the Parties submits that during the pendency
+of the present Suit, the Parties have settled and amicably resolved this matter
+by entering into the terms and conditions as mentioned in Paragraph No. 5
+of this Application (“Terms of Settlement”). As per Paragraph No. 5(c) of
+this Application, the Parties have agreed that the Terms of Settlement shall
+be kept confidential between the Parties and will not be disclosed to any
+third party in any manner whatsoever.
+11. In view of the same, the Terms of Settlement agreed between the
+Parties are not reproduced in this order. The learned Counsel for the Parties
+submit that the Suit be decreed in terms of Terms of Settlement.
+12. The Application stands disposed of.
+CS(COMM) 806/2023
+13. In view of order passed in I.A. 31710/2025, the Suit is Decreed in
+terms of the Terms of Settlement arrived at between the Parties as
+CS(COMM)806/2023 Page2of3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:37
+mentioned in Paragraph No. 5 of I.A. 31710/2025.
+14. Let the Decree Sheet be drawn up accordingly. The Suit and all
+pending Applications stand disposed of.
+15. It is clarified that in case of any breach of any of the Terms of
+Settlement, the Parties are at liberty to rely upon I.A. 31710/2025 as the
+Parties have agreed that the Terms of Settlement shall be kept confidential
+between the Parties.
+TEJAS KARIA, J
+DECEMBER 17, 2025/ ‘A’
+CS(COMM)806/2023 Page3of3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:37

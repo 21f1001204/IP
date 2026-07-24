@@ -1,0 +1,1058 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_826_2023
+case_status: PENDING
+n_orders: 20
+
+$~31
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023 & I.As. 22823/2023, 22824/2023, 22825/2023
+SANDEEP KUMAR ..... Plaintiff
+Through: Dr. A.K. Bakshi, Advocate.
+versus
+SH TARUN ARORA AND ANR. ..... Defendants
+Through:
+CORAM:
+HON'BLE MS. JUSTICE NEENA BANSAL KRISHNA
+O R D E R
+% 17.11.2023
+1. The Hon’ble Judge is not holding Court today.
+2. Re-notify on 05.12.2023.
+BY ORDER
+COURT MASTER
+NOVEMBER 17, 2023
+S.Sharma
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:46
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023, I.As. 22823/2023, 22824/2023, 22825/2023
+SANDEEP KUMAR
+..... Plaintiff
+Through: Dr. A.K. Bakshi, Advocate along with
+plaintiff in person.
+versus
+SH TARUN ARORA AND ANR
+..... Defendants
+Through: None.
+CORAM:
+HON'BLE MS. JUSTICE NEENA BANSAL KRISHNA
+O R D E R
+% 05.12.2023
+1. Summons of the suit be issued to the defendants on filing of PF by
+the plaintiff to be served upon the defendants through ordinary post as well
+as electronic mode, for the next date of hearing.
+2. List before learned Joint Registrar for completion of pleadings on
+12.03.2024.
+NEENA BANSAL KRISHNA, J
+DECEMBER 5, 2023/va
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:46
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023
+SANDEEP KUMAR ..... Plaintiff
+Through: Plaintiff in person
+versus
+SH TARUN ARORA AND ANR ..... Defendant
+Through: Mr. Sanjev Mahajan, Ms. Sarika V. Mahajan,
+Ms. Pranjal Tandon, Advs.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) MS. TYAGITA SINGH, (DHJS)
+O R D E R
+% 12.03.2024
+Matter is taken up through physical hearing as well as video
+conferencing.
+As per file noting, defendants have been served with summons on
+11.02.2024 by way of ordinary mode. However, plaintiff has appeared in
+person and stated that affidavit of service has been filed on record according
+to which defendants were served by way of e-mail on 31.01.2024 alongwith
+complete set of plaint and documents and 30 days period from date of service
+has expired.
+Ld. Proxy counsel for defendants has requested for some more time for
+filing Written Statement. Ld. Counsel for defendants is directed to file
+vakalatnama on behalf of defendants within two weeks. Written Statement if
+any, alongwith affidavit of admission/denial and reply to IAs may be filed
+alongwith application for condonation of delay, which shall be considered on
+merits. Advance copy be supplied to plaintiff.
+Be fixed for completion of pleadings on 28.05.2024.
+TYAGITA SINGH, (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 12, 2024/sm
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:45
+
+===== ORDER =====
+
+$~48
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023
+SANDEEP KUMAR
+..... Plaintiff
+Through: Plaintiff in person.
+versus
+SH TARUN ARORA AND ANR
+..... Defendants
+Through: None.
+CORAM:
+HON'BLE MS. JUSTICE NEENA BANSAL KRISHNA
+O R D E R
+% 23.04.2024
+O.A. 75/2024 (Appeal under Rule 5 read with Clauses 60 and 61 of Rule 3
+of Chapter II of DHS(OS) Rules, 2018 against Order dated 12.03.2024 of
+learned Joint Registrar)
+1. An appeal has been filed against the Order dated 12.03.2024.
+2. Notice of the appeal be issued to the defendants through counsel on
+filing of PF by the plaintiff to be served through ordinary post and electronic
+mode for the next date of hearing.
+3. List before learned Joint Registrar for completion of pleadings on
+28.05.2024 and thereafter be listed before this Court for consideration of
+Appeal on 30.07.2024.
+NEENA BANSAL KRISHNA, J
+APRIL 23, 2024/va
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:45
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023, IA 9286/2024
+SANDEEP KUMAR ..... Plaintiff
+Through: Representative of Dr. A.K. Bakshi, Adv.
+versus
+SH TARUN ARORA AND ANR ..... Defendant
+Through: Mr. Sanjeev Mahajan, Ms. Sarika V.
+Mahajan, Advs.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) MS. TYAGITA SINGH, (DHJS)
+O R D E R
+% 26.04.2024
+Matter is taken up through physical hearing as well as video
+conferencing.
+IA 9286/2024 (Application u/O VIII Rule 1 CPC filed by defendant for
+condonation of delay in filing Written Statement)
+At request, notice be issued to plaintiff through counsel by way of
+e-mail within 7 days. Reply, if any, may be filed by plaintiff within four
+weeks from date of service.
+Be fixed for further hearing on already fixed date i.e. 28.05.2024.
+TYAGITA SINGH, (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 26, 2024/sm
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:44
+
+===== ORDER =====
+
+$~42
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023
+SANDEEP KUMAR ..... Plaintiff
+Through: Dr. A.K. Bakshi, Advocate
+versus
+SH TARUN ARORA AND ANR ..... Defendants
+Through:
+CORAM:
+HON'BLE MS. JUSTICE NEENA BANSAL KRISHNA
+O R D E R
+% 22.05.2024
+I.A.30059/2024(under Section 151 CPC)
+1. The present application has been filed on behalf of the plaintiff
+seeking modification of the Order dated 23.04.2024.
+2. It is submitted that the matter is directed to be placed before the
+learned Joint Registrar when in fact the O.A.75/2024 is pending and till the
+O.A is decided the Joint Registrar cannot proceed further.
+3. There is no modification of the Order required and the request as
+made in the application be made with the learned Joint Registrar who shall
+deal with it in accordance with law.
+4. The application is accordingly disposed of.
+NEENA BANSAL KRISHNA, J
+MAY 22, 2024/PT
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:43
+
+===== ORDER =====
+
+$~2
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023, I.A. 30059/2024 , O.A. 75/2024, I.A.
+9286/2024
+SANDEEP KUMAR ..... Plaintiff
+Through: Dr.A.K. Bakshi, Adv. with plaintiff
+versus
+SH TARUN ARORA AND ANR ..... Defendant
+Through: Mr. Sanjeev Mahajan, Adv.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) MS. TYAGITA SINGH, (DHJS)
+O R D E R
+% 28.05.2024
+Matter is taken up through physical hearing as well as video
+conferencing.
+I.A. 30059/2024
+This I.A. has already been decided and disposed off by the Hon’ble
+Court vide Order dated 22.05.2024. Registry is directed not to list this
+I.A. again.
+O.A. 75/2024
+Ld. Counsel for defendants has stated that he does not wish to file
+Reply to the O.A. and his contentions mentioned in I.A. 9286/2024 may be
+read as Reply in the O.A. also.
+CS(COMM) 826/2023 Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:43
+I.A. 9286/2024 (Application u/O VIII Rule 1 CPC filed by defendants for
+condonation of delay in filing Written Statement)
+Ld. Counsel for plaintiff has stated that notice of this application as
+well as copy of application have been served upon plaintiff on 08.05.2024
+and as per previous order dated 26.04.2024, plaintiff still has time for filing
+Reply to this I.A.
+Reply, if any, may be filed within four weeks from date of service i.e.
+from 08.05.2024, with advance copy to Ld. Counsel for defendants.
+Rejoinder, if any, may be filed thereafter before next date of hearing.
+At request, be fixed for arguments in this I.A. on 19.07.2024.
+TYAGITA SINGH, (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 28, 2024/sm
+CS(COMM) 826/2023 Page 2 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:43
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023
+SANDEEP KUMAR ..... Plaintiff
+Through Plaintiff in person
+versus
+SH TARUN ARORA AND ANR ..... Defendant
+Through None
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 01.07.2024
+I.A. 31873/2024
+O.A. 107/2024
+1. List on 19.07.2024 before the Court.
+2. The date before the Joint Registrar stands cancelled. The matter will
+along with O.A. No. 75/2024 and I.A. No. 9286/2024 be taken up in Court
+on the said date. Plaintiff is directed to file his reply to I.A. No. 9286/2024
+within 10 days.
+MANMEET PRITAM SINGH ARORA, J
+JULY 1, 2024/hp/aa
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:42
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023
+SANDEEP KUMAR .....Plaintiff
+Through: Dr. A.K. Bakshi, Sh. Balraj Anand,
+Sh. R.K. Bakshi, Advs. along with
+plaintiff in person.
+versus
+SH TARUN ARORA AND ANR .....Defendants
+Through: Mr. Sanjeev Mahajan and Mr. Pranjal
+Tandon, Advs.
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 19.07.2024
+O.A. 75/2024 (Chamber appeal filed by the plaintiff against order dated
+12.03.2024)
+I.A. No. 9286/2024 (Application filed by defendants under Order VIII Rule
+1 CPC seeking condonation of delay of 38 days in filing the common written
+statement)
+O.A. 107/2024 (Chamber appeal filed by the plaintiff against order dated
+28.05.2024)
+I.A. 31873/2024 (Application by the plaintiff under Section 151 CPC
+seeking stay of the order dated 28.05.2024 pending disposal of O.A. No.
+107/2024)
+1. The aforesaid chamber appeals and interim applications are being
+decided together as the issue arising for consideration in these appeals and
+applications is with respect to the right, if any, of the defendants herein to
+have their written statement brought on record beyond the statutory period
+of 30 days with condonation of delay of 38 days beyond the said statutory
+CS(COMM) 826/2023 Page 1 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:42
+period.
+2. To determine the issue raised by the parties, at the outset, the admitted
+facts pertaining to date of service of summons and the date of filing of the
+written statement is noted hereinafter.
+3. It is the case of the plaintiff that both defendant nos. 1 and 2 were
+served with the summons alongwith the paper-book vide e-mail dated
+31.01.2024 on the e-mail address of defendant no. 1. The plaintiff states that
+during the pre-litigation mediation, communication with defendant no. 2 was
+made through the e-mail address of defendant no. 1 and, therefore, the
+service on defendant no. 2 through the e-mail address of defendant no. 1 is
+valid.
+3.1. It is further stated by the plaintiff that defendant nos. 1 and 2 were
+also duly served with the summons and the paper book through ordinary
+process on 11.02.2024.
+4. The defendant no. 1, on the other hand, admits receipt of summons
+both through e-mail on 31.01.2024 and ordinary process on 11.02.2024. It is
+stated that the e-mail was received from the personal e-mail address of the
+counsel representing the plaintiff and not through the registry of the High
+Court. It is stated that the defendant no. 1 had trouble accessing the file of
+the paper book attached with the e-mail. However, defendant no. 1 admits
+receipt of summons through ordinary process on 11.02.2024.
+4.1. The defendant no. 2 has denied service through e-mail and states that
+since the service through e-mail was affected on defendant no. 1’s email
+address, the same does not constitute a valid service. The defendant no. 2,
+however, admits due service of summons through ordinary process on
+CS(COMM) 826/2023 Page 2 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:42
+11.02.2024.
+5. Learned counsel for the plaintiff states that at the hearing of
+12.03.2024, when the defendants first entered appearance, the learned Joint
+Registrar erred in permitting the defendants to file their written statement
+alongwith application for condonation of delay. He states that since as per
+the plaintiff the statutory period of 30 days stood lapsed on 01.03.2024, the
+learned Joint Registrar could not have granted permission to the defendants
+to file the written statement in the absence of a prior application by the
+defendants for extension of time. He states that O.A. 75/2024 challenges the
+said permission granted to the defendants vide order dated 12.03.2024.
+5.1. He states that while O.A. 75/2024 was pending, the defendants herein
+filed I.A. No. 9286/2024 seeking condonation of delay in filing the written
+statement alongwith the written statement. He states that the direction issued
+by the learned Joint Registrar on 28.05.2024 to the plaintiff to file reply to
+I.A. No. 9286/2024 was erroneous and ought not to have been issued
+pending adjudication of the aforesaid O.A. No. 75/2024. He states,
+therefore, aggrieved by the order dated 28.05.2024, the plaintiff has filed
+O.A. No. 107/2024 and I.A. No. 31873/2024.
+5.2. With respect to the defendants application I.A. No. 9286/2024, it is
+the case of the plaintiff that the period of 30 days has to be reckoned from
+31.01.2024 (i.e., service through e-mail) and 30 days period for filing the
+written statement expired on 01.03.2024. Plaintiff, as a result, contends that
+filing of the written statement by the defendant on 19.04.2024 is delayed by
+48 days which is beyond the statutory mandate to file the written statement
+within 30 days. The plaintiff states that the application for condonation of
+CS(COMM) 826/2023 Page 3 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:42
+delay fails to make out grounds for condonation and, therefore, ought not to
+be condoned in this matter.
+6. This Court has considered the submissions of the learned counsel for
+the parties and perused the record.
+7. Before adjudicating on the issues raised by the plaintiff, it would be
+appropriate to refer to the orders of the Supreme Court and this Court with
+respect to condonation of delay in filing the written statement within the
+period of 120 days from service of summons in a commercial suit.
+8. The Supreme Court vide order dated 12.09.2022 passed in S.L.P.
+Civil 9733-9734-2022 titled as M/S A.P. Distributors v. OK Play India Pvt.
+Ltd., overturned the order passed by the High Court declining to entertain
+the application for condonation of delay filed beyond the period of 120 days
+with respect to a written statement filed within 120 days. The order reads as
+under:-
+“Leave granted.
+Having heard learned counsel for the respective parties and in the
+facts and circumstances of the case and considering the fact that the
+written statement was filed on the 34th day of the service of notice of
+summons, however, the application for condonation of delay was filed
+which was beyond the period of 120 days, the High Court has taken
+too technical view in setting aside the order passed by the learned
+Commercial Court directing to accept the written statement filed on
+behalf of the appellants/defendants. The High Court was not justified
+in setting aside the order passed by the learned Trial Court directing
+to take the written statement on record.
+In view of the above and for reasons stated hereinabove, the
+present appeals succeed. The impugned judgment and orders passed
+by the High Court are hereby quashed and set aside and the order
+passed by the learned Trail Court directing to take written statement
+on record after condoning the delay in submitted the written
+statement is hereby restored.
+CS(COMM) 826/2023 Page 4 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:42
+The present Appeals are accordingly allowed. No costs.”
+(Emphasis Supplied)
+In view of the order of the Supreme Court in M/s A.P. Distributors
+(supra), a defendant can file maintain an application seeking condonation of
+delay even subsequent to the filing of the written statement so long as the
+written statement itself has been filed during the grace period of 90 days
+beyond the statutory period of 30 days.
+9. So also, it would be appropriate to refer to the judgement of the
+Supreme Court in Prakash Corporates v. Dee Vee Projects Ltd.1, for
+acknowledging the right of the defendant to apply for condonation of delay
+in filing the written statement during the grace period of 90 days, wherein
+the Court observed as follows at paragraph 19 therein.
+“19. Tersely put, as per the mandate of the said provisions: (a) the defendant is
+under an obligation to file the written statement of his defence within 30 days of
+service of summons; (b) if he fails to file the written statement within the said
+period of 30 days, he may be allowed to file the written statement on such
+other day as the Court may specify for reasons to be recorded in writing and
+on payment of such costs as the Court may impose but this other day, in any
+case, cannot go beyond 120 days from the date of service of summons; (c) on
+expiry of 120th day from the date of service of summons, the defendant forfeits
+the right to file the written statement and no Court can make an order to 32
+extend such time beyond 120 days from the date of service of summons.”
+(Emphasis Supplied)
+10. In view of the aforesaid orders of the Supreme Court, the contention
+of the plaintiff that the learned Joint Registrar on 12.03.2024 fell in error in
+directing the defendants to file their written statement alongwith an
+application for condonation of delay, is without any merits. As on
+12.03.2024 admittedly the period of 120 days had not expired and, therefore,
+1 (2022) 5 SCC 112
+CS(COMM) 826/2023 Page 5 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:42
+the direction issued by the learned Joint Registrar were well within his
+jurisdiction. The direction issued on 12.03.2024 did not pre-determine the
+plea of condonation on behalf of the defendants. The right of the plaintiff to
+respond to the plea of condonation was reserved since the defendants were
+directed to file an appropriate application for seeking condonation of delay.
+In fact, this Court is unable to understand the cause of action for impugning
+the order dated 12.03.2024 by filing O.A. No. 75/2024 as no right of either
+party was determined by this order. The direction issued by learned Joint
+Registrar to the defendants is in conformity with the order of the Supreme
+Court in M/s A.P. Distributors (supra), as the grace period of 90 days had
+not expired as on 12.03.2024. The impugned order dated 12.03.2024 is
+correct in law and the said appeal is without any merits; and is hereby
+dismissed.
+11. It is a matter of record that the defendants, on 19.04.2024 filed I.A.
+9286/2024 seeking condonation of delay in filing the written statement. The
+defendants also filed their written statement alongwith affidavit of
+admission/denial of documents. The learned Joint Registrar issued notice in
+the said application on 26.04.2024 affording an opportunity to the plaintiff
+to respond to the said application. Upon the failure of the plaintiff to file
+reply, vide impugned order dated 28.05.2024, the learned Joint Registrar
+granted further opportunity to the plaintiff herein to file reply to the said
+application. The orders of the learned Joint Registrar affording an
+opportunity to the plaintiff to file reply to I.A. No. 9286/2024 is in
+consonance with the principles of natural justice. The plea of the plaintiff
+that no direction to file reply I.A. 9286/2024 could have been issued by the
+CS(COMM) 826/2023 Page 6 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:42
+learned Joint Registrar on 28.05.2024 due to the pendency of O.A. No.
+75/2024 is without any merits. Pertinently, this Court had not stayed the
+proceedings in I.A. No. 9286/2024 during the pendency of O.A. No.
+75/2024, therefore, the challenge to the order dated 28.05.2024 in O.A. No.
+107/2024 by the plaintiff is without any merit and is hereby dismissed. In
+view of this dismissal, the relief sought in I.A. No. 31873/2024 has also
+become infructuous and is hereby disposed of.
+12. This brings us to I.A. No. 9286/2024 filed by the defendants seeking
+condonation of delay of 38 days in filing the written statement beyond the
+statutory period of limitation of 30 days.
+13. Though, this Court finds merit in the submission of the defendant no.
+2 that service of the paper-book through email on defendant no. 1 would not
+constitute a valid service on defendant no. 2, however, since both the
+defendants have filed a common written statement and defendant no. 2 has
+appointed defendant no. 1 as his POA2 holder in these proceedings, for the
+purpose of limitation, the service of summons along with paper-book on
+defendant no.1 on the date 31.01.2024 is hereby accepted. The contention of
+defendant no. 1 that the e-file of the paper-book served through email was
+partly accessible does not appear to be plausible and the said plea is rejected.
+Accordingly, this Court finds that defendant nos. 1 and 2 were duly served
+with the summons along with the paper-book as on 31.01.2024.
+14. The defendant nos. 1 and 2 have filed their common written statement
+on 19.04.2024, which is 78 days from the date of service. Therefore, there is
+a delay of 48 days beyond the statutory period of 30 days.
+2 Power of Attorney dated 12.04.2024
+CS(COMM) 826/2023 Page 7 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:42
+15. The defendant nos. 1 and 2 has stated in the application that the
+monetary claim by the plaintiff in the plaint pertains to a period spanning
+from 2003 till 2023 (20 years) for the alleged services rendered to the
+defendants. It is stated that the defendants filed their written statement and
+the affidavit of admission/denial of documents filed with the plaint after
+verifying the judicial record for the said 20 years period. It is stated that the
+documents filed by the plaintiff runs into 1779 pages pertaining to the
+aforesaid period of 20 years and carrying out admission/denial of the said
+documents after verifying the records required the additional time taken by
+the defendants beyond the statutory period of 30 days. These facts have been
+set out by the defendant in I.A. no. 9286/2024 filed for seeking condonation
+of delay in filing the written statement.
+16. The aforesaid contentions of the defendants is duly borne out from the
+record. This Court is satisfied that the additional period of 48 days taken by
+the defendants to verify the voluminous record filed by the plaintiff along
+with the plaint prior to filing the written statement and the admission/denial
+of documents is reasonable.
+17. In this regard it would also be appropriate to refer to the judgment of
+Supreme Court in SCG Contracts (India) (P) Ltd. v. K.S. Chamankar
+Infrastructure (P) Ltd3., (2019) 12 SCC 210 wherein it has been held that
+period up-to 90 days being a further grace period
+for filing written statement is discretionary and the discretion lies with the
+Court subject to Court being satisfied with the reasons provided by the
+defendant. The operative portion to this aspect of the judgement reads as
+3 (2019) 12 SCC 210
+CS(COMM) 826/2023 Page 8 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:42
+under:
+“8… A perusal of these provisions would show that ordinarily a written
+statement is to be filed within a period of 30 days. However, grace period of
+a further 90 days is granted which the Court may employ for reasons to be
+recorded in writing and payment of such costs as it deems fit to allow such
+written statement to come on record. What is of great importance is the fact
+that beyond 120 days from the date of service of summons, the defendant
+shall forfeit the right to file the written statement and the Court shall not
+allow the written statement to be taken on record. This is further buttressed
+by the proviso in Order 8 Rule 10 also adding that the court has no further
+power to extend the time beyond this period of 120 days.”
+18. This Court finds merit in the grounds set out in application of the
+defendants seeking condonation of delay and the same is hereby granted.
+I.A. 9286/2024 is hereby allowed and the registry is directed to take the
+written statement of the defendants along with affidavit of admission/denial
+of documents on record.
+19. This Court may note that the plaintiff has relied upon the judgment
+3M-Company v. Mr. Viklas Sinha & Anr.4 and Mothers Pride Education
+Institution Pvt. Ltd. v. Shukla Sehgal5 in support of his contentions for
+opposing the impugned order dated 12.03.2024 passed by the learned Joint
+Registrar in O.A. No. 75/2023. The plaintiff has relied upon the said
+judgment to contend that in the absence of an appropriate application for
+condonation of delay, the learned Joint Registrar on 12.03.2024 could not
+have issued the direction permitting the defendant to file their written
+statement along with an application for condonation of delay. This Court
+may note that the aforesaid judgments were passed prior to passing of the
+order dated 12.09.2022 by the Supreme Court in M/s A.P Distributors
+(supra). In fact, after taking note of the order of the Supreme Court, a
+4 2022 SCC OnLine Del 1921
+CS(COMM) 826/2023 Page 9 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:42
+coordinate Bench of this Court in Sundeep Bhupinder Singh and Anr. v.
+OXON Technology (P) Ltd. and Ors.6 rejected a contention similar to the
+one urged by the plaintiff herein. Therefore, the reliance placed by the
+plaintiff on the aforesaid judgments is not made out in the facts of this case.
+CS(COMM) 826/2023
+20. Replication be filed by the plaintiff within 30 days along with
+affidavit of admission/denial of documents filed with the written statement.
+21. List before the Joint Registrar (J) on 02.09.2024.
+22. The date of 30.07.2024 before this Court stands cancelled.
+MANMEET PRITAM SINGH ARORA, J
+JULY 19, 2024/mr/hp/ms
+5 2021 SCC OnLine Del 2407
+6 (2022) 5 HCC (Del) 743
+CS(COMM) 826/2023 Page 10 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:42
+
+===== ORDER =====
+
+$~36
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023
+SANDEEP KUMAR .....Plaintiff
+Through: Mr.Jai Plaintiff, Advocate with
+plaintiff in person
+versus
+SH TARUN ARORA AND ANR .....Defendants
+Through: Mr.Sanjeev Mahajan and Mr.Rishabh
+Varshney and Mr.Pranjal, Advocates
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 22.08.2024
+REVIEW PET. 304/2024
+Arguments heard. No grounds for review are made out. Accordingly,
+the petition is hereby dismissed.
+IA. No. 37076/2024 (Stay)
+In view of the dismissal of the aforesaid review petition, the relief
+sought in this application has become infructuous and the same is
+accordingly dismissed.
+MANMEET PRITAM SINGH ARORA, J
+AUGUST 22, 2024
+SV
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:41
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023
+SANDEEP KUMAR
+.....Plaintiff
+Through: Mr. Jai Gupta, Ms. Arunima Gupta,
+Advs. along with plaintiff in person
+(M: 9810158254)
+versus
+SH TARUN ARORA AND ANR
+.....Defendants
+Through: Mr. Sanjeev Mahajan, Mr. Rishabh
+Varshney, Advs.
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 02.09.2024
+O.A. No. 75/2024 & O.A. No. 107/2024
+1. Both the OAs have already been disposed of.
+I.A. No. 22824/2023(for issuance of summons to both defendants by
+Emails and service through Court)
+2. As submitted by learned counsel for plaintiff, present application has
+become infructuous. Accordingly, same stands disposed of being
+infructuous.
+I.A. No. 22825/2023(Application for condonation of delay of 2 days in
+re-filing the suit)
+3. No objection is raised by the opposite party.
+4. Hence, the delay stands condoned. The captioned IA stands allowed
+and disposed of.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:41
+CS(COMM) 826/2023
+5. Pleadings are complete. At request for learned counsel for defendants,
+let copy of the replication be supplied to him through Email, on sharing the
+same.
+6. Put up for completion of process of filing of Joint Document Schedule
+in terms of Rule7A of Chapter VII of The Delhi High Court (Original
+Side) Rules, 2018 physically by plaintiff after getting it signed from
+defendants, admission / denial of documents and marking of Exhibits in
+accordance with law on 07.01.2025.
+7. Documents, if e-filed be filed physically by parties so as to mark the
+Exhibits.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 2, 2024/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:41
+
+===== ORDER =====
+
+$~28
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023
+SANDEEP KUMAR .....Plaintiff
+Through: Mr. Jai Gupta, Advocate alongwith
+plaintiff in person
+versus
+SH TARUN ARORA AND ANR .....Defendants
+Through: Mr. Sanjeev Mahajan, Mr. Rishabh
+Varshney and Mr. Pranjal Tandon,
+Advocates
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 09.09.2024
+I.A. 38753/2024 (for passing summary judgment)
+1. Learned counsel for the applicant/plaintiff seeks two (2) weeks’ time
+to place on record written submissions in this application and to substantiate
+from record claims qua each entry in the tabulation filed as document no. 44
+and document no. 45.
+2. At request, adjourned to 03.12.2024.
+CS(COMM) 826/2023
+3. Learned counsel for the parties’ state that they are willing to consider
+reference to mediation without prejudice to their rights and contentions of
+the parties.
+4. This Court is of the considered opinion that since plaintiff is a
+practicing advocate and the relief claimed pertains to his legal fee, it would
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:40
+be in the interest of the parties if they explore mediation with a serious
+intent.
+5. Accordingly, the matter is referred to Samadhan – Delhi High Court
+Mediation and Conciliation Center, Delhi High Court, Shershah Road, New
+Delhi [‘Samadhan’]. The Secretariat of the Samadhan is requested to appoint
+Senior Mediator in the present case.
+6. List before Samadhan on 20.09.2024 at 03:00 p.m.
+7. At request, adjourned to 03.12.2024.
+MANMEET PRITAM SINGH ARORA, J
+SEPTEMBER 9, 2024/rhc/ms
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:40
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023 & I.A. 22823/2023 I.A. 38753/2024
+SANDEEP KUMAR .....Plaintiff
+Through: Plaintiff in person
+versus
+SH TARUN ARORA AND ANR .....Defendants
+Through: Mr. Sanjeev Mahajan, Mr. Rishabh
+Varshney, Mr. Pranjal Tandon and
+Ms. Simran Rao, Advs.
+Mr. Anupam Srivastava, Sr. Adv.
+with Mr. Dhairya Gupta, Adv. for D-
+3, 4 and 13
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 03.12.2024
+The mediation between the parties has failed and a non-starter report
+has been received.
+List for consideration on 14.02.2025.
+MANMEET PRITAM SINGH ARORA, J
+DECEMBER 3, 2024/hp
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:39
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023
+SANDEEP KUMAR .....Plaintiff
+Through: Plaintiff in person (M: 704213886)
+versus
+SH TARUN ARORA AND ANR .....Defendants
+Through: Mr. Rishabh Varshney, Advocate for
+D1 & 2
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 07.01.2025
+1. Joint Document Schedule not filed.
+2. Learned counsel for plaintiff submitted that he has already moved an
+application for passing summary judgment and will file the Joint Document
+Schedule after adjudication upon the said IA. However, learned counsel for
+defendant opposed the request.
+I.A. No. 38753/2024(by plaintiff for passing summary judgment)
+3. Learned counsel for plaintiff submitted that this application is pending
+for consideration before the Hon’ble Court for 14.02.2025.
+4. At request, put up before the Hon’ble Court on the date already fixed
+i.e. 14.02.2025 for further directions.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 7, 2025
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:39
+
+===== ORDER =====
+
+$~46
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023
+SANDEEP KUMAR .....Plaintiff
+Through: Plaintiff in person.
+versus
+SH TARUN ARORA AND ANR .....Defendant
+Through:
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 10.01.2025
+I.A. 435/2025 (Application for filing of the Joint Document Schedule in terms
+of Rule 7A of Chapter VII OF The Delhi High Court (Original Side) Rules,
+2018)
+1. The application has been filed on behalf of plaintiff for keeping in
+abeyance filing of the Joint Document Schedule.
+2. In view of the fact that the previous application being I.A. 38753/2024
+filed by plaintiff seeking summary judgment is still pending adjudication and
+now listed for consideration on 14th February, 2025, plaintiff, who appears in
+person, states that the stage of Joint Document Schedule be deferred to after the
+decision on I.A. 38753/2024 since it will not cause prejudice to any party.
+3. Accordingly, application is allowed and disposed of. The Joint
+Document Schedule may be filed after the decision in the summary judgment
+application is taken.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:38
+I.A. 38753/2024
+1. List on 14th February, 2025, the date already fixed.
+2. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+JANUARY 10, 2025/RK/sc
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:38
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023 I.A. 22823/2023 I.A. 38753/2024
+SANDEEP KUMAR .....Plaintiff
+Through: Plaintiff in-person.
+versus
+SH TARUN ARORA AND ANR .....Defendants
+Through: Mr. Sanjeev Mahajan, Mr. Rishabh
+Varshney, Mr. Pranjal Tandon and
+Ms. Simran Rao, Advs.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 14.02.2025
+1. Mr. Sandeep Kumar, the plaintiff, appears in-person in the matter and
+seeks to press his application, being I.A. 38753/2024. He states that defence
+put up by the defendants cannot subsist since it is primarily based on their
+assertion that the services provided by plaintiff was on a pro bono basis for
+which no evidence has been filed.
+2. On the contrary, Mr. Sanjeev Mahajan, counsel for defendants’ states
+that the amounts sought to be recovered from defendants are, inter alia,
+based upon Document No.44, which is an unsigned and unaccepted
+document containing a unilateral tabulation by the plaintiff.
+3. Plaintiff states that this, however, is duly substantiated.
+4. List on 21st May 2025.
+5. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+FEBRUARY 14, 2025/MK/tk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:38
+
+===== ORDER =====
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023 & I.As. 22823/2023, 38753/2024
+SANDEEP KUMAR .....Plaintiff
+Through: Plaintiff in person
+versus
+SH TARUN ARORA AND ANR .....Defendants
+Through: Mr. Sanjeev Mahajan, Ms. Simran
+Rao and Mr. Pranjal Tandon,
+Advocates
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 21.05.2025
+I.A. 22823/2023 (for exemption)
+1. This is an application filed by the plaintiff seeking exemption from
+filing fresh copies of certain dim documents and English translation of
+vernacular documents, which have been filed with the suit.
+2. The Registry is directed to inform, which are these documents that the
+plaintiff will file within four (4) weeks.
+I.A. 38753/2024
+3. The plaintiff, who appears in person has concluded his submissions.
+4. He refers to document nos. 43, 44, 45 and 49 as well as the written
+submissions filed.
+5. Mr. Sanjeev Mahajan, learned counsel for the defendants has referred
+to document no. 48 of the plaintiff’s document at page 1719.
+CS(COMM) 826/2023 Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:37
+6. He seeks time to file his written submissions not exceeding three (3)
+pages at least a week before the next date of hearing.
+7. List for hearing on 01.08.2025.
+MANMEET PRITAM SINGH ARORA, J
+MAY 21, 2025/rhc/ms
+Click here to check corrigendum, if any
+CS(COMM) 826/2023 Page 2 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:37
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023, I.A. 22823/2023 & I.A. 38753/2024
+SANDEEP KUMAR .....Plaintiff
+Through: Plaintiff in person
+versus
+SH TARUN ARORA AND ANR .....Defendants
+Through: Mr. Sanjeev Mahajan, Mr. Rishabh
+Varshney and Ms. Simran Rao,
+Advocates
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 01.08.2025
+1. List on 1st December, 2025.
+AMIT BANSAL, J
+AUGUST 1, 2025
+ds
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:37
+
+===== ORDER =====
+
+$~189
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023
+SANDEEP KUMAR
+.....Plaintiff
+Through: None
+versus
+SH TARUN ARORA AND ANR
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 04.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared on behalf of the parties.
+Let this matter be sent back to the Hon’ble Court for further
+directions.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 04, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:36
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 826/2023, I.A. 22823/2023 & I.A. 38753/2024
+SANDEEP KUMAR .....Plaintiff
+Through: Mr. R.D. Torora, Advocate.
+Mr. Anil Kumar Bakshi, Advocate.
+versus
+SH TARUN ARORA AND ANR .....Defendants
+Through: Mr. Sanjeev Mahajan & Ms. Simran
+Rao, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 01.12.2025
+1. An adjournment slip has been circulated on behalf of the plaintiff,
+which is not opposed by counsel appearing on behalf of the defendants.
+2. List on 7th April, 2026.
+AMIT BANSAL, J
+DECEMBER 1, 2025
+at
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:36

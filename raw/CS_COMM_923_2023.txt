@@ -1,0 +1,1303 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_923_2023
+case_status: PENDING
+n_orders: 24
+
+$~44
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 923/2023, I.As. 25829/2023, 25830/2023, 25831/2023,
+25832/2023, 25833/2023 & 25834/2023
+FERRERO SPA & ORS. ..... Plaintiffs
+Through: Ms. Vaishali Mittal, Adv.
+versus
+DUGAR OVERSEAS PVT LTD & ORS. ..... Defendants
+Through: Mr. Rohan Swarup and Ms. Tanya
+Arora, Adv. for D-1. (M:
+9953068877)
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 20.12.2023
+1. This hearing has been done through hybrid mode.
+2. Subject to the orders of Hon’ble the Judge-in-Charge (Original Side),
+list this matter before another Bench on 21st December, 2023.
+PRATHIBA M. SINGH, J.
+DECEMBER 20, 2023
+dj
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:18
+
+===== ORDER =====
+
+$~25
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 923/2023 & I.A. 25829/2023, I.A. 25830/2023,
+I.A. 25831/2023, I.A. 25832/2023, I.A. 25833/2023, I.A.
+25834/2023
+FERRERO SPA & ORS. ..... Plaintiffs
+Through: Mr. Pravin Anand, Ms. Vaishali
+Anand, Mr. Siddhant Chamola and Mr.
+Shivang Sharma, Advs.
+versus
+DUGAR OVERSEAS PVT LTD & ORS. ..... Defendants
+Through: Mr. Sudeep Chatterjee, Mr.
+Rohan Swaroop and Ms. Tanya Arora,
+Advs. for D-1
+Mr. Ajay Singh, Adv. for D-2
+CORAM:
+HON'BLE MR. JUSTICE C. HARI SHANKAR
+O R D E R
+% 21.12.2023
+CS(COMM) 923/2023
+1. Plaintiff 1 is a company incorporated in Italy. It is the
+manufacturer of the popular Ferrero Rocher brand of chocolates and
+pralines, and is the proprietor of the following registered trademarks:
+S.No. Trademark Application Class Date of Status
+No. application
+(DOA)
+Date of use
+(DOU)
+1. 1678048 30 (DOA)- Regd.
+21.04.2008
+(DOU)-
+01.06.1998
+2. FERRERO ROCHER 1261994 30 (DOA)- Regd.
+(Label with Praline 19.01.2004
+CS(COMM)923/2023 Page1of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:17
+Device)
+(DOU)-
+19.01.2004
+3. FERREROROCHER 802131 30 (DOA)- Regd.
+(wordmark) 14.5.1998
+(DOU)-
+Proposed
+tobeused
+4. FERRERO 827501 30 (DOA)- Regd.
+FERRERO 16.11.1998
+(WordMark)
+(DOU)-
+01.12.1997
+5. ROCHER 2202258 30 (DOA)- Regd.
+(WORDMARK) 08.09.2011
+(DOU)-
+30.06.1998
+6. 1558349 30 (DOA)- Regd.
+[IRDI- 24.8.2020
+4733251]
+(DOU)-
+Proposedto
+beused
+7. Rectangular Box with 2014039 30 (DOA)- Regd.
+Ovals and Pralines (T- 25.08.2010
+16)3-DMark
+(DOU)-
+30.06.1998
+CS(COMM)923/2023 Page2of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:17
+8. 1345020 30 (DOA)- Regd.
+20.01.2017
+(DOU)-
+proposed to
+beused
+9. SquareBox,Diamond 2349844 30 (DOA)- Regd.
+Shape,withOval and 18.06.2012
+Pralines (T-24)
+(DOU)-
+01.04.2009
+10. PyramidofPralines, 1252266 30 (DOA)- Regd.
+Tray [IRDI- 16.03.2015
+3067828]
+(DOU)-
+Proposed
+Tobeused.
+11. 1249154 30 (DOA)- Regd.
+[IRDI- 13.03.2015
+3053743]
+(DOU)-
+Proposed to
+beused
+12. 2354808 30 (DOA)- Regd.
+27.06.2012
+(DOU)-
+06.04.2009
+13. 1345020 30 20.01.2017 Regd.
+[IRDI-
+3557448]
+CS(COMM)923/2023 Page3of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:17
+14. 1692375 30 (DOA)- Publis
+[IRDI- 09.08.2022 hed
+5683891]
+(DOU)-
+proposed to
+beused.
+15. 1665133 30 (DOA)- Forma
+[IRDI- 16.08.2023 lities
+6097443] Chk
+(DOU)- Pass
+proposed to
+beused
+2. The plaintiffs found, in a store run by Defendant 2 at Pune
+Airport and by Defendant 3 at the Indore Airport, counterfeit products
+of the plaintiff. The plaintiffs have placed on record the photographs
+of the said products as well as the representations on the reverse of the
+containers of the products which indicate prima facie that they are
+counterfeit.
+3. Mr. Pravin Anand is correct in his submission that as these are
+products which are to be consumed by children, the Court has to take
+a serious view.
+4. Mr. Sudeep Chatterjee appears on behalf of Defendant 1. Mr.
+Chatterjee submits that Defendant 2 is fraudulently using Defendant
+1’s name and FSSAI number on the sticker of the impugned product
+and that, in actual fact, his client does not indulge in any infringing
+activity.
+5. Mr. Ajay Singh who appears on behalf of Defendant 2 submits
+that his client is not presently selling any of the impugned products
+CS(COMM)923/2023 Page4of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:17
+and also undertakes, on behalf of his client, that pending disposal of
+the suit, his client would not sell any of the impugned products. He
+submits that he had obtained a product from a supplier in Bombay. He
+undertakes to place on record an affidavit, within a period of one
+week, the identity of the person from whom he sourced the impugned
+product, with supporting documents, so that the plaintiff may implead
+the said persons and proceedings could also be instituted against him.
+6. In any event, the facts stated hereinabove make out a prima
+facie case of infringement as well as passing off, as the counterfeit
+products of the plaintiff were found to being sold at the afore-noted
+outlets of Defendants 2 and 3 at Pune and Indore Airports.
+7. As such, let the plaint be registered as a suit.
+8. Issue summons in the suit. Summons are accepted, on behalf of
+Defendant 1, by Mr. Sudeep Chatterjee and on behalf of Defendant 2
+by Mr. Ajay Singh.
+9. Let summons issue to Defendant 3 by all modes.
+10. Written statement, accompanied by affidavit of admission and
+denial of the documents filed by the plaintiff be filed within 30 days
+with advance copy to learned Counsel for the plaintiff who may file
+replication thereto, accompanied by affidavit of admission and denial
+of the documents filed by the defendants within 30 days thereof.
+11. List before the learned Joint Registrar (Judicial) for completion
+CS(COMM)923/2023 Page5of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:17
+of the pleadings, admission and denial of documents and marking of
+exhibits on 18 January 2024, whereafter the matter would be placed
+before the Court for case management hearing and further
+proceedings.
+I.A. 25829/2023 (Order XXXIX Rules 1 and 2 of the CPC)
+12. This is an application under Order XXXIX Rules 1 and 2 of the
+CPC seeking interlocutory injunctive reliefs.
+13. It is obvious that no one can be permitted to sell counterfeit
+products in the market.
+14. In the present case, the position is exacerbated by the fact that
+the products in question are chocolates which are consumed by
+children. As such, a prima facie case for grant of ex-parte ad interim
+injunction is made out.
+15. As such, issue notice.
+16. Notice is accepted, on behalf of Defendant 1, by Mr. Sudeep
+Chatterjee and on behalf of Defendant 2 by Mr. Ajay Singh.
+17. Let notice issue to Defendant 3 by all modes.
+18. Reply be filed positively within a period of four weeks from
+today with advance copy to learned Counsel for the plaintiff who may
+file rejoinder thereto, if any, within four weeks thereof.
+CS(COMM)923/2023 Page6of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:17
+19. Till the next date of hearing, there shall be an ad interim
+injunction restraining the defendants as well as any other party from
+manufacturing, packing, selling, advertising or dealing in any manner
+with counterfeit Ferrero Rocher or any other product emanating from
+the plaintiffs or bearing the mark FERRERO ROCHER, FERRERO,
+ROCHER,
+FERRERO ROCHER formative marks or any other mark or trade
+dress which is identical or confusingly similar to the Plaintiffs’
+FERRERO ROCHER marks or trade dress.
+20. Compliance with Order XXXIX Rule 3 of the CPC qua
+Defendant 3 be effected within a period of one week from today.
+21. List for hearing and disposal of this application before the Court
+on 1 April 2024.
+I.A. 25830/2023 (under Order XI Rule 2 of the CPC)
+22. Issue notice.
+23. Notice is accepted, on behalf of Defendant 1, by Mr. Sudeep
+Chatterjee and on behalf of Defendant 2 by Mr. Ajay Singh.
+CS(COMM)923/2023 Page7of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:17
+24. Let notice issue to Defendant 3 by all modes.
+25. Reply be filed positively within a period of four weeks from
+today with advance copy to learned Counsel for the plaintiff who may
+file rejoinder thereto, if any, within four weeks thereof.
+26. List this application before the Court on 1 April 2024.
+I.A. 25831/2023 (Order XI Rule 1(4) of the CPC)
+27. This application seeks permission to file additional documents.
+The plaintiff is permitted to place additional documents on record in
+accordance with Order XI Rule 1(4) of the Code of Civil Procedure,
+1908 (CPC) as amended by the Commercial Courts Act within four
+weeks from today.
+28. The application stands disposed of accordingly.
+I.A. 25832/2023 (exemption)
+29. Subject to the plaintiff filing legible copies of any dim or
+illegible documents on which it may seek to place reliance within 30
+days from today, exemption is granted for the present.
+30. The application is disposed of.
+I.A. 25833/2023 (under Section 149 of the CPC)
+31. Learned Counsel for plaintiff submits that the court fee has been
+CS(COMM)923/2023 Page8of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:17
+paid.
+32. Accordingly, this application is rendered infructuous and is
+disposed of.
+I.A. 25834/2023 (Section 12A of the Commercial Courts Act, 2015)
+33. As the Defendants 2 and 3 are represented today by learned
+Counsel, exemption from the requirement of pre-litigation mediation
+is allowed.
+34. The application stands disposed of.
+C. HARI SHANKAR, J.
+DECEMBER 21, 2023
+dsn
+Click here to check corrigendum, if any
+CS(COMM)923/2023 Page9of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:17
+
+===== ORDER =====
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 923/2023
+FERRERO SPA & ORS.
+..... Plaintiff
+Through: Mr. Shivang Sharma, Adv.
+(M-9999052646)
+versus
+DUGAR OVERSEAS PVT LTD & ORS.
+..... Defendant
+Through: Mr. Rohan Swarup, Adv. for
+D-1 through VC.
+Mr. Ajay Singh, Adv. for
+D-2 through VC.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 18.01.2024
+The defendant no. 1 and 2 have already appeared on
+21.12.2023.
+The service-affidavit filed, vide diary no. 78555/24 shows
+that the defendant no.3 was served via e-mail on 09.01.2024; via
+courier on 11.01.2024 and via speed post on 13.01.2024.
+The defendants are yet to file their written statements.
+List the matter for completion of pleadings on 14.03.2024.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 18, 2024/ss
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:16
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 923/2023
+FERRERO SPA & ORS. .... Plaintiff
+Through: Mr. Shivang Sharma (VC),
+Advocate
+versus
+DUGAR OVERSEAS PVT LTD & ORS. ..... Defendant
+Through: Mr. Kunal Vats (VC), Advocate
+for D-1
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 14.03.2024
+None of the defendants have filed their written statements
+despite being served. The maximum permissible period to file
+the written statement, however, has not yet expired for any of the
+defendants.
+Let the written statement be filed as per rules with an
+advance copy of the same to the opposite side.
+Matter is already listed before the Hon’ble Court for
+01.04.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 01.04.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 14, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:16
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 923/2023, I.A. 25829/2023 & I.A. 25830/2023
+FERRERO SPA & ORS. ..... Plaintiffs
+Through: Ms. Vaishali Mittal & Mr. Shivang
+Sharma, Advs.
+versus
+DUGAR OVERSEAS PVT LTD & ORS. ..... Defendants
+Through: Mr. Kunal Vats & Ms. Tanya Arora,
+Advs.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 01.04.2024
+1. At request of counsels for the parties, list this matter before the Joint
+Registrar (Judicial) for further proceedings, on 10th April, 2024.
+2. Interim orders to continue till further orders.
+3. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+APRIL 1, 2024/sm
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:15
+
+===== ORDER =====
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 923/2023
+FERRERO SPA & ORS. ..... Plaintiff
+Through: Mr. Shivang Sharma (VC),
+Advocate
+versus
+DUGAR OVERSEAS PVT LTD & ORS. ..... Defendant
+Through: Mr. Jaydeep Roy, Advocate for
+D-1
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 03.04.2024
+I.A. No. 7377/2024 on behalf of defendant no. 1 seeking
+condonation of delay of 62 days in filing written statement.
+Issue notice.
+Notice accepted by ld. Counsel for the plaintiff who
+presses for an opportunity to file a response.
+Ld. Counsel for the plaintiff submits that matter is listed
+before this Court on 10.04.2024 under directions given, by the
+Hon’ble Court on 01.04.2024.
+Let reply be filed by 09.04.2024 with an advance copy of
+the same to the opposite side.
+Put up for completion of pleadings on 10.04.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 3, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:14
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 923/2023
+FERRERO SPA & ORS.
+..... Plaintiff
+Through: Mr. Shivang Sharma, Advocate
+versus
+DUGAR OVERSEAS PVT LTD & ORS.
+..... Defendant
+Through: Mr. Kunal Vats, Mr. Partheshwar
+Singh, Advocates for D-1.
+Mr. Ajay Kr. Srivastava,
+Advocate for D-3
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 10.04.2024
+I.A. No. 7377/2024 on behalf of defendant no. 1 seeking
+condonation of delay of 62 days in filing the written
+statement.
+Ld. Counsel for the plaintiff submits that he has no
+objection to the application being allowed.
+For the reasons stated in the application, application is
+allowed. Delay stands condoned. Written statement is taken on
+record. Replication be filed within the period permissible, as
+worked out from today.
+IA stands disposed off.
+CS(COMM) 923/2023
+Counsel for defendant no. 3 submits that they have been
+served through courier on 11.01.2024. Written statement be
+filed, as per rules.
+Defendant no. 2 is yet to file its written statement.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:14
+Summons were accepted on behalf of defendant no. 2 on
+21.12.2023.
+Put up for completion of pleadings on 26.07.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 10, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:14
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 923/2023
+FERRERO SPA & ORS. .....Plaintiff
+Through: Mr. Shivang Sharma (VC),
+Advocate
+versus
+DUGAR OVERSEAS PVT LTD & ORS. .....Defendant
+Through: Mr. Ajay Singh (VC), Advocate
+for D-2
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 26.07.2024
+1. Pleadings qua defendant no. 1 are complete.
+2. Written statement filed on behalf of defendant no. 2 is
+lying under objection. Ld. Counsel for the defendants submits
+that written statement has been re-filed on 23.07.2024 but the
+same is again under objections. Ld. Counsel for defendant no. 2
+is directed to remove the objections within two weeks.
+3. Defendant no. 3 was served on 11.01.2024 but no written
+statement has been filed till date. The maximum permissible
+period to file the same has expired. Right to file the written
+statement of defendant no. 3 thus stands closed.
+4. Since the pleadings between plaintiff and defendant no. 1
+are complete, both the sides are directed to file their documents
+in physical form.
+5. Put up for further proceedings, and for admission / denial
+of documents on behalf of plaintiff and defendant no. 1 on
+12.09.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 26, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:13
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 923/2023
+FERRERO SPA & ORS. .....Plaintiff
+Through: Ms. Shivang Sharma (VC),
+Advocate
+Email : shivang.s@anandandanand.com
+versus
+DUGAR OVERSEAS PVT LTD & ORS. .....Defendant
+Through: Ms. Tanya Arora, Advocate for
+D-1.
+Email : tanya@singhandsingh.com
+Mr. Ajay Singh (VC), Advocate
+for D-2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 12.09.2024
+I.A. No. 39317/2024 filed by defendant no. 2 for condoning
+delay of 77 days in re-filing the written statement.
+1. Issue notice. Notice accepted by ld. Counsel for the
+plaintiff. For the reasons stated in the application, application is
+allowed subject to cost of Rs. 5000/-, to be paid to the plaintiff /
+counsel for the plaintiff within three weeks. IA stands disposed
+off.
+I.A. No. 39316/2024 filed by defendant no. 2 for condoning
+delay of 89 days in filing the written statement.
+2. Issue notice. Notice accepted by ld. Counsel for the
+plaintiff. For the reasons stated in the application, application is
+allowed subject to cost of Rs. 5000/-, to be paid to the plaintiff /
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:13
+counsel for the plaintiff within three weeks failing which the
+written statement shall be deemed to have been taken off the
+record. It is also made clear that if the cost imposed while
+disposing off IA No. 39317/2024 is also not paid within three
+weeks, the written statement shall be deemed to have been taken
+off the record. Delay stands condoned subject to above. Written
+statement of defendant no. 2 is taken on record. Replication be
+filed within the period permissible, as worked out from today. IA
+stands disposed off.
+CS(COMM)- 923/2023:
+3. Copy of the written statement filed by defendant no. 1 be
+supplied to ld. Counsel for defendant no. 2 on his email within a
+week. Similarly, copy of the written statement of defendant no. 2
+be supplied to ld. Counsel for the defendant no. 1 on her email.
+4. Plaintiff and defendant no. 1 have filed their documents in
+physical form. Defendant no. 2 is directed to file its documents
+in physical form within six weeks. Right of defendant no. 3 to
+file a written statement has already been closed.
+5. Put up for admission / denial of documents on 13.11.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 12, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:13
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 923/2023
+FERRERO SPA & ORS. .....Plaintiff
+Through: Mr. Shivang Sharma, Advocate
+Versus
+DUGAR OVERSEAS PVT LTD & ORS. .....Defendant
+Through: Mr. Partneshwar Singh,
+Ms. Tanya Arora, Advocates for
+D-1.
+Mr. Ajay Singh, Mr. Abhishek
+Rana, Advocates for D-2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 13.11.2024
+1. The matter has been listed today for carrying out
+admission / denial of documents.
+2. Ld. Counsel for the plaintiff has denied all the documents
+(as per affidavit) filed by defendant no. 2. Ld. Counsel for
+defendant no. 2 submits that he will file the physical documents
+within four weeks. Let the same be filed within four weeks.
+3. Documents of the plaintiff are not traceable on Court
+record. Registry is directed to trace the documents and place
+them on record before the next date. Plaintiff is at liberty to file
+the missing documents in physical form within four weeks, in
+case they can’t be traced on court record.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:12
+4. Put up for admission / denial of documents on 07.02.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 13, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:12
+
+===== ORDER =====
+
+$~45
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+I.As. 45374/2024 and 45375/2024
+In
++ CS(COMM) 923/2023
+FERRERO SPA & ORS. .....Plaintiffs
+Through: Ms. Vaishali R. Mittal and Mr.
+Shivang Sharma, Advocates.
+versus
+DUGAR OVERSEAS PVT LTD & ORS. .....Defendants
+Through: Mr. Kunal Vats, Ms. Tania Arora and
+Mr. Partheshwar Singh, Advocates
+for D-1.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 19.11.2024
+I.A. 45374/2024 (under Order I Rule 10 CPC)
+1. This application has been filed under Order I Rule 10 CPC seeking
+impleadment of Rajaram Food Stuff as defendant no.5 in the present suit.
+2. The present impleadment application has been filed pursuant to
+disclosures made in the written statement filed on behalf of the defendant
+no.2, wherein it has been stated that the defendant no.2 has purchased the
+infringing products from the proposed defendant.
+3. In view of the above, I am of the view that the impleadment of the
+proposed defendant is necessary for proper and effective adjudication of the
+present suit.
+CS(COMM)923/2023 Page1of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:11
+4. Accordingly, the application is allowed and the amended memo of
+parties is taken on record.
+CS(COMM) 923/2023
+5. In view of the order passed above, counsel for the plaintiffs seeks to
+file an amended plaint.
+6. Let the same be filed within three (3) weeks.
+7. List on 20th December, 2024.
+I.A. 25829/2023 (under Order XXXIX Rules 1 and 2 CPC)
+8. List on 20th December, 2024.
+AMIT BANSAL, J
+NOVEMBER 19, 2024
+Vivek/-
+CS(COMM)923/2023 Page2of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:11
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 923/2023
+FERRERO SPA & ORS. .....Plaintiff
+Through: Mr. Shivang Sharma, Advocate
+versus
+DUGAR OVERSEAS PVT LTD & ORS. .....Defendant
+Through: Mr. Jaydeep Roy (VC),
+Advocate for D-1.
+Mr. Ajay Singh, Rouble Chhabra
+(VC), Advocates for D-2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 22.11.2024
+I.A. No. 45975/2024 seeking condonation of delay of 4 days in
+filing the replication to defendant no. 2’s written statement.
+1. Issue notice. Notice accepted by ld. Counsel for defendant
+no. 2 who presses for an opportunity to file a response. Let the
+reply be filed within two weeks, with an advance copy of the
+same to the opposite side. Rejoinder thereto, if any, be filed
+thereafter within a week of receiving an advance copy of the
+reply.
+2. Matter is already listed before the Hon’ble Court for
+20.12.2024. Be placed before the Hon’ble Court on the date
+already fixed i.e. 20.12.2024, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 22, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:10
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+I.A. 45375/2024 and I.A. 49222/2024
+In
++ CS(COMM) 923/2023
+FERRERO SPA & ORS. .....Plaintiffs
+Through: Ms. Vaishali R Mittal, Mr. Shivang
+Sharma, Advocate.
+versus
+DUGAR OVERSEAS PVT LTD & ORS. .....Defendants
+Through: Ms. Sudeep Chatterjee, Mr. Rohan
+Swarup, Ms. Tanya Arora, Advocates
+for D-1.
+Mr. Ajay Singh, Mr. Abhishek Rana
+and Ms. Rouble Chhabra, Advocates
+for D-2.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 20.12.2024
+I.A. 49222/2024 (u/O VI Rule 17 CPC)
+1. This application has been filed on behalf of the plaintiff under Order
+VI Rule 17 of the Code of Civil Procedure, 1908 (in short ‘CPC’) seeking to
+amend the plaint.
+2. The application has been filed pursuant to impleadment of the
+defendant no.5 under the provisions of Order I Rule 10 of the CPC.
+3. The proposed amendments are relating to averments made qua the
+defendant no. 5.
+CS(COMM)923/2023 Page1of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:10
+4. Issue notice.
+5. Notice is accepted on behalf of the defendants no.1 and 2 by their
+respective counsel.
+6. I have perused the proposed amendments and I am of the view that
+the amendments do not change the nature and character of the suit.
+Additionally, the suit is at the initial stage and no prejudice would be caused
+to the defendants if the aforesaid amendments are allowed.
+7. Accordingly, the proposed amendments are permitted and the
+amended plaint is taken on record.
+8. Application is disposed of.
+I.A. 45375/2024 (under Order XXXIX Rules 1 and 2 CPC)
+9. This application has been filed under Order XXXIX Rules 1 and 2 of
+the CPC.
+10. It is stated in the application that the defendant no.2 in its written
+statement has stated that the defendant no.5 is selling the impugned products
+using Ferrero Rocher trademarks including labels /packaging etc. Therefore,
+counterfeit products are being sold by the defendant no.5 showing that they
+originate from the plaintiff which would be prejudicial not only to the
+interest of the plaintiff but also to the consumers at large.
+11. In view of the above, a prima facie case of infringement is made out
+on behalf of the plaintiff. The balance of convenience is also in favour of the
+plaintiff and against the defendant no.5.
+12. Accordingly, till the next date of hearing, the defendant no.5, its
+directors, partners, proprietors, subsidiaries, affiliates, franchisees, officers,
+servants, agents, distributors, stockiest, representatives, licensees and
+anyone acting for or on their behalf directly or indirectly are restrained, as
+CS(COMM)923/2023 Page2of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:10
+the case may be, from manufacturing, packaging, selling, offering for sale,
+advertising, and dealing in any manner whatsoever with counterfeit
+FERRERO ROCHER or any product not emanating from the Plaintiffs or
+their authorized distributors and bearing the trademark FERRERO
+ROCHER, FERRERO, ROCHER,
+FERRERO ROCHER
+formative marks or any other mark, trade dress identical or similar to the
+Plaintiffs’ FERRERO ROCHER trademarks.
+13. Issue Notice.
+14. Notice be issued to the defendant no.5 via all permissible modes,
+including e-mail.
+15. Reply be filed within four (4) weeks.
+16. Rejoinder thereto, if any, be filed within two (2) weeks thereafter.
+CS(COMM)923/2023 Page3of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:10
+17. List on 26th March, 2025.
+I.A. 45975/2024 (under Order VIII Rule 1 CPC filed by plaintiffs seeking
+condonation of delay in filing the replication to defendant no.2’s written
+statement)
+18. This application has been filed by the plaintiff seeking condonation of
+delay of 4 days in filing the replication to the defendant no.2’s written
+statement.
+19. For the reasons stated in the application, the delay of 4 days in filing
+the replication to the written statement of defendant no. 2 is condoned and
+the replication is permitted to be taken on record.
+20. Application stands disposed of accordingly.
+CS(COMM) 923/2023
+21. Issue summons to the newly impleaded defendant no.5 through all
+modes. The summons shall state that the written statement shall be filed by
+the defendant no. 5 within thirty days from the date of the receipt of
+summons. Along with the written statement, the defendant shall also file
+affidavit of admission/denial of the documents of the plaintiffs, without
+which the written statement shall not be taken on record.
+22. Liberty is given to the plaintiffs to file replication(s), if any, within
+thirty days from the receipt of the written statement. Along with the
+replication(s) filed by the plaintiffs, affidavit of admission/denial of the
+documents of the defendant no.5 be filed by the plaintiffs.
+23. List along with pending applications on 26th March, 2025.
+AMIT BANSAL, J
+DECEMBER 20, 2024
+PB
+CS(COMM)923/2023 Page4of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:10
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 923/2023
+FERRERO SPA & ORS. .....Plaintiff
+Through: Mr. Shivang Sharma, Advocate
+versus
+DUGAR OVERSEAS PVT LTD & ORS. .....Defendant
+Through: Ms. Tanya Arora,
+Mr. Partheshwar Singh,
+Advocates for D-1.
+Mr. Ajay Singh, Mr. Abhishek
+Rana (VC), Advocates for D-2
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 07.02.2025
+1. The matter has been listed today for carrying out
+admission / denial of documents. However, admission / denial of
+documents could not be conducted today as documents in
+physical form of the plaintiff are not on court record.
+2. Ld. Counsel for the plaintiff however maintains that they
+have filed their documents in physical form. Plaintiff is directed
+to engage with the registry and trace the documents / re-file the
+same before the next date.
+3. Although documents in physical form on behalf of
+defendant no. 1 have been filed but the same have all been denied
+by the plaintiff, as per the affidavit of admission / denial.
+Consequently, physical marking would not be required.
+4. Documents in physical form are yet to be filed by
+defendant no. 2. It needs a highlight that two opportunities have
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:09
+been granted for this purpose i.e of six weeks and subsequently
+of four weeks again. Another opportunity is granted to defendant
+no. 2 to file its documents physically and ensure that they are on
+record (sans any objections) within two weeks failing which cost
+of Rs. 20,000/- shall be imposed on defendant no. 2.
+5. Right of defendant no. 3 to file a written statement has
+already been closed. Defendant no. 4 is John Doe.
+6. Matter is already listed before the Hon’ble Court for
+26.03.2025. Be placed before the Hon’ble Court on the date
+already fixed i.e. 26.03.2025, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 7, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:09
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+I.A. 25829/2023, I.A. 25830/2023 and I.A. 45375/2024
+In
++ CS(COMM) 923/2023
+FERRERO SPA & ORS. .....Plaintiffs
+Through: Mr. Pravin Anand, Ms. Vaishali R.
+Mittal and Mr. Shivang Sharma,
+Advocates.
+versus
+DUGAR OVERSEAS PVT LTD & ORS. .....Defendants
+Through: Mr. Sudeep C., Mr. Kunal Vats and
+Mr. Partheshwar Singh, Advocates
+for defendant no. 1.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 26.03.2025
+1. Right to file written statement on behalf of the defendant no.3 has
+already been closed vide order dated 26th July, 2024.
+1.1 To be noted, none has been appearing on behalf of the defendant no.3
+since 10th April, 2024.
+2. Accordingly, the defendant no.3 is proceeded against ex parte.
+3. None appears on behalf of the defendant no.2, though a written
+statement has been filed on its behalf.
+4. In the interest of justice, adverse orders qua the defendant no.2 are
+deferred.
+CS(COMM)923/2023 Page1of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:08
+5. List before the Joint Registrar on 28th April, 2025 for completion of
+service and pleadings qua the defendant no.5.
+6. List before the Court on 2nd September, 2025.
+7. Interim orders to continue till the next date of hearing.
+AMIT BANSAL, J
+MARCH 26, 2025
+kd
+CS(COMM)923/2023 Page2of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:08
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 923/2023
+FERRERO SPA & ORS.
+.....Plaintiff
+Through: Mr. Shivang Sharma (VC),
+Advocate
+versus
+DUGAR OVERSEAS PVT LTD & ORS.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 28.04.2025
+1. The matter has been listed today under directions of the
+Hon’ble Court regarding service / completion of pleadings of
+defendant no. 5.
+2. As per the affidavit of service, defendant no. 5 has been
+served on 10.02.2025. However, despite repeated calls none has
+appeared on behalf of defendant no. 5.
+3. Put up again for appearance / completion of pleadings qua
+defendant no. 5 on 14.07.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 28, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:08
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 923/2023
+FERRERO SPA & ORS. .....Plaintiffs
+Through: Ms. Geetanjali Sharma,
+Advocate.
+Versus
+DUGAR OVERSEAS PVT LTD & ORS. .....Defendants
+Through: Ms. Tanya Arora, Advocate.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. AJAY GULATI
+O R D E R
+% 14.07.2025
+1. Defendant no. 5 has been served on 10th February, 2025.
+However, there is no appearance on behalf of defendant no. 5 today
+as was the case on 28th April, 2025 also. Since defendant no. 5 was
+served with summons on 10th February, 2025 and despite lapse of
+the maximum permissible period to file a written statement, no
+written statement has been filed on behalf of defendant no. 5, its
+right to do so stands closed.
+2. Defendant no. 3 has been proceeded against ex-parte.
+Defendant no. 4 is a John Doe.
+3. The matter is at the stage of carrying out admission/denial
+between the plaintiff and defendants no. 1 and 2. However,
+documents in physical form of the plaintiff still do not appear to be
+on record. Consequently, plaintiff is directed once again to check up
+with the registry and ensure that its documents in physical form are
+on record before the next date of hearing, failing which cost of Rs.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:07
+25,000/- will be imposed on the plaintiff.
+4. Documents in physical form on behalf of defendant no. 2
+have now been filed. In view of the above, put up on 26th August,
+2025 for admission/denial of plaintiff’s documents on behalf of
+defendant no. 1 and defendant no.2, and for admissions/denial of
+defendant no. 2’s documents on behalf of the plaintiff.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 14, 2025
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:07
+
+===== ORDER =====
+
+$~234
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 923/2023
+FERRERO SPA & ORS.
+.....Plaintiff
+Through: None
+versus
+DUGAR OVERSEAS PVT LTD & ORS.
+.....Defendant
+Through: Ld. Counsel for the defendant.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the plaintiff when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:07
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 923/2023
+FERRERO SPA & ORS.
+.....Plaintiff
+Through: Mr. Shivang Sharma, Advocate
+versus
+DUGAR OVERSEAS PVT LTD & ORS.
+.....Defendant
+Through: Ms. Tanya Arora, Advocate for
+D-1.
+Mr. Abhishek Rana, Mr. Ajay
+Singh, Advocates for D-2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 26.08.2025
+1. Defendant no. 3 has already been proceeded against
+exparte. Right of defendant no. 5 to file written statement has
+already been closed.
+2. The matter has been listed today for carrying out
+admission / denial of documents on behalf of the plaintiff,
+defendant no. 1 and 2.
+2. Ld. Counsel for the plaintiff has denied all the documents
+of defendant nos. 1 and 2.
+3. Ld. Counsel for defendant no. 1 admits seven documents
+filed by the plaintiff, which have been identified as Ex. P-1 to Ex.
+P-7. Rest of the documents have been denied by defendant no. 1.
+4. Ld. counsel for defendant no. 2 admits four documents
+filed by the plaintiff, which have been identified as Ex. P-8 to Ex.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:06
+P-11. Rest of the documents have been denied by defendant no.
+2.
+5. Admission / denial of documents stands complete. Matter
+is ripe for framing of issues.
+6. Matter is already listed before the Hon’ble Court for
+02.09.2025. Be placed before the Hon’ble Court on the date
+already fixed i.e. 02.09.2025, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 26, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:06
+
+===== ORDER =====
+
+$~31
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 923/2023 & I.A. 25829/2023 I.A. 25830/2023 I.A.
+45375/2024
+FERRERO SPA & ORS. .....Plaintiffs
+Through: Ms. Vaishali R Mittal and Mr.
+Shivang Sharma (Through VC),
+Advocates
+versus
+DUGAR OVERSEAS PVT LTD & ORS. .....Defendants
+Through: Mr. Sudeep Chatterjee, Mr. Rohan
+Swarup, Ms. Tanya Arora and Mr.
+Shitanshu Abhishek, Advs. for D-1
+None for D-2 and D-5
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 02.09.2025
+CS(COMM) 923/2023
+1. Learned counsel appearing on behalf of Defendant No. 1 states that
+this suit has been filed by the Plaintiff aggrieved by the counterfeit products
+sold by Defendant No. 2.
+1.1. He states that Defendant No. 1 has been impleaded on the basis that
+Defendant No. 1’s details are mentioned on counterfeit products sold by
+Defendant No. 2.
+1.2. He states that Defendant No. 1 has already taken a stand on affidavit
+that Defendant No. 2 printed the details of Defendant No. 1 on their
+CS(COMM) 923/2023 Page 1 of 3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:05
+counterfeit product without the knowledge or notice of Defendant No. 1. He
+states that Defendant No. 2 has further disclosed on oath that the source of
+the counterfeit products was Defendant No. 5 and not Defendant No. 1.
+1.3. He states that Defendant No 1 after learning about the illegal activities
+of Defendant No. 2 has filed a formal complaint with Food Safety and
+Standards Authority of India (FSSAI). He states that Defendant No. 1 has a
+GST number and no alleged sales of the Plaintiff’s product have been
+reported in the GST returns filed by the Defendant No.1.
+1.4. He states that Defendant No. 1 is as much victim of the fraud of
+Defendant No. 2, as is the Plaintiff.
+1.5. He states that Defendant No. 1 is willing to cooperate with the
+Plaintiff in these proceedings and in any other proceedings initiated against
+Defendant No. 2 however, Defendant No. 1 should be deleted from the
+present proceedings.
+2. Prima facie, this Court finds merit in the submission of the Defendant
+No. 1 seeking deletion from the array of parties.
+3. Learned counsel for the Plaintiff states that he will take instructions
+on the aforesaid prayer of deletion of Defendant No. 1.
+4. In the meantime, since none appears on behalf of Defendant No. 5,
+Defendant no. 5 is hereby proceeded ex-parte.
+5. List for limited purpose of deletion of Defendant No. 1 on
+15.12.2025.
+I.A. 25829/2023 and I.A. 45375/2024
+6. These are applications filed by the Plaintiff under Order XXXIX Rule
+1 and 2 CPC. There is an ad-interim injunction order dated 21.12.2023 and
+20.12.2024 operating against Defendant Nos. 1 to 5.
+CS(COMM) 923/2023 Page 2 of 3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:05
+7. Learned counsel for the Plaintiff states that Defendant No. 3 and
+Defendant No. 5 have not entered appearance despite service.
+7.1. He states that Defendant No. 2 has entered appearance and is not
+contesting the injunction order.
+8. Learned counsel for Defendant No. 1 states that Defendant No. 1 as
+well is not contesting the injunction order.
+9. In view of the aforesaid submission, the injunction orders dated
+21.12.2023 and 20.12.2024 are hereby made absolute until the final disposal
+of the suit.
+10. Accordingly, applications stand disposed of.
+I.A. 25830/2023
+11. Defendant No. 2 is directed to file its reply to interrogatories annexed
+with this application within a period of four (4) weeks.
+12. List on 15.12.2025.
+MANMEET PRITAM SINGH ARORA, J
+SEPTEMBER 2, 2025/hp
+CS(COMM) 923/2023 Page 3 of 3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:05
+
+===== ORDER =====
+
+$~29
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 923/2023
+FERRERO SPA & ORS. .....Plaintiffs
+Through: Mr. Shivang Sharma, Adv.
+versus
+DUGAR OVERSEAS PVT LTD & ORS. .....Defendants
+Through: Mr. Sudeep Chatterjee, Mr. Kunal
+Vats, Ms. Tanya Arora, Mr. Shitanshu
+Abhishek, Advs. for D-1.
+Mr. Shubham Singh, Adv. for D-2.
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 16.10.2025
+1. Learned counsel for the plaintiffs states that he has instructions to
+make an oral prayer for the deletion of defendant No.1.
+1.1 He, however, states that defendant No.1 should be bound down to the
+statements as recorded in the order dated 02.09.2025 and more specifically,
+the statements recorded at paragraph 1.5 therein.
+2. Learned counsel for Defendant No.1 also prays for the appropriate
+orders of deletion.
+2.1 He states that Defendant No.1 undertakes to remain bound by the
+statements recorded in the order dated 02.09.2025 and will file an affidavit
+of the authorised representative within two (2) weeks, giving an undertaking
+to remain bound by the statements recorded in the order dated 02.09.2025.
+3. In view of the aforesaid submissions of Plaintiffs and Defendant No.1,
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:05
+Defendant No.1 is hereby deleted from the array of parties.
+4. Defendant No.1’s authorised representative is directed to file its
+affidavit of undertaking in respect of the statements recorded on 02.09.2025
+within two (2) weeks.
+5. Let the amended memo of parties be filed within two (2) weeks.
+I.A. 26010/2025
+6. This is an application filed by the Plaintiffs under Order XIII-A Rules
+3, 6 (1)(a), 8, read with Order VIII Rule 10, read with Section 151 of Code
+of Civil Procedure Code, 
+
+[TRUNCATED — rights are established in the opening orders above]

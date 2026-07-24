@@ -1,0 +1,991 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_815_2023
+case_status: DISPOSED
+n_orders: 16
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 815/2023, I.As. 22458/2023, 22459/2023, 22460/2023
+& 22461/2023
+MAKEMYTRIP INDIA PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Deepankar Mishra, Mr. Abhishek
+Kontala and Ms. Ipishita, Advs. (M.
+9716746496)
+versus
+DIALMYTRIP TECH PRIVATE LIMITED ..... Defendant
+Through:
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 16.11.2023
+1. This hearing has been done through hybrid mode.
+2. Hon’ble Judge is on official visit to Geneva to participate in “2023
+WIPO Judges Forum”.
+3. List on 20th November, 2023.
+BY ORDER
+(COURT MASTER)
+NOVEMBER 16, 2023
+Rahul
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:05
+
+===== ORDER =====
+
+$~28
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 815/2023, I.As. 22458/2023, 22459/2023, 22460/2023
+& 22461/2023
+MAKEMYTRIP INDIA PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Jai S. Deepak, Sr. Advocate
+with Mr. Abhishek Kotnala, and Ms.
+Ipshita Dutta, Advocates (M:
+9890486977).
+versus
+DIALMYTRIP TECH PRIVATE LIMITED ..... Defendant
+Through: None.
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 20.11.2023
+1. This hearing has been done through hybrid mode.
+2. List on 21st November, 2023 in the supplementary list.
+PRATHIBA M. SINGH, J.
+NOVEMBER 20, 2023
+mr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:04
+
+===== ORDER =====
+
+$~26
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 815/2023, I.As. 22458/2023, 22459/2023, 22460/2023
+& 22461/2023
+MAKEMYTRIP INDIA PRIVATE LIMITED ..... Plaintiff
+Through: Mr. J. Sai Deepak, Mr. Mohit Goel,
+Mr. Sidhant Goel, Abhishek
+Kotnala, Advs. (M. 9716746496)
+versus
+DIALMYTRIP TECH PRIVATE LIMITED ..... Defendant
+Through: None.
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 21.11.2023
+1. This hearing has been done through hybrid mode.
+I.A. 22460/2023 (for exemption)
+2. This is an application filed by the Plaintiff seeking exemption from
+filing certified/translated copies of documents with proper margins, etc.
+Original documents shall be produced/filed at the time of Admission/Denial,
+if sought, strictly as per the provisions of the Commercial Courts Act, 2015
+and the DHC (Original Side) Rules, 2018.
+3. Exemption is allowed, subject to all just exceptions. Accordingly, the
+application is disposed of.
+I.A.22459/2023 (for additional documents)
+4. This is an application filed by the Plaintiff seeking leave to file
+additional documents under the Commercial Courts, Commercial Division
+and Commercial Appellate Division of High Courts Act, 2015 (hereinafter,
+‘Commercial Courts Act’). The Plaintiff, if it wishes to file additional
+documents at a later stage, shall do so strictly as per the provisions of the
+CS(COMM)815/2023 Page1of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:04
+Commercial Courts Act and the DHC (Original Side) Rules, 2018.
+5. The application is disposed of.
+I.A.22461/2023 (for court fee)
+6. This is an application for extension of time for filing of court fees.
+The court fee is stated to have been deposited with the stock holding
+corporation. Let the stamp be deposited within a week. Application is
+disposed of.
+CS(COMM) 815/2023
+7. Let the plaint be registered as a suit.
+8. Issue summons to the Defendant through all modes upon filing of the
+Process Fee.
+9. The summons to the Defendant shall indicate that the written
+statement(s) to the plaint shall be positively filed within 30 days from date
+of receipt of summons. Along with the written statement(s), the Defendant
+shall also file an affidavit of admission/denial of the documents of the
+Plaintiff, without which the written statement(s) shall not be taken on record.
+10. Liberty is given to the Plaintiff to file the replication(s) within 15 days
+of the receipt of the written statement(s). Along with the replication(s), if
+any, filed by the Plaintiff, an affidavit of admission/denial of documents of
+the Defendant, be filed by the Plaintiff, without which the replication(s)
+shall not be taken on record. If any of the parties wish to seek inspection of
+any documents, the same shall be sought and given within the timelines.
+11. List before the Joint Registrar for marking of exhibits on 11th
+January, 2024. It is made clear that any party unjustifiably denying
+documents would be liable to be burdened with costs.
+12. List before Court on 22nd March, 2024.
+CS(COMM)815/2023 Page2of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:04
+I.A.22458/2023 (u/O XXXIX Rules 1 & 2 CPC)
+13. Issue notice.
+14. The present suit has been filed by the Plaintiff- MakeMyTrip (India)
+Pvt. Ltd., the operator of the MakeMyTrip portal and platform seeking an
+injunction against the Defendant- Dialmytrip Tech Pvt. Ltd. from using the
+name/mark ‘Dialmytrip’, and the domain names ‘www.dialmytrip.com’ &
+‘www.dmtgroup.in’.
+15. The case of the Plaintiff is that it was incorporated in the year 2000
+and is one of the largest airline ticket booking platforms and travel platforms
+in India, as well as Internationally. It has presence in a large number of
+foreign countries including the United States of America, the United Arab
+Emirates, Mauritius, European Union, Australia and the United Kingdom.
+The company was incorporated on 13th April, 2000 under the trade name
+‘Travel by Web Private Limited’ but it changed its name on 2nd August,
+2000, to trade name ‘Makemytrip.com Pvt. Ltd.’ Thereafter on 28th June,
+2002 a subsequent change was made by the Plaintiff’s mark/name i.e.,
+MakeMyTrip (India) Pvt. Ltd.
+16. It is stated that the Plaintiff is a pioneer of the Indian online travel
+industry and operates through its one-stop travel website MakeMyTrip
+platform. The Plaintiff also provides a diverse range of tour packages, airline
+tickets, hotel bookings and other services with its modern IT infrastructure
+and dedicated customer support.
+17. The Plaintiff is stated to have expanded its products and services over
+the years through its website with the domain name www.makemytrip.com
+which is also accessible through application based mobile platforms etc.,
+The Plaintiff also offers booking of rail tickets, bus tickets, car hire,
+CS(COMM)815/2023 Page3of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:04
+domestic and international holiday packages, travel insurance, visa
+assistance, foreign exchange etc.
+18. The domain name www.makemytrip.com was registered on 8th May,
+2000 and since then the Plaintiff has registered a series of marks with the
+core being ‘MakeMyTrip’ and ‘My’ device. The various logos used by the
+Plaintiff are set out below:
+These marks are collectively referred to as the ‘MakeMyTrip Marks’. The
+wordmark MakeMyTrip has been registered since the year 2011 and the
+Plaintiff now has a series of registrations in several classes i.e.,9, 16, 35, 38,
+39, 41, 42 and 43 for MakeMyTrip series of marks. The said marks are also
+stated to be registered in various foreign countries.
+19. The gross bookings of the Plaintiff are stated to be over 3000 crores in
+the financial year 2018-2019 and the net sales turnover is also over Rs.1.69
+lakh crores. The advertising and promotional expenditure of the Plaintiff is
+to the tune of Rs. 25 lakhs for the year 2021-2022. The Plaintiff also claims
+to have engaged celebrities such as Ranveer Singh, Alia Bhatt etc. to
+endorse its business activities under the MakeMyTripMarks. The Plaintiff
+CS(COMM)815/2023 Page4of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:04
+also launched the ‘MYSAFETY’ campaign which creates awareness and
+knowledge about safety measures being taken in hotels, cabs as also
+amongst travel partners. The Plaintiff’s website with the domain name
+‘www.makemytrip.com’ has more than Rs. 26 crore hits and more than 2
+crore bookings for the year 2023.
+20. In the present suit, the grievance of the Plaintiff is that the Defendant
+is using the mark and name ‘Dialmytrip’ in respect of financial and other
+services but the Defendant has recently expanded its services to tours and
+travel as well. A comparative chart of the Plaintiff’s and Defendant’s mark
+and domain name has been set out below:
+MakeMyTrip Marks Infringing Marks
+Word Mark Word Mark
+MAKE MY TRIP DIALMYTRIP
+Composite Logos: Composite Logos:
+CS(COMM)815/2023 Page5of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:04
+MakeMyTrip Domain Name Infringing Domain Names
+www..makemytrip.com www.dialmytrip.com
+www.dmtgroup.in
+21. The Plaintiff is aggrieved by the use of the impugned name, mark and
+domain name dialmytrip by the Defendant. The Defendant is a company
+engaged in similar business as that of the Plaintiff providing travel related
+services including selling and booking tickets, hotel reservations as also
+arranging trips both in India and Internationally. The Defendant is operating
+through its website with the domain name ‘www.dialmytrip.com’ and
+‘www.dmtgroup.in’. The Plaintiff avers that it became aware of the
+Defendant’s business and use of the mark in May, 2023 during its regular
+check on trade mark registry website. The submission of Mr. Sai Deepak, ld.
+Counsel for the Plaintiff is that the mark MakeMyTrip has already been
+protected against misuse, by use of marks such as ‘PickMyTrip’ vide order
+dated 31st October, 2018 in CS (COMM) 1210/2018 titled MakeMy Trip
+(India) Pvt. Ltd. v. Priyadarshini Air Wings Pvt. Ltd., and ‘MyTripBazaar’
+vide judgment dated 27th February, 2020 in CS (COMM) 430/2019 titled
+MakeMyTrip (India) Pvt. Ltd. v. MTB Travel Planner Pvt. Ltd. and Anr.
+etc.
+22. He submits that, initially, the Defendant applied for the mark DMT
+(Your Business Buddy) as extracted below on 18th March, 2020 though the
+corporate name was Dialmytrip Tech Pvt. Ltd.:
+CS(COMM)815/2023 Page6of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:04
+23. The Defendant was issued a cease and desist notice dated 25th May,
+2023.
+24. However, after the cease and desist notice was issued, the Defendant
+applied for registration of full form i.e., ‘Dialmytrip’ as a mark itself bearing
+number 6039656 in class 36 which is still pending . In the reply to the cease
+and desist notice dated 3rd July, 2023, the Defendant stated as under:
+“2. Our Client is e-Service Provider who is mainly
+engaged in providing Banking, insurance, and
+investment allied services in pan India since 2015
+CS(COMM)815/2023 Page7of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:04
+through itself or through various business models,
+affiliates shops, POS, PSP and having substantial vital
+reputation in Indian niche market and also enjoying
+accreditation and membership from various giants'
+organization or government autonomous bodies like
+IRDA, UTI, BCFI, AMFI and so on for its services.
+3. Further, as concern about Tour, Travel and Hotel
+services as carried by MakeMyTrip, we would like to
+mention here that our client is/was not substantially
+involved in this kind of akin business. It can also be
+said that in terms of turnover% contribution, Tour and
+travel services has contributed to preceding 12 months
+(April-March) near about 0.8% of total Turnover only
+which is less than 1 % of total turnover and in terms of
+amount, it is nearly about 7 lakhs only for 12 months
+which is negligible itself as comparison to
+MakeMyTrip per minute turnover specifically for tour
+and travel services. Therefore, it would be absolutely
+wrong to say that our Client is offering overlapping
+services and using Brand which impacted MakeMyTrip
+or craving goodwill of MakeMyTrip in niche market.
+4. Furthermore, our client has its own registered brand
+name "DMT" which is abbreviate word of Dial My
+Trip under class 39 vide application 4475855 for tour
+and travel arrangements, therefore, our Client has
+exclusive right to commercial exploit the word of
+“DMT" in public either through e-commerce platform
+or any other manner, consequently, registered brand
+name (DMT) is reflected in public domain by Company
+through its website on conspicuous place, therefore, it
+is vehemently denied to say that we are using
+MakeMyTrip name over website.”
+25. The submission is that the use of ‘Dialmytrip’ in respect of any
+services would constitute infringement, passing off and dilution of the
+Plaintiff’s mark ‘MakeMyTrip’.
+26. The Court has considered the matter. A perusal of the record would
+CS(COMM)815/2023 Page8of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:04
+show that the Defendant has two marks one is ‘DMT’ and the other is
+‘Dialmytrip’. ‘Dialmytrip’ is also a significant part of the corporate name.
+However, insofar as the financial business is concerned, the Defendant
+appears to have been conducting the banking, insurance and investment
+related services since the year 2015 and the travel and tour business is recent
+as per the reply to the legal notice. The Plaintiff prays for a complete
+injunction against use of the name/mark ‘Dialmytrip’ for any product
+services as also the corporate name.
+27. In the opinion of this court, the marks Makemytrip and Dialmytrip are
+confusingly similar with each other. Especially considering the manner in
+which online business relating to travel is conducted, the Defendant’s
+business and name is likely to be perceived as an extension of the Plaintiff’s
+well known business or as an affiliate/connected business. Such confusion is
+also likely to lead to dilution of the Plaintiff’s mark and name as also brand
+equity.
+28. In Laxmikant V. Patel v. Chetanbhai Shah & Ors.,
+MANU/SC/0763/2001, the Supreme Court categorically observed that in
+cases where passing off is made out, the Court ought to grant an immediate
+ex-parte injunction and also appoint Local Commissioners to ensure that the
+infringing products are not permitted to be sold. The relevant extract of the
+order is set out below:
+“14. […..Once a case of passing off is made out the
+practice is generally to grant a prompt ex-parte
+injunction followed by appointment of local
+Commissioner, if necessary.…]”
+17. We are conscious of the law that this Court would not
+ordinarily interfere with the exercise of discretion in the
+matter of grant of temporary injunction by the High
+CS(COMM)815/2023 Page9of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:04
+Court and the Trial Court and substitute its own
+discretion therefore except where the discretion has been
+shown to have been exercised arbitrarily or capriciously
+or perversely or where the order of the Court under
+scrutiny ignores the settled principles of law regulating
+grant or refusal of interlocutory injunction. An appeal
+against exercise of discretion is said to be an appeal on
+principle. Appellate court will not reassess the material
+and seek to reach a conclusion different from the one
+reached by the court below solely on the ground that if it
+had considered the matter at the trial stage it would have
+come to a contrary conclusion. If the discretion has been
+exercised by the trial court reasonably and in a judicial
+manner the fact that the appellate court would have taken
+a different view may not justify interference with the trial
+court's exercise of discretion [(see Wander Ltd. v. Ant ox
+India P. Ltd. MANU/SC/0595/1990 and N.R. Dongre v.
+Whirlpool Corporation and Anr.: MANU/SC/1223/1996 :
+(1996)5SCC714 . However, the present one is a case
+falling within the well accepted exceptions. Neither the
+Trial Court nor the High Court have kept in view and
+applied their mind to the relevant settled principles of
+law governing the grant or refusal of interlocutory
+injunction in trade mark and trade name disputes. A
+refusal to grant an injunction in spite of the availability
+of facts, which are prima facie established by
+overwhelming evidence and material available on
+record justifying the grant thereof, occasion a failure of
+justice and such injury to the plaintiff as would not be
+capable of being undone at a latter stage. The discretion
+exercised by the Trial Court and the High Court against
+the plaintiff, is neither reasonable nor judicious. The
+grant of interlocutory injunction to the plaintiff could not
+have been refused, therefore, it becomes obligatory on the
+part of this Court to interfere.”
+29. Thus, in terms of the judgment extracted above as also the decision in
+Laxmikant Patel (supra) it is clear that in cases relating to trade mark
+CS(COMM)815/2023 Page10of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:04
+violations and passing off, if the evidence establishes a prima facie case,
+even at the ex-parte stage, injunction ought to be granted.
+30. At this stage, prima facie, this Court is inclined to restrain the
+Defendant from using the mark ‘Dialmytrip’ in respect of tour, travel,
+hospitality and all other services. Balance of convenience in the present case
+lies in favour of the Plaintiff considering that it is a well-known company in
+the travel business who has built its goodwill and reputation throughout the
+years, if an injunction is not granted in the present case it will lead to
+irreparable loss to the Plaintiff. Insofar as the financial, banking, insurance
+and other services and use of the corporate name is concerned, the same
+shall be considered on a later date after the Defendant has entered
+appearance in the matter.
+31. Accordingly, the Defendant is restrained from using the using the
+mark/name ‘Dialmytrip’ in respect of tour, travel, hospitality and all other
+services. The Defendant has two domain names www.dialmytrip.com and
+www.dmtgroup.in. The first domain name shall not be used in respect of
+tour, travel, hospitality, hotels cabs or any other travel related services. The
+Defendant is, however, free to use the second domain name
+www.dmtgroup.in in respect of such services.
+32. Compliance of order XXXIX Rule 3 CPC, 1908 be done within a
+week.
+33. List on the dates fixed above.
+PRATHIBA M. SINGH, J.
+NOVEMBER 21, 2023
+dj/ks
+CS(COMM)815/2023 Page11of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:04
+
+===== ORDER =====
+
+$~41
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 815/2023
+MAKEMYTRIP INDIA PRIVATE LIMITED ..... Plaintiff
+Through: Mr. J. Sai Deepak, Mr. Mohit Goel,
+Mr. Sidhant Goel, Mr. Deepankar
+Mishra, Mr. Abhishek Kontala and
+Ms. Ipshita Dutta, Advocates.
+versus
+DIALMYTRIP TECH PRIVATE LIMITED ..... Defendant
+Through: Mr. Anil Kumar Sahu and Mr. Amit
+Kr. Srivastava, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 08.01.2024
+I.A. 359/2024(for urgent listing of application u/O XXXIX Rule 4 r/w
+Section 151 of CPC on behalf of Defendant)
+1. For the grounds and reasons stated in the application, the same is
+allowed.
+2. Disposed of.
+I.A. ----/2024 (to be numbered)( u/O XXXIX Rule 4 r/w Section 151 of CPC
+on behalf of Defendant)
+3. The Application under Order XXXIX Rule 4 is on the Court file,
+however, no number has been assigned to it. Registry is directed to assign a
+number to the instant application.
+4. Issue notice. Mr. J. Sai Deepak, counsel for Plaintiff, accepts notice.
+Reply to the application be filed within four weeks from today.
+5. List on the date already fixed for hearing, i.e., 22nd March, 2024.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:03
+CS(COMM) 815/2023 & I.A. 22458/2023(u/O XXXIX Rules 1 and 2)
+6. Counsel for Defendant states that he is in the process of filing written
+statement and reply to the injunction application (I.A. 22458/2023).
+7. Let pleadings in all applications be completed before the next date of
+hearing.
+8. List on the date fixed, i.e., 22nd March, 2024.
+SANJEEV NARULA, J
+JANUARY 8, 2024
+d.negi
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:03
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 815/2023
+MAKEMYTRIP INDIA PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Abhishek Kotnala (VC),
+Advocate
+versus
+DIALMYTRIP TECH PRIVATE LIMITED
+..... Defendant
+Through: Mr. Syed Naqvi Abbas (VC),
+Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 11.01.2024
+CS(COMM) 815/2023 & I.A. No. 22458/2023 (u/O XXXIX
+Rules 1 & 2 CPC):
+Defendant was served on 20.12.2023.
+Ld. Counsel for the defendant submits that written
+statement shall be filed as per rules. Ld. Counsel further submits
+that reply to IA No. 22458/2023 shall also be filed before the
+next date of hearing.
+Matter is already listed before the Hon’ble Court for
+22.03.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 22.03.2024, for further directions.
+AJAY GULATI - I (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 11, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:02
+
+===== ORDER =====
+
+$~44
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 815/2023
+MAKEMYTRIP INDIA PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Abhishek Kotnala, Advocate.
+versus
+DIALMYTRIP TECH PRIVATE LIMITED ..... Defendant
+Through: Mr. Satish Kumar, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 21.02.2024
+I.A. 4137/2024 (on behalf of Defendant under Order XXXIX Rule 3A r/w
+Section 151 of CPC seeking disposal of I.A. 22458/2023)
+1. By way of order dated 21st November, 2023, this Court granted an ad
+interim ex-parte injunction against the Defendant. Thereafter, the Defendant
+has applied for vacation of the said order by filing I.A. No. 1934/20241
+under Order XXXIX Rule 4 of the Code of Civil Procedure, 1908 (CPC). On
+8th January, 2024, the Court issued notice in the said application and directed
+that pleadings be completed; however, the Plaintiff has not complied with
+the timelines set by the Court. In such circumstances, the instant application
+has been filed by the Defendant raising the concern that that in absence of
+the pleadings, it would not be possible to hear their application on the next
+fixed date of hearing on 22nd March, 2024.
+1Applicationhasbeennumberedassuchpursuanttoorderdated8thJanuary,2024.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:02
+2. The Court record reveals that while the Defendant has filed a reply to
+the Plaintiff’s I.A. 22458/2023 under Order XXXIX Rules 1 and 2 of CPC,
+however, no reply is filed by the Plaintiff to the Defendant’s I.A. 1934/2024.
+Although the counsel for Plaintiff has offered an explanation for the delay
+on their part, the Court remains unconvinced by the same, as the Plaintiff’s
+delay in filing a reply appears to be deliberate. In fact, since I.A. No.
+1934/2024 is in the nature of a reply to I.A. No. 22458/2023, the Court had
+called upon the counsel for Plaintiff to argue the matter today itself,
+however, he has declined to do and instead sought time to prepare before
+addressing arguments.
+3. In view of the above, the instant application is disposed of with the
+direction that on the next date of hearing the Court shall hear I.As.
+22458/2024 as well as 1934/2024, irrespective of whether the pleadings are
+complete or not. No request for adjournment will be entertained on the
+ground of non-filing of pleadings, and such a request would also be liable to
+costs.
+4. Disposed of.
+I.A. 22458/2024 (u/Order XXXIX Rules 1 & 2 of the CPC) and I.A.
+1934/2024 (u/Order XXXIX Rule 4 r/w Section 151 of the CPC, for setting
+aside of ex parte ad interim injunction)
+5. List for hearing on the date already fixed i.e., 22nd March, 2024.
+SANJEEV NARULA, J
+FEBRUARY 21, 2024
+as
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:02
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 815/2023
+MAKEMYTRIP INDIA PRIVATE LIMITED
+..... Plaintiff
+Through: Ms. Ipshita Dutta, Adv.
+versus
+DIALMYTRIP TECH PRIVATE LIMITED
+..... Defendant
+Through: Mr. Aditya Chaturvedi, Adv.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. AJAY GULATI
+O R D E R
+% 07.03.2024
+IA no. 5393/2024 by plaintiff for seeking condonation of delay of 28
+days in filing Reply to the application of defendant under O.39 R. 4
+(IA no. 1394/24)
+Ld. Counsel for the defendant accepts Notice and strongly objects to
+the delay being condoned. Having gone through the contents of the IA, for
+the reasons mentioned therein, delay stands condoned subject however,
+to cost of Rs. 500, to be paid to the defendant. Reply is taken on record.
+IA stands disposed off. Cost be paid within 2 weeks.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 7, 2024
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:01
+
+===== ORDER =====
+
+$~49
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 815/2023, I.A. 22458/2023, I.A. 1934/2024
+MAKEMYTRIP INDIA PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Jai Sai Deepak, Mr. Mohit Goel,
+Mr. Sidhant Goel, Mr. Abhishek
+Kotnala, Mr. Deepankar Mishra and
+Ms. Ipshita, Advocates.
+versus
+DIALMYTRIP TECH PRIVATE LIMITED ..... Defendant
+Through: Mr. Anil Kumar Sahu, Mr. Satish
+Kumar, Mr. Amit Srivastav, Mr. Syed
+A.N. Jah, Mr. Roshan Kumar and
+Mr. Sreejan Pankaj, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 22.03.2024
+1. It is 03:45 PM. The undersigned is now scheduled to be part of a
+Special Bench, and thus, it would not be possible to hear the matter today.
+2. Re-notify on 27th May, 2024.
+SANJEEV NARULA, J
+MARCH 22, 2024
+nk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:01
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 815/2023
+MAKEMYTRIP INDIA PRIVATE LIMITED..... Plaintiff
+Through: Mr. Abhishek Kotnala, Advocate
+versus
+DIALMYTRIP TECH PRIVATE LIMITED .... Defendant
+Through: Mr. Sreejan Pankaj, Mr. Aditya
+Chaturvedi, Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 06.05.2024
+I.A. No. 10183/2024 filed by the plaintiff for taking on record
+the replication.
+Ld. Counsel for the plaintiff submits that copy of the
+written statement which was re-filed on 02.02.2024, has till date
+not been supplied. Replication, however, has been filed to the
+written statement which was initially filed on 16.01.2024 and a
+copy of which was supplied to ld. Counsel for the plaintiff.
+Ld. Counsel for the defendant accepts notice and prays for
+some time to file reply, if required.
+Let the reply be filed within two weeks, if any, with an
+advance copy of the same to the opposite side.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 27.05.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 6, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:00
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 815/2023
+MAKEMYTRIP INDIA PRIVATE LIMITED ..... Plaintiff
+Through: Mr. J. Sai Deepak, Mr. Mohit Goel,
+Mr. Sidhant Goel, Mr. Abhishek
+Kotnala, Mr. Deepankar Mishra and
+Ms. Ipshita Dutta, Advocates.
+versus
+DIALMYTRIP TECH PRIVATE LIMITED ..... Defendant
+Through: Mr. Anil Kumar Sahu, Mr. Roshan
+Kumar, Mr. Sreejan Pankaj and Mr.
+S.N. Abban, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 27.05.2024
+I.A. 10183/2024 (for taking on record the replication)
+1. List before the Joint Registrar for consideration on 5th August, 2024.
+I.A. 22458/2023 (u/Order XXXIX Rules 1 & 2 r/w Section 151 of CPC,
+1908) and I.A. 1934/2024 (u/Order XXXIX Rule 4 r/w Section 151 of CPC,
+1908)
+2. List before the Court for consideration on 29th August, 2024.
+SANJEEV NARULA, J
+MAY 27, 2024/as
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:59
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 815/2023
+MAKEMYTRIP INDIA PRIVATE LIMITED ....Plaintiff
+Through: Mr. Abhishek Kotnala,
+Mr. Vivek Pratap Singh,
+Advocates
+versus
+DIALMYTRIP TECH PRIVATE LIMITED .....Defendant
+Through: Mr. Sreejan (VC),
+Mr. Roshan Kumar, Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 05.08.2024
+I.A. No. 10183/2024 filed by the plaintiff for taking on record
+the replication.
+1. Reply has been filed. Submissions have been heard. The
+written statement was first filed on 16.01.2024 of which an
+advance service was done on 15.01.2024, on the plaintiff.
+Subsequently, an objection was raised by the Registry on
+25.01.2024 whereafter the re-filing was done on 30.01.2024 of
+which also an advance copy was served. However, the written
+statement was again put under objections on 02.02.2024
+whereafter it was re-filed on 02.02.2024 itself but no copy of the
+re-filed written statement was served on the plaintiff. Ld.
+Counsel for the defendant submits that since the only objection
+raised on 02.02.2024 was regarding the issue of delay in filing
+the written statement, no copy of the written statement which was
+re-filed on 02.02.2024, was supplied to the plaintiff. Ld. Counsel
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:58
+for the plaintiff however responds that plaintiff got to know about
+the written statement having been filed on 02.02.2024 only after
+the inspection of the Registry record.
+2. In support of his submission for taking the replication on
+record, ld. Counsel for the plaintiff has relied on judgment of
+Hon’ble High Court of Delhi in CS(COMM) 48/2020 delivered
+on 30.11.2022. The facts of the cited judgment are similar to the
+facts of the present IA in as much as in the cited judgment also,
+re-filing had been done by the defendant without serving a copy
+of the re-filed written statement on the plaintiff. Even though in
+that suit, the defendant had informed the plaintiff vide an email
+that re-filing of written statement is without any change in the
+content of the written statement, Hon’ble Court held that such an
+email would not amount to compliance of the Rule 3 Chapter IV
+of Delhi High Court, Original Sides Rules, 2018 and that it is
+mandatory to supply a copy of the pleadings which has been re-
+filed. In view of the cited judgment and the contents of the
+present IA, this Court has no option but to accept the submission
+of ld. Counsel for the plaintiff that even as on 27.03.2024 when
+the replication was filed, there was technically no delay in filing
+the replication as no copy of the written statement which had
+been re-filed on 02.02.2024, had been supplied to the plaintiff. It
+needs a further highlight that after 11.01.2024 which is the date
+when the first submission had been made on behalf of the
+defendant that written statement shall be filed as per rules, there
+is no order recording that the written statement had been taken on
+record. Additionally, it also needs to be noted that even till today
+plaintiff has not been supplied with the copy of the written
+statement which was re-filed on 02.02.2024. Consequently, the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:58
+replication is taken on the record. IA stands allowed.
+CS(COMM) 815/2023
+3. Parties are now directed to file their documents in physical
+form alongwith the Joint document schedule, also in physical
+form, within six weeks.
+4. Matter is already listed before the Hon’ble Court for
+29.08.2024. Put up before the Hon’ble Court on the date already
+fixed i.e. 29.08.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 5, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:58
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 815/2023
+MAKEMYTRIP INDIA PRIVATE LIMITED .....Plaintiff
+Through: Mr. J. Sai Deepak, Mr. Mohit Goel,
+Mr. Vivek Pratap Singh, Mr.
+Abhishek Kotnala, Mr. Luv
+Virmani, Advocates.
+versus
+DIALMYTRIP TECH PRIVATE LIMITED .....Defendant
+Through: Counsel (appearance not given)
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 29.08.2024
+I.A. 22458/2023-Stay & I.A. 1934/2024-O-39, R-4
+1. Learned counsel appearing for the plaintiff submits that no copy of
+the written statement re-filed on 02.02.2024 has been supplied to him till
+date.
+2. Learned counsel appearing for the defendant submits that the same
+shall be supplied during the course of the day.
+3. Learned counsels for the parties seek, and are granted, four weeks
+to file written synopsis not exceeding five pages giving a chronological
+list of dates and events and relevant documents, if any, alongwith duly
+highlighted relevant judgments, which they wish to rely upon.
+4. Accordingly, renotify on 21.11.2024 for arguments.
+SAURABH BANERJEE, J
+AUGUST 29, 2024/akr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:58
+
+===== ORDER =====
+
+$~26
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+I.A. 22458/2023 & I.A. 1934/2024
+IN
++ CS(COMM) 815/2023
+MAKEMYTRIP INDIA PRIVATE LIMITED .....Plaintiff
+Through: Mr. J. Sai Deepak, Mr. Mohit Goel,
+Mr. Sidhant Goel, Mr. Abhishek
+Kotnala and Mr. Vivek Pratap Singh,
+Advocates.
+versus
+DIALMYTRIP TECH PRIVATE LIMITED .....Defendant
+Through: Mr. Jareer Ahmad, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 21.11.2024
+1. Counsel for the parties submit that they shall file the written
+submissions along with the judgments relied upon within two (2) weeks.
+2. List for hearing on 20th March, 2025.
+AMIT BANSAL, J
+NOVEMBER 21, 2024
+PB
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:57
+
+===== ORDER =====
+
+$~25
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+I.A. 22458/2023 and I.A. 1934/2024
+In
++ CS(COMM) 815/2023
+MAKEMYTRIP INDIA PRIVATE LIMITED .....Plaintiff
+Through: Mr. Abhishek Kotnala and
+Mr.Kartikeya Tandon, Advocates.
+versus
+DIALMYTRIP TECH PRIVATE LIMITED .....Defendant
+Through: Mr. Satish Kumar and Mr. Roshan
+Kumar, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 20.03.2025
+1. Counsel for the parties submit that the parties may be referred for
+mediation as there is a possibility of settlement.
+2. Accordingly, the parties are referred for mediation to the Delhi High
+Court Mediation and Conciliation Centre (‘Centre’).
+3. Parties along with their respective counsel shall appear before the
+Centre on 3rd April, 2025 at 3:00 PM.
+4. List before the Court on 28th August, 2025.
+AMIT BANSAL, J
+MARCH 20, 2025
+kd
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:57
+
+===== ORDER =====
+
+$~196
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 815/2023
+MAKEMYTRIP INDIA PRIVATE LIMITED
+.....Plaintiff
+Through: None
+versus
+DIALMYTRIP TECH PRIVATE LIMITED
+.....Defendant
+Through: Ld. Counsel for the defendant.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the plaintiff when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:56
+
+===== ORDER =====
+
+$~33
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 815/2023 & I.A. 22458/2023 I.A. 1934/2024
+MAKEMYTRIP INDIA PRIVATE LIMITED .....Plaintiff
+Through: Mr. Vivek Pratap Singh, Advocate
+versus
+DIALMYTRIP TECH PRIVATE LIMITED .....Defendant
+Through: Mr. Roshan Kumar, Advocate
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 28.08.2025
+1. Learned counsels for the parties state that mediation proceedings are
+pending and therefore request for an adjournment.
+2. List on 04.02.2026.
+MANMEET PRITAM SINGH ARORA, J
+AUGUST 28, 2025/mt
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:56

@@ -1,0 +1,399 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_803_2023
+case_status: DISPOSED
+n_orders: 6
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 803/2023
+CASTROL LIMITED
+..... Plaintiff
+Through: Mr. Ayush Dixit, Mr. Urfee
+Roomi, Ms. Janaki Arun and
+Mr. Jaskaran Singh, Avs.
+(M-7011629381)
+versus
+PRAKASH BABURAO URKUDE, TRADING AS
+GLOBAL OIL
+..... Defendant
+Through: None.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 09.01.2024
+The service-affidavit filed via diary no.10390/24 shows that
+the defendant was served on two of its addresses via speed-posts on
+29.12.2023 and 30.12.2023. It may now file the written statement
+in due course. The replication be thereafter filed accordingly.
+List the matter for completion of pleadings on 28.03.2024.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 9, 2024/ss
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:14
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 803/2023 & I.A. 22104/2023
+CASTROL LIMITED ..... Plaintiff
+Through: Mr. Ayush Dixit, Mr. Urfee
+Roomi, Ms. Janaki Arun and
+Mr. Jaskaran Singh, Avs.
+versus
+PRAKASH BABURAO URKUDE, TRADING AS GLOBAL OIL
+..... Defendant
+Through: Mr. M A Mansuri, Msr. Pranjal &
+Mr. S Raisuddin, Advs.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 15.02.2024
+1. Mr. M A Mansuri, Advocate enters appearance on behalf of defendant
+and states that he has received instructions only recently in this matter and
+therefore seeks time to file reply with respect to the pending application and
+written statement to the suit.
+2. Compliance be made by the defendant in terms of order dated 7th
+November, 2023 (when ad interim ex parte injunction was passed by this
+Court) and order dated 9th January, 2024, the order of the Joint Registrar.
+3. List before the Joint Registrar on 28th March, 2024, the date already
+fixed.
+4. Re-notify before this Court on 18th July, 2024.
+5. Interim orders to continue till then.
+6. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+FEBRUARY 15, 2024/sm
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:13
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 803/2023
+CASTROL LIMITED .... Plaintiff
+Through: Mr. Ritesh Kumar, Mr. Ayush
+Dixit (VC), Advocates
+versus
+PRAKASH BABURAO URKUDE, TRADING AS
+GLOBAL OIL ..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 28.03.2024
+I.A No. 22104/2023 for stay filed by plaintiff and CS(COMM)
+803/2023.
+The defendant has been served on 29.12.2023 and
+30.12.2023, on two of its addresses. Consequently, appearance
+had been put in on behalf of the defendant before the Hon’ble
+Court on 15.02.2024. However, till date neither the written
+statement nor the reply to the above said IA has been filed.
+Put up for completion of pleadings on 09.07.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 28, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:13
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 803/2023
+CASTROL LIMITED .....Plaintiff
+Through: Mr. Ayush Dixit, Mr. Jaskaran
+Singh, Advocates
+Versus
+PRAKASH BABURAO URKUDE, TRADING AS
+GLOBAL OIL .....Defendant
+Through: Ms. Suman Gupta, Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 09.07.2024
+I.A No. 22104/2023 for stay filed by the plaintiff and CS
+(COMM) 803/2023.
+1. Despite being served on 29.12.2023 and appearance
+having been put in on 15.02.2024 before the Hon’ble Court,
+neither any written statement has been filed nor any reply to IA
+No. 22104/2023 have been filed by the defendant.
+2. In view of the fact that maximum permissible period to file
+the written statement has expired and sufficient time to file reply
+to the IA has also elapsed, consequently, right to file the written
+statement and reply on behalf of defendant stands closed.
+3. It has been submitted that defendant is wanting to settle the
+matter with the plaintiff for which preliminary out of court
+settlement efforts shall be made and if there is a possibility of a
+settlement, ld. counsels submit that request for a formal
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:12
+mediation shall be made before the Hon’ble Court.
+4. Matter is already listed before the Hon’ble Court for
+18.07.2024.
+5. Put up before the Hon’ble Court on the date already fixed
+i.e. 18.07.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 9, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:12
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 803/2023 & I.A. 22104/2023
+CASTROL LIMITED .....Plaintiff
+Through: Mr. Urfee Roomi, Ms.Janaki Arun,
+Mr. Ayush Dixit, Ms. Apoorva
+Bharti, Advocates (M:9811600017)
+versus
+PRAKASH BABURAO URKUDE, TRADING AS GLOBAL OIL
+.....Defendant
+Through: Ms. Suman Gupta, Ms. Sushma
+Kumari, Mr. Kumar Rajesh Singh,
+Mr. Sanjit Singh, Advocates
+(M:9811129304)
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 18.07.2024
+1. The present suit has been filed for permanent injunction, restraining
+infringement of trademark, copyright, passing-off, acts of unfair
+competition, damages/rendition of accounts, delivery up.
+2. The plaintiff claims to be a world leader in the field of lubricants, oils,
+coolants and grease primarily in the automobile, industrial, marine and
+aviation sectors.
+3. The case of the plaintiff is that it possesses registration under the
+Trade Marks Act, 1999 for the mark ‘CASTROL’.
+4. The present suit has been filed on account of plaintiff’s grievance that
+the defendant is manufacturing and selling goods identical to those, in which
+the plaintiff is dealing, under the mark ‘CASTOIL’.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:11
+5. Further, it is the case of the plaintiff that the shape and colour
+combination of the product being sold by the defendant, is deceptively
+similar and identical to that sold by the plaintiff.
+6. Learned counsel for defendant submits that the defendant has already
+stopped the production and sale of infringing products. It is further
+submitted that the defendant wants to settle the matter with the plaintiff.
+7. Learned counsel for plaintiff submits that a decree can be passed in
+favour of plaintiff, since no written statement has been filed on behalf of the
+defendant. He further submits that there is no evidence raised on behalf of
+the defendant and that the present is a fit case where decree can be passed in
+favour of the plaintiff. It is submitted that the plaintiff is pressing for costs
+and damages in its favour.
+8. At this stage, learned counsel for defendant submits that the matter be
+referred to mediation, so that settlement terms can be finalised.
+9. Accordingly, considering the submissions made before this Court, the
+present matter is referred to the Delhi High Court Mediation & Conciliation
+Centre, to be listed before a Senior Mediator on 24th July, 2024.
+10. List before the Court on 06th August, 2024.
+11. The copy of this order shall be sent to Delhi High Court Mediation &
+Conciliation Centre, forthwith.
+MINI PUSHKARNA, J
+JULY 18, 2024
+au
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:11
+
+===== ORDER =====
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 803/2023 & I.A. 22104/2023
+CASTROL LIMITED .....Plaintiff
+Through: Ms .Janaki Arun & Mr .Ayush Dixit,
+Advs. (M: 7011627381)
+versus
+PRAKASH BABURAO URKUDE, TRADING AS GLOBAL OIL
+.....Defendant
+Through: Ms. Suman Gupta, Adv. along with
+the defendant Mr. Prakash Baburao.
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 06.08.2024
+1. The present suit has been filed on account of plaintiff’s grievance that
+the defendant is manufacturing and selling goods under the mark
+‘CASTOIL’ identical to those, in which the plaintiff is dealing. The plaintiff
+possesses registration under the Trade Mark Act 1999 for the mark
+“CASTROL”
+2. The parties were referred to mediation before the Delhi High Court
+Mediation and Conciliation Centre, vide order dated 18th July, 2024,
+wherein, they have successfully negotiated terms of settlement and a
+settlement agreement dated 05th August, 2024 has been executed.
+3. Learned counsels appearing for the parties confirm the terms of the
+settlement and pray that the suit be decreed in terms, thereof.
+4. The Court has perused the terms of the settlement and finds the same
+to be lawful.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:11
+5. In terms of the settlement agreement dated 05th August, 2024, the
+defendant recognizes and acknowledges the plaintiff’s right, title and
+interest in the plaintiff’s marks and packaging around the world, including
+India.
+6. The defendant has undertaken that he will never, either, directly or
+indirectly, in the future use any marks of the plaintiff or any mark
+identical/similar to the plaintiff’s marks whether alone or in conjunction
+with other word(s) and/or device(s).
+7. The defendant has further undertaken to withdraw its trademark
+application being Application no. 4764495 for the mark “CASTOIL” Device
+in Class-04 at his own expense.
+8. It is further recorded that in terms of the settlement, the defendant
+shall pay an amount of Rs. 2,70,000/- as a full and final settlement of the
+instant dispute to the plaintiff, which is to be paid in two tranches. An
+amount of Rs. 1,00,000/- is to be paid today, while the second installment of
+Rs. 1,70,000/- is to be paid on or before, 15th September, 2024.
+9. Learned counsel appearing for the defendant has handed over demand
+draft of Rs. 1,00,000/- to learned counsel appearing for the plaintiff, which
+has duly been acknowledged.
+10. Accordingly, the present suit is decreed in favour of the plaintiff and
+against the defendant in terms of the settlement agreement dated 05th
+August, 2024, which shall form part of the decree.
+11. The parties shall remain bound by the terms and conditions of the
+settlement.
+12. In view of the fact that the parties have arrived at a compromise, the
+Registry is directed to issue a Certificate of refund of full Court Fee in
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:11
+favour of the plaintiff, through the counsel, i.e., Ms. Sujata Chaudhary.
+13. Decree sheet be drawn up.
+14. Accordingly, the suit, along with the pending application, stands
+disposed of.
+MINI PUSHKARNA, J
+AUGUST 6, 2024/Ni
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:11

@@ -1,0 +1,1174 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_819_2023
+case_status: PENDING
+n_orders: 16
+
+$~1
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 819/2023
+M/S BLUE HEAVEN COSMETICS PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Rishabh Srivastav, Mr.
+Sanjay Aggarwal, Ms. Yasheswini Sharma
+and Mr. Sahil Gupta, Advs.
+versus
+M/S RAJDHANI TRADERS THROUGH ITS PROPRIETOR
+MR GORDHAN SINGH & ORS. ..... Defendants
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE C. HARI SHANKAR
+O R D E R
+% 10.11.2023
+CS(COMM) 819/2023
+1. The plaintiff is a company incorporated in 2002.
+2. The word mark “BLUE HEAVEN” was registered in favour of
+Mr. Gurnam Singh, as the sole proprietor of G C. Laboratories, in
+Class 3, covering non-medicated cosmetics, w.e.f. 15 January 1974.
+3. Gurnam Singh transferred his entire business to the plaintiff,
+vide assignment deed dated 27 March 2019, which also assigned all
+property and rights to the plaintiff, including rights in intellectual
+property.
+4. The plaintiff, either itself or by way of an assignment from Mr.
+CS(COMM) 819/2023 Page 1 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:40
+Gurnam Singh, is presently the proprietor of the following registered
+trade marks:
+Trade Class Date of Filing Trade Mark User Date Date of
+Mark the application Registration
+Nos. Certificate
+Issued on
+9 April 1976
+Registration
+15 January 1 December
+293541 03 Valid up to
+1974 1972
+15 January
+2029
+18 February
+2022
+31 December 1 October Registration
+4802219 03
+2020 2020 Valid up to
+31 December
+2030
+5 June 2021
+Registration
+31 December 1 October Valid up to
+4802221 03
+2020 2020 31 December
+2030
+5 June 2021
+Registration
+31 December 1 October
+4802220 35 Valid up to
+2020 2020
+31 December
+2030
+5 June 2021
+Registration
+31 December 1 October
+4802222 35 Valid up to
+2020 2020
+31 December
+2030
+31 December
+2021
+30 August 1 December Registration
+4632211 03
+2020 1972 Valid up to
+30 August
+2030
+23 January
+2022
+30 August 1 December Registration
+4632216 03
+2020 1972 Valid up to
+30 August
+2030
+CS(COMM) 819/2023 Page 2 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:40
+31 December
+2021
+4632212 03 30 August 1 December Registration
+2020 1972 Valid up to
+30 August
+2030
+31 December
+2021
+30 August 1 December Registration
+4632213 03
+2020 1972 Valid up to
+30 August
+2030
+31 December
+2021
+30 August 1 December Registration
+4632215 03
+2020 1972 Valid up to
+30 August
+2030
+18 February
+2022
+30 August 1 December Registration
+4632214 03
+2020 1972 Valid up to
+30 August
+2030
+25 April
+2022
+8 October 1 December Registration
+5166457 03
+2021 1972 Valid up to 8
+October
+2031
+26 March
+2010
+1559819 03 17 May 2007 10 May 2007
+Registration
+Valid up to
+17 May 2027
+2 October
+2017
+30 September Registration
+2819475 03 1 April 2014
+2014 Valid up to
+30
+September
+2024
+6 October
+2017
+30 September Registration
+2819476 03 1 April 2014
+2014 Valid up to
+30
+September
+2024
+CS(COMM) 819/2023 Page 3 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:40
+28
+September
+2017
+1 December
+2161277 35 17 June 2011
+1972 Registration
+Valid up to
+17 June 2031
+7 February
+2021
+Registration
+14 September 1 December
+3945655 44 Valid up to
+2018 1972
+14
+September
+2028
+19 February
+2021
+1 December
+4583915 35 27 July 2020 Registration
+1972
+Valid up to
+27 July 2030
+18 February
+2021
+1 December
+4583917 35 27 July 2020 Registration
+1972
+Valid up to
+27 July 2030
+15 July 2001
+Registration
+7 September Proposed to
+679326 16 Valid up to
+1995 be used
+7 September
+2029
+5. The aforenoted marks are used by the plaintiff for non-
+medicated cosmetics. The plaintiff is also the holder of copyright
+registrations, for various artistic works as under:
+Registered Copyright Artwork/Logo/Label/Device Date of
+No. registration
+A-142138/2022
+13 June 2023
+CS(COMM) 819/2023 Page 4 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:40
+A-146638/2023
+3 June 2022
+A-146492/2023
+10 July 2023
+A-145114/2023
+2 June 2023
+A-147104/2023
+27 July 2023
+A-147105/2023
+27 July 2023
+A-64321/2003
+20 March 2003
+A-109589/2014
+31 March 2014
+A-120970/2017
+10 October
+2017
+CS(COMM) 819/2023 Page 5 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:40
+6. The plaint asserts that the plaintiff has been using the afore-
+noted marks, and has been marketing its products in a distinctive trade
+dress, ever since these marks were in used.
+7. The plaintiff is also the registrant of the following websites:
+S.No. Websites Names
+1. http://blueheavencosmetic.com/
+2. http://blueheavencosmetics.asia/
+3. http://blueheavencosmetics.com/
+4. http://blueheavencosmetics.in/
+5. http://blueheavencosmetics.info/
+6. http://blueheavencosmetics.net/
+7. http://bluueheavencosmetics.org/
+8. http://blueheavenonline.in/
+8. To vouchsafe its reputation, the plaintiff has placed on record
+it’s annual turnover from sale of the “BLUE HEAVEN” product range
+which, during the year 2022-2023, was ₹ 35,64,83,785/- and during
+the year 2023 till 31 May 2023 was ₹ 7,49,21,449/-.
+9. The plaintiff also claims to be expending considerable amounts
+towards promotion and advertising of its “BLUE HEAVEN” marks,
+the expenses so incurred during the financial year 2022 till 31 March
+2023 being ₹ 23,02,67,000/-.
+10. Various other assertions also find place in the plaint,
+vouchsafing the reach and reputation of the plaintiff and its products.
+11. The plaintiff is aggrieved by the defendant manufacturing and
+CS(COMM) 819/2023 Page 6 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:40
+selling identical products, using a trade dress which replicates the
+plaintiff’s trade dress, to the extent that the defendant’s products are
+counterfeits.
+12. A comparison of the plaintiff’s and defendant’s products is thus
+provided in para 3 of the plaint:
+PLAINTIFF’S TRADEMARK/ DEFENDANT No. 1 and 2
+PRODUCT/ PACKAGING/ TRADEMARK/ PRODUCT/
+LABEL PACKAGING/ LABEL
+CS(COMM) 819/2023 Page 7 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:40
+13. Physical samples have been produced in the court. The court
+has taken photographs of the samples and a comparison of the
+products of the plaintiff’s and defendant’s may thus be provided:
+CS(COMM) 819/2023 Page 8 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:40
+Plaintiff’s product Defendant’s product
+14. Though the defendant has not copied the “BLUE HEAVEN”
+mark of the plaintiff per se, it has, prima facie, clearly replicated the
+plaintiff’s trade dress. Inasmuch as the plaintiff possesses a separate
+registration of its trade dress as a trade mark, the replication of the
+trade dress by the defendant is also clearly infringing in nature.
+15. The court has seen the physical samples and it is prima facie
+clear that the defendant is imitating the plaintiff with the clear intent
+of confusing the purchasing public. The design of the two packs is
+CS(COMM) 819/2023 Page 9 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:40
+identical, except that, in the upper blue border, while the plaintiff has
+printed the mark “BLUE HEAVEN”, the defendant has put the mark
+LOYAL’S MAKEUP. Otherwise, the two packs are identical, and for
+a consumer of average intelligence and imperfect recollection, who
+would not immediately recollect the upper part of the
+plaintiff’s pack, there is a clear likelihood of confusion.
+16. Inasmuch as the individual trade dresses are registered as trade
+marks, and all prominent features of the plaintiff’s trade dress, except
+for the at the top of the pack have been replicated by the
+defendant, the two marks are, when viewed as whole marks, clearly
+deceptively similar. The extent of similarity is so glaring that I find
+myself in agreement with Mr. Srivastava, learned Counsel for the
+plaintiff, that the products of the plaintiff and defendant may
+justifiably be treated as counterfeits.
+17. Mr. Srivastava points out that as the products in question are
+cosmetics to be applied on the skin, use of counterfeits can result in
+deleterious health effects.
+18. I have already observed in earlier orders passed by me that,
+where the products in question are in the nature of pharmaceutical
+preparations or skin creams etc., the court has to be doubly vigilant, in
+order to ensure that sub-standard products are not allowed to be
+circulated in the market and used by unsuspecting public. When a
+prominent mark of the plaintiff is copied by the defendant, the court is
+entitled to legitimately presume that the defendant is only seeking to
+CS(COMM) 819/2023 Page 10 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:40
+piggyback on the plaintiff’s reputation and, therefore, that the quality
+of the defendant’s products may also be suspect.
+19. In such circumstances, the court would be bound to pass
+injunctive orders, restraining further circulation of the counterfeit
+products.
+20. Accordingly, let the plaint be registered as a suit.
+21. Issue summons in the suit. Summons be issued by all modes,
+including dasti as the defendants are situated within Delhi.
+22. Affidavit of service along with proof thereof be placed on
+record before the next date of hearing.
+23. Written statement, accompanied by affidavit of admission and
+denial of the documents filed by the plaintiff be filed within 30 days
+with advance copy to learned Counsel for the plaintiff who may file
+replication thereto, accompanied by affidavit of admission and denial
+of the documents filed by the defendant within 30 days thereof.
+24. List before the learned Joint Registrar (Judicial) for completion
+of the pleadings, admission and denial of documents and marking of
+exhibits on 10 January 2024, whereafter the matter would be placed
+before the Court for case management hearing and further
+proceedings.
+IA 22588/2023 (Under Order XXXIX Rules 1 & 2 of the CPC)
+CS(COMM) 819/2023 Page 11 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:40
+25. This is an application by the plaintiff under Order XXXIX
+Rules 1 and 2 of the CPC for interlocutory injunctive reliefs.
+26. As the facts of the case, as recited hereinabove, disclose a prima
+facie case of infringement, as well as of passing off, by the defendants,
+of its product as those of the plaintiff, by adopting a trade dress which
+is deceptively similar to the trade dress of the plaintiff, and which
+stands registered in the plaintiff’s favour as an individual trade mark,
+the plaintiff would be entitled to an ex-parte interim reliefs.
+27. As such, issue notice.
+28. Reply, if any, be filed within four weeks with advance copy to
+leaned Counsel for the plaintiff who may file rejoinder thereto, if any,
+within four weeks thereafter.
+29. List before the Court for hearing and disposal of this application
+on 19 February 2024.
+30. Till the next date of hearing, the defendants, as well as all others
+acting on their behalf shall stand restrained from using the trade dress
+, , ,
+CS(COMM) 819/2023 Page 12 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:40
+, or any other trade dress which is deceptively
+similar to, or otherwise infringes the trade dress of the plainiff, which
+stands registered in the plaintiff’s favour as a trade mark.
+31. The defnedants shall also stand restraiend from clearing into the
+market any stocks of which it may be in possession at the time of
+receipt by it of a copy of this order.
+32. The defendants shall also place on record, with its response, the
+details of the stocks of the infringing products, manufactured by it
+since inception, as well as the returns from sales of the said products.
+33. Mr. Srivastava also seeks exemption from requirement of pre-
+institution mediation, as envisaged by Section 12A of the Commerical
+Courts Act 2015.
+34. Though no separate application for seeking exemption has been
+filed, as should have been done, para 41 of the present application
+reads thus:
+“41. The Applicant has moved this application for ex-parte ad
+interim injunction as these products are to be used by consumers
+for eyes and make-up, further these products are not bearing any
+manufacturing date and are in contravention with various laws of
+the Drugs and Cosmetics Act, 1940, can be lethal for the health of
+CS(COMM) 819/2023 Page 13 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:40
+the people and this season is a festival season thus, it is necessary
+that without any delay the injunction is warranted against such
+products bearing the mark Blue Heaven. Such misuse of packaging
+is not only against the goodwill of the Plaintiff/ Applicant but is
+also injurious to the general public's health and defeats the
+trademark law's purpose. For the reason of claiming this urgent
+relief, the Plaintiff/ Applicant has not filed an application under
+12A Commercial Courts Act.”
+35. Inasmuch as the defendants are dealing in prima facie
+counterfeit products, which are to be applied on the skin, there is an
+element of public interest involved in this case, which would justify
+dispensing with the requirement of pre-institution mediation.
+36. As such, the request of Mr. Srivastava for dispensing with the
+requirement of pre-institution mediation is allowed.
+IA 22589/2023 (For exemption)
+37. Subject to the plaintiff’s filing legible copies of any dim or
+illegible documents on which it may seek to place reliance within 30
+days from today, exemption is granted for the present.
+38. The application stands disposed of.
+IA 22590/2023 (under Order XI Rule 1(4) of the CPC)
+39. This is an application by the plaintiff seeking permission to
+place certain additional documents on record. The plaintiff would be
+at liberty to place additional documents on record, if need be, in
+accordance with the protocol envisaged under Order XI Rule 1(4) of
+the CPC.
+CS(COMM) 819/2023 Page 14 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:40
+40. The application is disposed of accordingly.
+IA 22591/2023 (under Section 149 of the CPC)
+41. Mr. Srivastava seeks and is granted two weeks time to make up
+the deficiency in court fees, if any.
+42. This application is disposed of accordingly.
+C. HARI SHANKAR, J.
+NOVEMBER 10, 2023
+dsn
+Click here to check corrigendum, if any
+CS(COMM) 819/2023 Page 15 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:40
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 819/2023
+M/S BLUE HEAVEN COSMETICS PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Rishabh Srivastava, Mr.
+Sahil Gupta and Mr.
+Yasheswini Sharma, Advs.
+(M-9654777151)
+versus
+M/S RAJDHANI TRADERS THROUGH ITS
+PROPRIETOR MR GORDHAN SINGH & ORS.
+..... Defendant
+Through: None.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 10.01.2024
+The defendant nos. 1 and 2 have been served on 15.12.2023,
+vide ordinary means.
+The defendant no.1 may now file the written statement in
+due course, whereafter the replication be filed.
+The e-written statement filed by defendant no.2, vide diary
+no.4631/24 is lying under objections. Its defects be removed as per
+law, whereafter the replication be filed accordingly.
+The summons of defendant no.3 remains unserved for want
+of complete particulars of its address. The plaintiff shall supply the
+complete/fresh particulars qua defendant no.3 within two weeks,
+whereafter the fresh summons be issued through all permissible
+modes, subject to filing the PF.
+List the matter for completion of service and pleadings on
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:39
+16.02.2024.
+IA No.22588/2023 (u/order 39 Rule 1 & 2 by plaintiff)
+The defendant no.1 is yet to file the reply.
+The e-reply filed by defendant no.2, vide diary no.4637/24 is
+lying under objections. Its defects be removed as per law,
+whereafter the rejoinder be filed accordingly.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 10, 2024/ss
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:39
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 819/2023
+M/S BLUE HEAVEN COSMETICS PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Rishabh Srivastava & Mr. Sahil
+Gupta, Advs.
+versus
+M/S RAJDHANI TRADERS THROUGH ITS PROPRIETOR MR
+GORDHAN SINGH & ORS. .....Defendants
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 12.01.2024
+I.A. 811/2024 (under Order VII Rule 11 CPC)
+1. This application has been filed under Order VII Rule 11, Code of Civil
+Procedure, 1908 by defendant no.2, However, no one appears on behalf of
+defendant no.2. No one appears on behalf of defendant nos. 1 and 3 as well.
+2. A perusal of this application bears out that the plea and relief sought
+by this application is prima facie misconceived. An injunction was granted
+in favour of plaintiff by order of this Court dated 10th November, 2023.
+However, in the interest of justice, since counsel for applicant-defendant no.2
+is not present, list on 19th February, 2024, the date already fixed.
+3. If the applicant-defendant no.2 wishes to pursue this application, they
+shall provide a copy of the same to the counsel for the plaintiff before the
+next date of hearing.
+4. Interim order(s) to continue till then.
+5. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+JANUARY 12, 2024/sm/sc
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:39
+
+===== ORDER =====
+
+$~8
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 819/2023
+M/S BLUE HEAVEN COSMETICS PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Sahil Gupta, Adv.
+through VC.
+(M-9654777151).
+versus
+M/S RAJDHANI TRADERS THROUGH ITS
+PROPRIETOR MR GORDHAN SINGH & ORS.
+..... Defendant
+Through: None.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 16.02.2024
+The defendant nos. 1 & 2 were served on 15.12.2023, vide
+ordinary means.
+The defendant no. 1is yet to file the written statement.
+The e-written statement filed by defendant no. 2, vide diary
+no. 4631/24 is still lying under objections.
+The plaintiff has yet not provided the complete/fresh
+particulars qua defendant no. 3 so as to issue the summons. The
+counsel for the plaintiff states that the defendant no. 3 is residing at
+the address available on record. He directed to file an appropriate
+affidavit in respect thereof within two weeks and only thereafter,
+fresh summons shall be issue to defendant no. 3 through all
+permissible modes.
+List the matter for completion of pleadings/service on
+17.05.2024.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 16, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:38
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 819/2023, I.A. 22588/2023 & I.A. 811/2024.
+M/S BLUE HEAVEN COSMETICS PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Rishabh Srivastava, Adv.
+versus
+M/S RAJDHANI TRADERS THROUGH ITS PROPRIETOR MR
+GORDHAN SINGH & ORS. ..... Defendants
+Through: Mr. Deepak Sharma, Adv. for D-2.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 19.02.2024
+I.A. 811/2024 (under Order VII Rule 11 CPC)
+1. Counsel for defendant No.2, who filed this application, does not wish
+to pursue this any further and wishes to withdraw the same.
+2. The present application is dismissed as withdrawn.
+CS(COMM) 819/2023 along with I.A. 22588/2023 (Application under
+Order XXXIX Rules 1 and 2 CPC)
+3. Counsel for plaintiff brings the attention of the Court to paragraph 32
+of the order dated 10th November, 2023 which reads as under:
+“32. The defendants shall also place on record, with its response, the
+details of the stocks of the infringing products, manufactured by it
+since inception, as well as the returns from sales of the said
+products.”
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:38
+4. It is stated that defendants have not complied with the same.
+5. The defendants may ensure compliance with this order within four
+weeks from today.
+6. List before Joint Registrar on 17th May, 2024, the date already fixed.
+7. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+FEBRUARY 19, 2024/MK/na
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:38
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 819/2023
+M/S BLUE HEAVEN COSMETICS PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Sahil Gupta (VC), Advocate
+versus
+M/S RAJDHANI TRADERS THROUGH ITS
+PROPRIETOR MR GORDHAN SINGH & ORS.
+..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 17.05.2024
+I.A. No. 22588/2023 (Application under Order XXXIX Rules
+1 and 2 CPC).
+Defendant no. 2 is yet to file compliance affidavit in terms
+of the directions passed by the Hon’ble Court on 19.02.2024. It
+needs a highlight that defendant no. 3 is yet to be served.
+Defendant no. 1 however stands served on 15.12.2023, as has
+been recorded in the order dated 16.02.2024 of the Joint
+Registrar.
+CS(COMM)- 819/2023:
+As directed by the Joint Registrar vide order dated
+16.02.2024, plaintiff has filed affidavit of correctness of the
+address of defendant no. 3. However, summons have yet not
+been issued although process fee is stated to have been filed in
+March’2024. The e-filing log, however, shows that affidavit as
+above alone has been filed. Plaintiff is directed to file PF within
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:37
+a week and thereafter, summons be issued to defendant no. 3, as
+per the affidavit of correctness of address.
+Despite service of summons to defendant no. 1, no written
+statement has been filed. Maximum permissible period to file the
+same has expired. Consequently, right to file the written
+statement on behalf of defendant no. 1 stands closed.
+Ld. Counsel for the plaintiff submits that a copy of written
+statement which has been refiled by defendant no. 2 has not been
+supplied to him. There is no appearance on behalf of defendant
+no. 2 today. Let the copy of the refiled written statement be
+supplied to ld. Counsel for the plaintiff. Time to file replication
+shall commence from the date of receiving copy of the refiled
+written statement.
+Put up for completion of pleadings on 09.08.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 17, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:37
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 819/2023
+M/S BLUE HEAVEN COSMETICS PRIVATE LIMITED
+.....Plaintiff
+Through: Mr. Sahil Gupta (VC), Advocate
+versus
+M/S RAJDHANI TRADERS THROUGH ITS
+PROPRIETOR MR GORDHAN SINGH & ORS. .....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 09.08.2024
+I.A. No. 22588/2023 (Application under Order XXXIX Rules
+1 and 2 CPC).
+1. Reply has been filed only on behalf of defendant no. 2. No
+reply has been filed by defendant no. 1 whereas defendant no. 3
+is yet to be served even with the summons. Since defendant no. 1
+has been served on 15.12.2023 and no reply has been filed till
+now, right of defendant no. 1 to file a reply stands closed.
+Neither defendant no. 1 nor defendant no. 2 have filed their
+compliance affidavits in terms of the directions issued by the
+Hon’ble Court on 19.02.2024.
+CS(COMM) 819/2023:
+2. Replication to the written statement of defendant no. 2 has
+yet not been filed for the reason that a copy of the written
+statement which was re-filed on behalf of defendant no. 2, has
+yet not been supplied to Ld. Counsel for the plaintiff. Direction
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:36
+in this regard was given in the order dated 17.05.2024 to
+defendant no. 2 although even on that date there was no
+appearance on behalf of defendant no. 2 as is the case today also.
+3. So far as non-service of defendant no. 3 is concerned
+despite fresh summons having been issued, ld. Counsel for the
+plaintiff submits that appropriate steps shall be taken within three
+weeks. It needs a highlight that even after issuance of fresh
+summons, defendant no. 3 remains unserved.
+4. Put up for completion of pleadings on 27.09.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 9, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:36
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 819/2023
+M/S BLUE HEAVEN COSMETICS PRIVATE LIMITED
+.....Plaintiff
+Through: Mr. Sahil Gupta, Advocate
+versus
+M/S RAJDHANI TRADERS THROUGH ITS PROPRIETOR MR
+GORDHAN SINGH & ORS.
+.....Defendant
+Through:
+CORAM:
+JOINT REGISTRAR (JUDICIAL) DR. AJAY GULATI
+O R D E R
+% 27.09.2024
+Ld. Presiding officer is on leave today.
+Re-notify on 04.12.2024 for purpose fixed.
+Reader to
+Dr. AJAY GULATI,
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 27, 2024
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:36
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 819/2023
+M/S BLUE HEAVEN COSMETICS PRIVATE LIMITED
+.....Plaintiff
+Through: Mr. Sahil Gupta (VC), Advocate
+Versus
+M/S RAJDHANI TRADERS THROUGH ITS
+PROPRIETOR MR GORDHAN SINGH & ORS.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 04.12.2024
+I.A. No. 22588/2023 (stay).
+1. Right of defendant no. 1 to file a reply has already been
+closed. Defendant no. 2 has filed its reply. Defendant no. 3 is
+yet to be served. Further, defendant nos. 1 & 2 have not filed
+their compliance affidavits in terms of the directions passed by
+the Hon’ble Court vide order dated 19.02.2024. Put up on the
+next date.
+CS(COMM) 819/2023:
+2. Right of defendant no. 1 to file its written statement has
+already been closed. Replication to the written statement of
+defendant no. 2 however has not been filed for the reason that ld.
+Counsel for the plaintiff has yet not received a copy of the
+written statement. Ld. Counsel is directed to get a copy of the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:35
+same from the Registry and plaintiff’s period to file replication
+shall commence from the date that a copy is received from the
+Registry. Plaintiff is again directed to take steps to serve
+defendant no. 3 within four weeks.
+3. Put up for completion of pleadings on 28.02.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+DECEMBER 4, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:35
+
+===== ORDER =====
+
+$~25
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 819/2023
+M/S BLUE HEAVEN COSMETICS PRIVATE LIMITED
+.....Plaintiff
+Through: Mr. Sahil Gupta (VC), Advocate
+versus
+M/S RAJDHANI TRADERS THROUGH ITS
+PROPRIETOR MR GORDHAN SINGH & ORS.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 09.12.2024
+I.A. No. 47638/2024 on behalf of the plaintiff / applicant
+under Order V Rule 20 r/w Section 151 CPC for substituted
+service of defendant no. 3.
+1. Ld. Counsel for the plaintiff submits that despite efforts to
+serve defendant no. 3 at the address which is available with the
+plaintiff, service of summons could not be effected on defendant
+no. 3. Ld. Counsel further submits that no fresh physical address
+of defendant no. 3 is available. Consequently, having due regard
+to the submissions, the application is allowed. Let defendant no.
+3 be served by way of publication in the “Times of India”, NCR
+Edition since the last known address of defendant no. 3 is of
+Bawana, Delhi. Steps be taken within two weeks. IA is disposed
+off.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+DECEMBER 9, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:35
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 819/2023
+M/S BLUE HEAVEN COSMETICS PRIVATE LIMITED
+.....Plaintiff
+Through: Mr. Sanjay Aggarwal,
+Mr. Rishabh Srivastava,
+Mr. Sahil Gupta, Advocates
+versus
+M/S RAJDHANI TRADERS THROUGH ITS
+PROPRIETOR MR GORDHAN SINGH & ORS.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 28.02.2025
+I.A. No. 22588/2023 (stay).
+1. Right of defendant no. 1 to file a reply has already been
+closed. Defendant no. 2’s reply is on record and rejoinder thereto
+has been filed by the plaintiff. There is no confirmation in regard
+to compliance affidavits which were to be filed by defendant no.
+1 and 2 in terms of the orders passed by the Hon’ble Court on
+19.02.2025. There is no appearance today on behalf of defendant
+no. 1 and 2.
+2. Def no. 3 has been served by way of publication on
+09.01.2025. There is no appearance on behalf of def no. 3 nor
+any reply appears to have been filed.
+CS(COMM) 819/2023
+3. Right of defendant no. 1 to file a written statement has
+already been closed. Pleadings between the plaintiff and
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:34
+defendant no. 2 are complete. Defendant no. 3 has been served
+by way of publication on 09.01.2025 but there is no appearance
+on behalf of defendant no. 3.
+4. Ld. Counsel for the plaintiff submits that after 19.02.2024
+there has been no appearance on behalf of defendant no. 2. Since
+right of defendant no. 1 to file a written statement had already
+been closed, and there is no appearance on behalf of defendant
+no. 2 also, ld. counsel requests that the matter be placed before
+the Hon’ble Court with the request to proceed ex-parte against
+defendant no. 1 and 2.
+5. At request, be placed before the Hon’ble Court on
+10.03.2025, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 28, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:34
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 819/2023 & I.A. 22588/2023
+M/S BLUE HEAVEN COSMETICS PRIVATE
+LIMITED .....Plaintiff
+Through: Mr. Rishabh Srivastava, Mr. Sahil
+Gupta and Mr. Sanjay Aggarwal,
+Advocates.
+versus
+M/S RAJDHANI TRADERS THROUGH ITS
+PROPRIETOR MR GORDHAN SINGH & ORS. .....Defendants
+Through: None.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 10.03.2025
+1. In terms of the order passed by the Joint Registrar on 28th February,
+2025, right of the defendant no.1 to file written statement has already been
+closed and none has entered appearance on behalf of the defendant no.1.
+2. In respect of the defendant no.2, it is stated that there has been no
+appearance since 19th February, 2024.
+3. In view of the above, both the aforesaid defendants are proceeded
+against ex parte.
+4. Defendant no.3 has been served by way of publication on 9th January,
+2025, however, none has appeared on behalf of the said defendant. The
+maximum permissible period for filing written statement is not yet over.
+5. List before the Joint Registrar on 8th May, 2025.
+6. List before the Court on 21st August, 2025.
+AMIT BANSAL, J
+MARCH 10, 2025/Vivek/-
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:33
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 819/2023
+M/S BLUE HEAVEN COSMETICS PRIVATE LIMITED
+.....Plaintiff
+Through: Mr. Sahil Gupta (VC), Advocate
+versus
+M/S RAJDHANI TRADERS THROUGH ITS
+PROPRIETOR MR GORDHAN SINGH & ORS.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 08.05.2025
+1. Defendant nos. 1 & 2 have already been proceeded against
+exparte. Defendant no. 3 has been served with summons on
+09.01.2025. However, no pleadings has been filed on behalf of
+defendant no. 3. Maximum permissible period to file written
+statement however has yet not expired. Further, there has been
+no appearance on behalf of defendant no. 3.
+2. Put up again for completion of pleadings on 11.08.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 8, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:33
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 819/2023
+M/S BLUE HEAVEN COSMETICS PRIVATE LIMITED
+.....Plaintiff
+Through: Mr. Sahil Gupta (VC), Advocate
+versus
+M/S RAJDHANI TRADERS THROUGH ITS
+PROPRIETOR MR GORDHAN SINGH & ORS.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 11.08.2025
+1. Defendant nos. 1 and 2 have already been proceeded
+against ex-parte. However, pleadings between the plaintiff and
+defendant no. 2 are complete.
+2. Defendant no. 3 has been served with summons on
+09.01.2025. No written statement has been filed on its behalf.
+Since the maximum permissible period to do so has expired, right
+to file a written statement stands closed for defendant no. 3.
+3. Matter is already listed before the Hon’ble Court for
+21.08.2025. Be placed before the Hon’ble Court on the date
+already fixed i.e. 21.08.2025, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 11, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:32
+
+===== ORDER =====
+
+$~198
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 819/2023
+M/S BLUE HEAVEN COSMETICS PRIVATE LIMITED
+.....Plaintiff
+Through: Mr. Sahil Gupta, Adv. (VC)
+versus
+M/S RAJDHANI TRADERS THROUGH ITS PROPRIETOR MR
+GORDHAN SINGH & ORS.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the defendant when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:32
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 819/2023
+M/S BLUE HEAVEN COSMETICS PRIVATE LIMITED
+.....Plaintiff
+Through: Mr. Rishabh Srivastava, Mr. Sahil
+Gupta & Ms. Yashaswini Sharma,
+Advs.
+versus
+M/S RAJDHANI TRADERS THROUGH ITS PROPRIETOR MR
+GORDHAN SINGH & ORS. .....Defendants
+Through: D-1 & 2 as ex-parte
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 21.08.2025
+I.A. 22588/2023 (order 39 R 1 AND 2 CPC)
+1. This is an application filed by the plaintiff under Order XXXIX Rule
+1 and 2 CPC.
+2. An ad-interim injunction order was granted on 10.11.2023.
+3. Defendant nos. 1 and 2 have been proceeded ex-parte on 10.03.2025.
+4. In view of the fact that defendant nos.1 and 3 respectively have not
+filed any reply to this application; and defendant no.2 though filed a reply
+has stopped appearing and is not pressing its reply, the injunction is hereby
+made absolute.
+5. The application stands disposed of.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:31
+CS(COMM) 819/2023
+6. Learned counsel for the plaintiff states that defendant no.3’s right to
+file written statement has already been closed by the learned Joint Registrar
+vide order dated 11.08.2025.
+7. None appears on behalf of defendant no.3.
+8. Defendant no.3 is hereby proceeded ex-parte.
+9. Learned counsel for the plaintiff states that he seeks time to file an
+appropriate application for seeking summary judgment against the defendant
+nos. 1 to 3.
+10. Learned counsel for the plaintiff states that he will also file an
+additional affidavit after making inquiries if either of the defendants are still
+dealing with the infringing goods.
+11. List on 13.02.2026.
+MANMEET PRITAM SINGH ARORA, J
+AUGUST 21, 2025
+gm
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:31

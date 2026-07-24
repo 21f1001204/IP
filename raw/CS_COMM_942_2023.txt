@@ -1,0 +1,559 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_942_2023
+case_status: PENDING
+n_orders: 12
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 942/2023
+VFS GLOBAL SERVICES PLC & ORS. ..... Plaintiffs
+Through: Mr. Sanjay Kumar Shandilya & Mr.
+Adit Srivastava, Advs. (VC).
+versus
+PRIMEVFS PRIVATE LIMITED ..... Defendant
+Through: Mr. Anurag Ahluwalia, CGSC with
+Mr. Kaushal Jeet Kait, G.P. for UOI.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 25.01.2024
+CS(COMM)- 942/2023 & I.A. 26133/2023 (stay)
+The defendant could not be served through the ordinary process as the
+premises of defendant are lying locked.
+Learned counsel for the plaintiffs submits that Local Commissioner
+also could not execute the commission since the premises of defendant are
+locked. Learned counsel for the plaintiff prays for some time to trace the
+defendant and execute the commission.
+Mr. Kaushal Jeet Kait, learned Advocate has appeared on behalf of
+Mr. Anurag Ahluwalia, learned Advocate for the Ministry of Corporate
+Affairs and submits that it was directed vide order dated 22.12.2023 by the
+Hon’ble Court to file a status report. Mr. Kait says that the status report shall
+be filed within a week.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:03
+Learned counsel appearing on behalf of the Ministry of Corporate
+Affairs is requested to supply a copy of the status report to learned counsel
+for the plaintiffs as well, on his e-mail address i.e.
+advshandilyasanjay@gmail.com.
+Put up before the Hon’ble Court for the date already fixed, for further
+directions, on 26.02.2024.
+Dr. AJAY GULATI (DJHS)
+JOINT REGISTRAR (JUDL.)
+JANUARY 25, 2024/
+MR
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:03
+
+===== ORDER =====
+
+$~41
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 942/2023, I.A. 26133/2023
+VFS GLOBAL SERVICES PLC & ORS. ..... Plaintiffs
+Through: Mr. Sanjay K. Shandilya,
+Mr. Apoorva Agrawal, Mr. Abhishek
+Sigh, Mr. Hemant Sharma, Ms. Molly
+Agarwal and Mr. Adit Srivastava,
+Advocates’.
+versus
+PRIMEVFS PRIVATE LIMITED ..... Defendant
+Through: None
+Mr. Anurag Ahluwalia, CGSC with
+Mr. Kaushal Jeet Kait, G.P. for UOI.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 26.02.2024
+1. The status report on behalf of Ministry of Corporate Affairs is not on
+record. Mr. Kaushal Jeet Kait, counsel for Ministry of Corporate Affairs, is
+instructed to follow up with the Registry and have the same on the file of
+this court.
+2. Mr. Sanjay K. Shandilya, counsel for the Plaintiffs, states that the Local
+Commissioner could not carry out the directions of this Court, as the
+Defendant’s premises were found to be locked. Additionally, he submits
+that, as per his information, the work allotted to Defendants by the Embassy
+of Democratic Republic of Congo in India, has now been given to some
+other entity. He however, needs to verify this information before taking a
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:00
+firm stand on it.
+3. As per order dated 25th January, 2024, the Defendant could not be
+served as their premises were lying locked. Mr. Shandilya, however, states
+that he has now obtained information regarding the directors of the
+Defendant company, and would like to serve the Defendant though the same
+directors. He is permitted to do so. Upon furnishing of requisite information
+by the Plaintiffs, service of summons on Defendant shall be done through
+any of the Directors. Service shall also be effected through Whatsapp, if
+such contact mobile numbers are available. Additionally, Plaintiffs shall be
+permitted to file amended memo of parties, disclosing the additional
+addresses and contact number of the Defendant, if any.
+4. List before the Joint Registrar for completion of service on 29th April,
+2024.
+SANJEEV NARULA, J
+FEBRUARY 26, 2024
+nk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:00
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 942/2023
+VFS GLOBAL SERVICES PLC & ORS. ..... Plaintiff
+Through: Mr. Sanjay K. Shandilya (VC),
+Mr. Adit Srivastava, Advocates
+versus
+PRIMEVFS PRIVATE LIMITED ..... Defendant
+Through: Mr. Anurag Ahluwalia,
+Mr. Kaushal Kait, Advocates for
+UOI
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 29.04.2024
+As per the affidavit of service, defendant has been served
+through one of its Director‟s i.e. Mr. Deepak, on 26.03.2024 with
+summons sent through speed post. Summons were also sent to
+another Director of the defendant Mr. Abhay Pratap Singh, who
+refused to accept summons on 26.03.2024. The same is now
+taken to be deemed service.
+Ld. Counsel appearing for UOI submits that as per
+directions of the Hon‟ble Court, status report has been filed. The
+same is on record.
+Let the written statement be filed as per rules, with an
+advance copy of the same to the opposite side. Replication
+thereto be filed as per rules thereafter.
+Put up for completion of pleadings on 09.08.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 29, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:00
+
+===== ORDER =====
+
+$~8
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 942/2023
+VFS GLOBAL SERVICES PLC & ORS. .....Plaintiff
+Through: Mr. Sanjay K.Shandilya,
+Mr. Adit Srivastava, Advocates
+versus
+PRIMEVFS PRIVATE LIMITED .....Defendant
+Through: Mr. Anurag Ahluwalia CGSC,
+Mr. Kaushal Jeet Kait (GP), for
+UOI
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 09.08.2024
+1. Written statement had been filed on behalf of the
+defendant on 02.05.2024 but was put under objections on
+06.05.2024. Since then no steps have been taken to re-file the
+same. Ld. Counsel for the plaintiff submits that he has not been
+provided with a copy of the written statement which is being
+shown as having been filed on 02.05.2024. Even though more
+than three months have lapsed since the written statement was
+put under objections, no steps have been taken to remove the
+objections, as already highlighted above. In view of the above, I
+deem it appropriate to grant a two week window to the defendant
+to take steps to remove the objections and re-file the written
+statement failing which the right to bring the written statement on
+record shall stand closed without any further order. Copy of the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:59
+written statement, if re-filed, be also supplied to ld. Counsel for
+the plaintiff. There is no appearance on behalf of the defendant
+today.
+2. Put up for completion of pleadings on 24.09.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 9, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:59
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 942/2023
+VFS GLOBAL SERVICES PLC & ORS. .....Plaintiff
+Through: Mr. Sanjay K.Shandilya,
+Mr. Adit Srivastava, Advocates
+versus
+PRIMEVFS PRIVATE LIMITED .....Defendant
+Through: Mr. Anurag Ahluwalia, CGSC,
+Mr. Kaushal Jeet Kait GP for
+UOI.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 24.09.2024
+1. On the last date of hearing, defendant was given final
+opportunity of two weeks to clear the objections which had been
+raised by the Registry to the written statement filed on behalf of
+the defendant on 02.05.2024 but which was under objections
+since 06.05.2024.
+2. There is no appearance on behalf of the defendant which
+was also the case on the last date of hearing. The e-filing log
+does not show any re-filing of written statement. Consequently,
+right of defendant to bring its written statement on record stands
+closed.
+3. In view of the above, it is appropriate to place the matter
+before the Hon’ble Court on 24.10.2024, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 24, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:58
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 942/2023 & I.A. 26133/2023
+VFS GLOBAL SERVICES PLC & ORS. .....Plaintiffs
+Through: Mr. Surinder Singh, Advocate
+versus
+PRIMEVFS PRIVATE LIMITED .....Defendant
+Through: Mr. Anurag Ahluwalia, CGSC with
+Mr. Kaushal Jeet Kait, G.P. for UoI
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 24.10.2024
+1. It is noted in the last order passed by the Joint Registrar on 24th
+September, 2024, the defendant was given last opportunity to clear the
+objections and have the written statement placed on record.
+2. Written statement is still lying under objections.
+3. None appears on behalf of the defendant.
+4. The record shows that none appeared on behalf of the defendant on
+the last two dates as well.
+5. Consequently, the defendant is proceeded against ex parte.
+6. In terms of the order passed by this Court on 22nd December, 2023, a
+status report has been filed on behalf of the Ministry of Corporate Affairs,
+which is on record.
+7. Accordingly, there is no requirement for the counsel to continue
+appearing in the present suit on behalf of the Ministry of Corporate Affairs.
+8. Mr. Anurag Ahluwalia is discharged from appearing further in the
+CS(COMM)942/2023 Page1of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:58
+matter.
+9. List before the Joint Registrar for further proceedings on 10th
+December, 2024.
+AMIT BANSAL, J
+OCTOBER 24, 2024
+ds
+CS(COMM)942/2023 Page2of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:58
+
+===== ORDER =====
+
+$~1
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 942/2023
+VFS GLOBAL SERVICES PLC & ORS.
+.....Plaintiff
+Through: Mr. Surinder Singh,
+Mr. Deepankar Chugh,
+Advocates
+versus
+PRIMEVFS PRIVATE LIMITED
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 10.12.2024
+1. Defendant has been proceeded against ex-parte vide order
+dated 24.10.2024, passed by the Hon’ble Court.
+2. Ld. Counsel for the plaintiff submits that plaintiff wishes
+to proceed with leading ex-parte plaintiff evidence. List of
+witnesses be filed within four weeks. Affidavit/s in evidence of
+the witness/es be filed within a further period of three weeks.
+3. Put up for PE on 10.03.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+DECEMBER 10, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:57
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 942/2023
+VFS GLOBAL SERVICES PLC & ORS.
+.....Plaintiff
+Through: Mr. Surinder Singh, Advocate
+versus
+PRIMEVFS PRIVATE LIMITED
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 10.03.2025
+1. Matter has been listed today for recording of ex-parte
+plaintiff’s evidence.
+2. PW-1 Mr. Percy Harver is present today. He has been
+examined and discharged. No other PW is to be examined. Vide
+separate statement of ld. Counsel for the plaintiff, PE stands
+closed.
+3. Ex. PW-1/1 to Ex. PW-1/3 and Ex. PW-1/11 (Colly) have
+been taken across the board today in the Court.
+4. Defendants are ex-parte.
+5. Matter is ripe for final submissions.
+6. Be placed before the Hon’ble Court on 07.04.2025, for
+further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 10, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:57
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 942/2023 & I.A. 26133/2023
+VFS GLOBAL SERVICES PLC & ORS. .....Plaintiffs
+Through: Mr. Surinder Singh & Mr. Deepankar
+Chugh, Advocates.
+versus
+PRIMEVFS PRIVATE LIMITED .....Defendant
+Through: None.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 07.04.2025
+1. Ex-parte evidence in the matter has been recorded and the matter has
+to be heard finally.
+2. Counsel for the plaintiff seeks an adjournment to file written
+submissions.
+3. Let the written submissions, along with judgments in support be filed
+within four (4) weeks.
+4. List on 15th September, 2025 at the end of the Board in the category of
+‘Final Hearing Matters’.
+AMIT BANSAL, J
+APRIL 7, 2025
+at
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:56
+
+===== ORDER =====
+
+$~245
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 942/2023
+VFS GLOBAL SERVICES PLC & ORS.
+.....Plaintiff
+Through: None
+versus
+PRIMEVFS PRIVATE LIMITED
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared on behalf of the parties.
+Let this matter be sent back to the Hon’ble Court for further
+directions.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:56
+
+===== ORDER =====
+
+$~38
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 942/2023 & I.A. 26133/2023
+VFS GLOBAL SERVICES PLC & ORS. .....Plaintiffs
+Through: Mr. Surinder Singh, Ms. Divya and
+Mr. Amit Verma, Advs.
+versus
+PRIMEVFS PRIVATE LIMITED .....Defendant
+Through: Defendant is ex-parte
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 15.09.2025
+It is noted that written submissions of the plaintiff is already on
+record.
+The ex-parte evidence of the plaintiff is on record.
+List on 15.01.2026.
+MANMEET PRITAM SINGH ARORA, J
+SEPTEMBER 15, 2025/hp
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:55
+
+===== ORDER =====
+
+$~29
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 942/2023 & I.A. 26133/2023
+VFS GLOBAL SERVICES PLC & ORS. .....Plaintiffs
+Through: Mr. Surinder Singh and Ms. Divya,
+Advocates.
+versus
+PRIMEVFS PRIVATE LIMITED .....Defendant
+Through: Appearance not given.
+CORAM:
+HON'BLE MR. JUSTICE TUSHAR RAO GEDELA
+O R D E R
+% 15.01.2026
+List for final hearing on 17.03.2026.
+TUSHAR RAO GEDELA, J
+JANUARY 15, 2026
+yrj
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:54

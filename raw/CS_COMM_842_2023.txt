@@ -1,0 +1,738 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_842_2023
+case_status: PENDING
+n_orders: 14
+
+$~53
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 842/2023, I.As. 23347/2023, 23348/2023, 23349/2023,
+23350/2023 & 23351/2023
+SPORTA TECHNOLOGIES PVT.
+LTD., AND ANR. ..... Plaintiffs
+Through: Mr. Prithvi Singh, & Ms. Parkhi Rai,
+Advs. (M. 7007410620)
+versus
+JOHN DOE AND OTHERS ..... Defendant
+Through: Mr. Harish Vaidyanathan Shankar,
+CGSC, with Mr. Srish Kumar
+Mishra, Mr. Alexander Mathai
+Paikaday, Mr. Krishnan V and Mr.
+Gokul Sharma, Advs. for MEITY &
+DOT (M. 9810788606)
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 23.11.2023
+1. This hearing has been done through hybrid mode.
+I.A.23350/2023 (for exemption)
+2. This is an application filed by the Plaintiffs seeking exemption from
+filing Original/certified/translated copies of documents with proper margins,
+etc. Original documents shall be produced/filed at the time of
+Admission/Denial, if sought, strictly as per the provisions of the
+Commercial Courts Act, 2015 and the DHC (Original Side) Rules, 2018.
+3. Exemption is allowed, subject to all just exceptions. Accordingly, the
+application is disposed of.
+CS(COMM) 842/2023 Page 1 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:28
+I.A. 23348/2023 (u/s 12A of the Commercial Courts Act)
+4. This is an application filed by the Plaintiffs seeking exemption from
+instituting pre-litigation mediation under Section 12A of the Commercial
+Courts Act. Considering the facts and circumstances of the case, the Court is
+satisfied that in terms of the judgment of the Hon’ble Supreme Court in
+Yamini Manohar v. T.K.D Keerthi, SLP(C) 023488/2023, the present suit
+contemplates urgent interim relief. The exemption under Section 12A is
+granted to the Plaintiffs. Accordingly, the application is disposed of.
+I.A. 23349/2023(for additional documents)
+5. This is an application filed by the Plaintiffs seeking leave to file
+additional documents under the Commercial Courts, Commercial Division
+and Commercial Appellate Division of High Courts Act, 2015 (hereinafter,
+‘Commercial Courts Act’). The Plaintiffs, if it wishes to file additional
+documents at a later stage, shall do so strictly as per the provisions of the
+Commercial Courts Act and the DHC (Original Side) Rules, 2018.
+6. The application is disposed of.
+I.A.23351/2023 (for court fee)
+7. This is an application for exemption from filing the court fee. The
+court fee is deposited. Application is disposed of.
+CS(COMM) 842/2023
+8. Let the plaint be registered as a suit.
+9. Issue summons to the Defendants through all modes upon filing of
+Process Fee.
+10. The summons to the Defendants shall indicate that the written
+statement to the plaint shall be positively filed within 30 days from date of
+receipt of summons. Along with the written statement, the Defendants shall
+CS(COMM) 842/2023 Page 2 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:28
+also file an affidavit of admission/denial of the documents of the Plaintiffs,
+without which the written statement shall not be taken on record.
+11. Liberty is given to the Plaintiffs to file the replication within 15 days
+of the receipt of the written statement. Along with the replication, if any,
+filed by the Plaintiffs, an affidavit of admission/denial of documents of the
+Defendants, be filed by the Plaintiffs, without which the replication shall not
+be taken on record. If any of the parties wish to seek inspection of any
+documents, the same shall be sought and given within the timelines.
+12. List before the Joint Registrar for marking of exhibits on 18th January,
+2024. It is made clear that any party unjustifiably denying documents would
+be liable to be burdened with costs.
+13. List before Court on 5th April, 2024.
+I.A. 23347/2023 (u/O XXXIX Rules 1 & 2 CPC)
+14. Issue notice in the application.
+15. The present suit is filed by Plaintiff Nos. 1 & 2- Sporta Technologies
+Pvt. Ltd. and Dream Sports Inc. against Defendant No.1- John Doe
+Proprietor of Dream 365 (www.dream365book.in, www.dream365.com),
+restraining them from using the mark ‘Dream 365’, the ‘D cup’ logo or any
+other mark which is deceptively similar to the Plaintiffs’ mark ‘Dream 11’.
+16. The Plaintiff No.1 is a company incorporated as Adwaiya Realtors
+Pvt. Ltd. in the year 2007 and thereafter adopted the name Dream 11
+Fantasy Pvt. Ltd. in the year 2013. The Plaintiff No.1 is a wholly owned
+subsidiary of Plaintiff No. 2. The Plaintiff No.1 states to be the one stop
+provider of a number of online fantasy sport leagues. The Plaintiffs also
+asserts to be the official fantasy sports partner of the International Council of
+Cricket (ICC), National Basketball Association (NBA), Indian Hockey
+CS(COMM) 842/2023 Page 3 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:28
+Federation (FIH) etc. The Plaintiffs state to be the title sponsors of Indian
+Premiere League (IPL), 2020 and promoted their brand ‘DREAM 11’ on
+player jerseys. The Plaintiff No.1 is also the registered proprietor of the
+following marks:
+17. The Plaintiff No. 2 has various registrations for the mark ‘Dream 11’
+in classes i.e., 9,16,18, 28, 35, 38, 41, 42, 45. The website with the domain
+name dream11.com is registered under the name of Plaintiff No.2.
+18. The Plaintiffs also aver that they have filed number of lawsuits,
+claiming their rights over the ‘DREAM 11’ mark against third parties whose
+marks are both phonetically and visually similar i.e., ‘Dream11Champ’,
+CS(COMM) 842/2023 Page 4 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:28
+‘Dreamz11’, ‘Dream11app.in’ etc. and the same were also recognized by
+this Court.
+19. The Plaintiffs came across the Defendant No.1’s website in the month
+of October, 2023, who is stated to be the owner and operator of the websites
+with the domain name ‘www.dream365book.in & www.dream365.com
+(hereinafter ‘the impugned websites’). The Defendants are engaged in
+providing gambling and betting services.
+20. The grievance of the Plaintiffs is that Defendant No.1- i.e., John Doe
+Proprietor of Dream 365 are the domain names www.dream365book.in &
+www.dream365.com which are registered by DNRs Hostinger, UAB-
+Defendant No.2 and NameCheap Inc.- Defendant No.3. The said impugned
+websites are using the name ‘DREAM’ along with the ‘trophy logo’ which
+belongs to the Plaintiffs. A comparative analysis of Plaintiffs’ and
+Defendant’s marks is set out below:
+Plaintiffs’ Mark Defendant’s Mark
+21. Ld. counsel for the Plaintiffs submits that the website is using various
+distinctive elements of the ‘DREAM 11’ mark of the Plaintiffs. The
+Defendant’s website is also a betting platform which is claiming to be the
+biggest platform in India. The screenshots of the websites are set out below:
+CS(COMM) 842/2023 Page 5 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:28
+CS(COMM) 842/2023 Page 6 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:28
+22. A perusal of the said website screenshots would show that the
+websites are identified only through some mobile numbers and there is no
+other indication as to who is operating the said domain name or websites.
+The Defendants are luring customers and users to play online casinos by
+using the letter ‘D’, the trophy logo and the identical font of the word
+‘DREAM’. The online casinos are providing various supporting event based
+casinos such as cricket, football, tennis, poker, teen patti etc. The Plaintiffs’
+grievance is that the entire mark ‘DREAM’ and the logo is being infringed
+and there is also resulting confusion owing to the use of the said mark and
+logo amongst the customers of the Plaintiffs. After having perused the
+website, there can be no doubt that the Defendant No. 1 has imitated the
+mark and the logo of the Plaintiffs’. The Defendant no.1 domain
+names/websites are accordingly restrained from using the infringing domain
+names www.dream365book.in & www.dream365.com or any other domain
+names or marks or names which consist of the mark DREAM 11, trophy
+CS(COMM) 842/2023 Page 7 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:28
+logo, or any other mark or name which is identical or confusingly similar to
+the Plaintiffs’ marks. Accordingly, the said two websites are restrained from
+operating any services under the mark ‘DREAM 365’ including the trophy
+logo of the Plaintiffs’ or any other domain name, mark/logo which is
+confusingly similar to the Plaintiffs’ ‘DREAM 11’ mark/logo.
+23. Ld. counsel for the Plaintiffs also submits that an advance copy of the
+papers were served upon the two DNRs out of which Hostinger-Defendant
+No.2 has already confirmed vide email dated 22nd November, 2023 that the
+domain name has been suspended.
+24. Compliance of Order XXXIX Rule 3 CPC, 1908 be done by email
+within a week.
+25. DoT/MEITY i.e., Defendant Nos. 4 & 5 respectively, are directed to
+block the access to the said websites and ISPs shall also comply with the
+same. The website with the domain name www.dream365book.in shall also
+be blocked and suspended by NIXI i.e., Defendant No. 6.
+26. List on the dates fixed above i.e., 5th April, 2024.
+PRATHIBA M. SINGH, J.
+NOVEMBER 23, 2023
+dj/ks
+CS(COMM) 842/2023 Page 8 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:28
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 842/2023
+SPORTA TECHNOLOGIES PVT. LTD., AND ANR. ..... Plaintiffs
+Through: Mr. Rohan Krishna Seth & Ms. Urvi
+Tripathi, Advocates.
+versus
+JOHN DOE AND OTHERS ..... Defendants
+Through:
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 18.01.2024
+1. As per the report of the Registry, defendants No. 4 to 6 have been
+served through the ordinary mode. Defendants No. 4 and 6 have been served
+on 15.12.2023 whereas defendant No. 5 has been served on 18.12.2023.
+2. As per the affidavit of service filed by the plaintiff, defendant no. 1
+and 2 have been served through e-mail on 05.01.2024 whereas defendant no.
+3 has been served on 02.01.2024. Let the respective written statements be
+filed as per rules. An advance copy of the written statement be served on the
+plaintiff’s counsel.
+3. Put up on 01.03.2024 for completion of pleadings.
+Dr. AJAY GULATI, J
+JANUARY 18, 2024/MR
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:28
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 842/2023
+SPORTA TECHNOLOGIES PVT. LTD. AND ANOTHER.
+..... Plaintiff
+Through: Ms.Urvi, Adv.
+versus
+JOHN DOE AND OTHERS
+..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 01.03.2024
+All the defs. stand served, as has already been recorded in the last
+order wherein specific dates of service of summons had been mentioned.
+There is neither any appearance on behalf of the defs. nor registry records
+show filing of any written statement/s.
+Put up before the Hon’ble Court on 5.4.24 which is the date already
+scheduled, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 1, 2024
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:27
+
+===== ORDER =====
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 842/2023, I.A. 23347/2023
+SPORTA TECHNOLOGIES PVT. LTD., AND ANR. ..... Plaintiffs
+Through: Ms. Shilpi Sinha, Advocate.
+versus
+JOHN DOE AND OTHERS ..... Defendants
+Through: Mr. Harish Vaidyanathan Shankar,
+CGSC with Mr. Gokul Sharma, GP
+for D-4, 5.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 05.04.2024
+1. Ms. Shilpi Sinha, counsel for the Plaintiffs, states that the Defendants
+have been served but have neither appeared before the Court nor filed a
+written statement. She submits that since the overall condonable limit for
+filing written statement has not yet expired, the proceedings be adjourned.
+2. Accordingly, list on 4th July, 2024.
+SANJEEV NARULA, J
+APRIL 5, 2024
+nk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:27
+
+===== ORDER =====
+
+$~30
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 842/2023 & I.A. 23347/2023-Stay
+SPORTA TECHNOLOGIES PVT. LTD., AND ANR. .....Plaintiffs
+Through: Mr. Rohan Krishan Seth and Ms.
+Shilpi Sinha, Advocates
+versus
+JOHN DOE AND OTHERS .....Defendants
+Through: Mr. Harish Vaidynanthan Shankar,
+CGSC with Mr. Srish Kumar
+Mishra and Mr. Alexander Mathai
+Paikaday, Advocates
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 04.07.2024
+1. The defendant no.1 is yet to be served.
+2. Learned counsel appearing for the plaintiffs seeks some time to take
+appropriate steps qua service to the said defendant no.1.
+3. Accordingly, renotify on 07.10.2024.
+SAURABH BANERJEE, J
+JULY 4, 2024/akr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:26
+
+===== ORDER =====
+
+$~24.
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 842/2023 and I.A. 23347/2023
+SPORTA TECHNOLOGIES PVT. LTD., AND ANR......Plaintiffs
+Through: Mr. Prithvi Gulati and Mr. Ritwik,
+Advocates.
+versus
+JOHN DOE AND OTHERS .....Defendants
+Through: Mr. Harish Vaidyanathan Shankar,
+CGSC with Mr. Srish Kumar Mishra
+and Mr. Alexander Mathai Paikaday,
+Advocates for R-2 & 3.
+Mr. Vijay Joshi, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 07.10.2024
+The Hon’ble Judge is on leave today.
+List on 7th February, 2025.
+BY ORDER
+(COURT MASTER)
+OCTOBER 7, 2024/kd
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:25
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 842/2023
+SPORTA TECHNOLOGIES PVT. LTD., AND ANR.
+.....Plaintiff
+Through: Ms. Shilpi Sinha, Advocate
+versus
+JOHN DOE AND OTHERS .....Defendant
+Through: Mr. Shivam Narang (VC),
+Advocate for D-3.
+Mr. Vijay Joshi (VC),
+Advocate for D-4/UOI.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 14.10.2024
+I.A. No. 42091/2024 on behalf of the plaintiff seeking
+disclosure from defendant no. 3.
+1. Ld. Counsel for defendant no. 3 submits that he has no
+objection to the present application. IA is thus allowed.
+Consequently, necessary information be supplied to the
+plaintiff’s Counsel within three weeks. IA is disposed off
+accordingly.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+OCTOBER 14, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:25
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 842/2023 with I.A. 23347/2023
+SPORTA TECHNOLOGIES PVT. LTD., AND ANR. .....Plaintiffs
+Through: Mr. Rohan Krishna Seth and Mr.
+Ritwik Marwaha, Advocates.
+versus
+JOHN DOE AND OTHERS .....Defendants
+Through: Mr. Viplav Acharya, Advocate for D-
+2 & 3.
+Mr. Vijay Joshi and Mr. Hemant
+Goyal, Advocates for D-4.
+Mr. Vivek Goyal, CGSPC with Mr.
+Gokul Sharma, Advocate for D-5 and
+D-6.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 07.02.2025
+1. List before the Joint Registrar on 26th March, 2025 for completion of
+service and pleadings.
+AMIT BANSAL, J
+FEBRUARY 7, 2025
+Vivek/-
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:24
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 842/2023
+SPORTA TECHNOLOGIES PVT. LTD., AND ANR. .....Plaintiffs
+Through: Mr. Prithvi Gulati and Mr. Ritwik
+Marwaha, Advocates (9911167179)
+versus
+JOHN DOE AND OTHERS .....Defendants
+Through: Mr. Vijay Joshi and Mr. Shubham
+Chatruvedi, Advocates for D-4.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 26.03.2025
+Regular Stenographer is on leave today.
+1. Ld. Counsel of the plaintiff submits that on correct details of
+defendant no. 1 having been provided by defendant no. 3, amended memo of
+parties has been filed with the service details of defendant no. 1 (who was
+earlier a John Doe). The amended memo of parties is taken on record. On
+filing PF within a week, issue summons to defendant no. 1 through all
+permissible mode, as per the amended memo of parties. However, it is made
+clear that service of summons on defendant no. 1 has to be as per the treaty
+entered into between India and US for service of legal process on the
+defendant in the US.
+2. It needs a highlight that in the order dated 18.01.2025, inadvertently it
+has been recorded that defendant no. 1 stands served.
+3. The order dated 18.1.2024 captures the dates of service of summons
+on defendant nos. 2 to 6. In view of the same, the maximum permissible
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:24
+period for filing the written statement is long over for defendant nos. 2 to 6.
+Consequently their respective rights to file a written statement stand closed.
+4. Put up again for appearance on behalf of defendant no. 1 on
+08.07.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 26, 2025/pu
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:24
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 842/2023
+SPORTA TECHNOLOGIES PVT. LTD., AND ANR.
+.....Plaintiff
+Through: None
+versus
+JOHN DOE AND OTHERS
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 06.05.2025
+1. File has been taken up today on an office note dated
+05.05.2025 seeking clarification regarding service of summons
+on defendant no. 1 who is a resident of US.
+2. In the order dated 26.03.2025, this Court had directed
+issuance of summons to defendant no. 1 in accordance with the
+treaty entered between India and US for service of legal process
+on the defendants in the US.
+3. The Registry has now put up a note highlighting that as per
+the guidelines for service of summons on defendants in USA,
+certain fees is required to be paid. For the convenience of the
+Registry and the plaintiff it is clarified that the reference to the
+treaty was inadvertent. However, it is further clarified that as has
+been highlighted in the judgment delivered in CS(COMM)
+276/2021 titled as Microsoft Corporation & Anr. Vs. Tech
+Heracles OPC Private Limited & Ors., defendants in the USA
+have to be served through a specific agency which is the central
+agency for service of legal process / summons on the defendants
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:23
+i.e. Process Forwarding International i.e. 633, Yesler Way,
+Seattle, WA 98104, USA. Since, as per the note of the Registry,
+certain fee is required to be paid, the fee is to be paid by the
+plaintiff and thereafter they can collect the summons from the
+Registry and transmit it to Process Forwarding International for
+service on defendant no. 1.
+4. Alternately, the summons be collected from the Registry
+by the plaintiff and thereafter, after the payment of requisite fee,
+summons be forwarded to Process Forwarding International, as
+the procedure might be, for being served on defendant no. 1.
+5. A copy of this order be sent to ld. Counsel for the plaintiff
+on his / her email, for necessary information and compliance.
+6. Put up for completion of pleadings on 08.07.2025, the date
+already fixed.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 6, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:23
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 842/2023
+SPORTA TECHNOLOGIES PVT. LTD.AND ANR.
+.....Plaintiff
+Through: Mr. Rohan Krishna Seth,
+Mr. Ritwik Marwaha, Advocates
+versus
+JP BARKLEY PROPRIETOR OF DREAM 365 &
+OTHERS
+.....Defendant
+Through: Mr. Vijay Joshi, Mr. Shubham
+Chaturvedi, Advocates for D-4
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 08.07.2025
+1. Ld. Counsel for the plaintiff submits that steps were not
+taken to serve defendant no. 1 as directed in the previous order
+for the reason that they have now information that the concerned
+domain name which was informed to be registered by defendant
+no. 1 has since been released and is further informed to have
+been registered through another DNR i.e. GoDaddy for which
+they need to move an appropriate application for seeking the
+details of the new registrant.
+2. Put up for further proceedings on 24.09.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 8, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:23
+
+===== ORDER =====
+
+$~209
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 842/2023
+SPORTA TECHNOLOGIES PVT. LTD.AND ANR.
+.....Plaintiff
+Through: Ld. Counsel for the plaintiff.
+versus
+JP BARKLEY PROPRIETOR OF DREAM 365 & OTHERS
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the defendant when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:22
+
+===== ORDER =====
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 842/2023
+SPORTA TECHNOLOGIES PVT. LTD.AND ANR.
+.....Plaintiff
+Through: Mr. Ritwik Marwaha (VC),
+Advocate
+versus
+JP BARKLEY PROPRIETOR OF DREAM 365 &
+OTHERS
+.....Defendant
+Through: Mr. Vijay Joshi, Advocate for
+D-4
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 24.09.2025
+1. Ld. Counsel for the plaintiff submits that an application for
+impleading a DNR, as was submitted on 08.07.2025, is yet to be
+filed.
+2. Put up again for further proceedings on 10.12.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 24, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:21
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 842/2023
+SPORTA TECHNOLOGIES PVT. LTD.AND ANR.
+.....Plaintiff
+Through: Mr. Ritwik Marwaha (VC),
+Advocate
+versus
+JP BARKLEY PROPRIETOR OF DREAM 365 &
+OTHERS
+.....Defendant
+Through: Mr. Vijay Joshi, CGSC,
+Mr. Shubham Chaturvedi,
+Advocate for D-4
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 10.12.2025
+1. Ld. Counsel for the plaintiff seeks yet another opportunity
+to implead the concerned DNR in regard to which a submission
+was made on 08.07.2025.
+2. Put up again for further proceedings on 09.04.2026.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+DECEMBER 10, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:21

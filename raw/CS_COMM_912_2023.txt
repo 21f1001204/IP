@@ -1,0 +1,1150 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_912_2023
+case_status: PENDING
+n_orders: 18
+
+$~46
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 912/2023, I.As. 25686/2023, 25687/2023, 25688/2023,
+25689/2023, 25690/2023 & 25691/2023
+NOVARTIS AG ...... Plaintiff
+Through: Ms. Anuradha Salhotra, Mr. Naval
+Kastia and Ms. Saloni Chowdhry,
+Advs. (M. 98110 68018)
+versus
+NOVOTAS PHARMACEUTICALS
+PRIVATE LIMITED ..... Defendant
+Through: None.
+CORAM:
+JUSTICE PRATHIBAM. SINGH
+O R D E R
+% 20.12.2023
+1. This hearing has been done through hybrid mode.
+I.A.25691/2023 (for exemption)
+2. This is an application filed by the Plaintiff seeking exemption from filing
+translated copies of documents into English language.
+3. Exemption is allowed, subject to all just exceptions. Accordingly,
+application is disposed of.
+I.A.25690/2023 (for exemption)
+4. This is an application filed by the Plaintiff seeking exemption from filing
+typed copies of dim documents with proper margins, electronic documents, etc.
+5. Exemption is allowed, subject to all just exceptions. Accordingly,
+application is disposed of.
+CS(COMM)912/2023 Page1of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:40
+I.A.25689/2023 (for exemption)
+6. This is an application filed by the Plaintiffs seeking exemption from
+filing originals documents. Original documents shall be produced/filed at the
+time of Admission/Denial, if sought, strictly as per the provisions of the
+Commercial CourtsAct and the DHC (Original Side) Rules, 2018.
+7. Exemption is allowed, subject to all just exceptions. Accordingly,
+application is disposed of.
+I.A.25688/2023 (u/S 12A)
+8. This is an application filed by the Plaintiffs seeking exemption instituting
+pre-litigation mediation under Section 12Aof the Commercial CourtsAct.
+9. Considering the facts and circumstances of the case, which shows that
+the Defendants are repeated infringers, the Court is satisfied that in terms of the
+judgment of the Hon’ble Supreme Court in Yamini Manohar v. T.K.D Keerthi,
+(2023 LiveLaw (SC) 906), that the present suit contemplates urgent interim
+relief.
+10. Accordingly, the exemption is allowed and application is disposed of.
+I.A.25687/2023 (for additional documents)
+11. This is an application filed by the Plaintiffs seeking leave to file
+additional documents under the Commercial Courts, Commercial Division and
+Commercial Appellate Division of High Courts Act, 2015 (hereinafter,
+‘Commercial Courts Act’). The Plaintiff, if it wishes to file additional
+documents at a later stage, shall do so strictly as per the provisions of the
+Commercial CourtsAct and the DHC (Original Side) Rules, 2018.
+12. The application is disposed of.
+CS(COMM)912/2023 Page2of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:40
+CS(COMM) 912/2023
+13. Let the plaint be registered as a suit.
+14. Issue summons to the Defendant through all modes upon filing of
+Process Fee.
+15. The summons to the Defendant shall indicate that the written statement
+to the plaint shall be positively filed within 30 days from date of receipt of
+summons. Along with the written statement, the Defendant shall also file an
+affidavit of admission/denial of the documents of the Plaintiff, without which
+the written statement shall not be taken on record.
+16. Liberty is given to the Plaintiff to file a replication within 15 days of the
+receipt of the written statement(s). Along with the replication, if any, filed by
+the Plaintiff, an affidavit of admission/denial of documents of the Defendant, be
+filed by the Plaintiff, without which the replication shall not be taken on record.
+If any of the parties wish to seek inspection of any documents, the same shall
+be sought and given within the timelines.
+17. List before the Joint Registrar for marking of exhibits on 12th February,
+2024. It is made clear that any party unjustifiably denying documents would be
+liable to be burdened with costs.
+18. List before Court on 9th May, 2024 before the Roster Bench.
+I.A.25686/2023 (u/O XXXIX Rule 1 and 2 CPC)
+19. Issue notice.
+20. The matter has been received on transfer in typed supplementary.
+CS(COMM)912/2023 Page3of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:40
+21. The Plaintiff - Novartis AG has filed the present suit seeking permanent
+injunction restraining infringement of trade mark, passing off, rendition of
+account of profits, etc.
+22. The Plaintiff seek protection of its house mark and name ‘NOVARTIS’
+as also its logo. The said logo is as under:
+23. The said mark is stated to have been coined by the Plaintiff in 1996 upon
+the merger of Ciba-Geigy AG and Sandoz AG. The mark has since then been
+used in respect of pharmaceutical and related business. The mark ‘NOVARTIS’
+along with the logo is registered across the world in several countries. The
+registration in India dates back to 28th February, 1996 and the details of the
+registrations have been provided in the plaint. The Plaintiff has also created a
+website i.e. www.novartis.com and has been operating the same since 2nd
+April, 1996.
+24. In the present case suit, the grievance of the Plaintiff is that it came
+across a website being is www.novotasbiotech.com which was operated by a
+company being Novotas Biotech Pvt. Ltd (hereinafter, ‘erstwhile company’).
+The said website is also stated to be using a logo in a similar colour scheme as
+that of the Plaintiff.
+25. It is submitted that from the online record available on the website of the
+Registrar of Companies, the status of the said erstwhile company was shown as
+CS(COMM)912/2023 Page4of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:40
+"struck off". However, as the website of the said company was active, the
+Plaintiff through its attorney issued a cease-and-desist letter dated 1st
+December, 2022, demanding cessation of use of the impugned marks, deletion
+of all references of the impugned marks.
+26. The Defendant then replied on 8th December, 2022 stating that it is
+willing to settle the claim of the Plaintiff. Paragraph 9 of the reply reads as
+under:
+“9. Our client further state that as my client willing to
+settle the claim of your client amicably and therefore
+is agreeable to provide you with an undertaking in
+terms of paragraph 11 of your notice and also ready
+to withdraw the brand name "NOVASTIN" with
+trademark application no. 4918713 only. However,
+my client further put to your client notice that not in
+any given point of time, my client ·will not discontinue
+the use of the Company name and Company logo on
+the products sold by my client.”
+27. The Plaintiff was in constant communication with the erstwhile company
+for the next few months. Certain specimen labels and marks are stated to have
+been exchanged between the parties, however, the settlement did not fructify.
+Thereafter, a new company has been incorporated which is the Defendant –
+Novotas Pharmaceuticals Pvt. Ltd.
+28. Today, Ms. Salhotra, ld. Counsel for the Plaintiff submits that the
+Defendant has not commenced its business operations under the new name and
+therefore she presses for an ex parte injunction. Advance copy of the suit
+paperbook is stated to have been served upon the Defendant.
+CS(COMM)912/2023 Page5of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:40
+29. The perusal of the record would show that initially, the Defendant was
+willing to withdraw its trademark application bearing no. 4918713 for the brand
+name "NOVASTIN" but refused to discontinue the erstwhile company name.
+30. The Defendant has now filed a fresh application for ‘NOVOTAS’
+bearing trademark application no. 6073367 dated 19th August, 2023 and are
+planning to use the mark ‘NOVOTAS PHARMACEUTICALS’. The
+comparative images of the Plaintiff’s and Defendant’s marks are set out below:
+Plaintiff’s Trademark Defendant’s Impugned Mark
+● The marks NOVARTIS and NOVOTAS are visually, phonetically and
+structurally similar
+● The format of the mark is identical i.e. logo appears on the left followed
+by the word mark
+● The colour combination is identical i.e. the colours orange and blue in
+the logo and the colour blue of the font
+● The impugned Mark NOVOTAS is also represented in all capitals as the
+Plaintiff’s mark NOVARTIS.
+● The logo of the Defendant gives an impression of a device of leaves,
+similar to the Plaintiff’s logo
+31. A perusal of the above would show that the mark, and the logo are
+phonetically and visually similar. Further, the Defendant has adopted a blue-
+orange colour combination which is similar to that of the Plaintiff. The manner
+in which the Defendant’s mark and logo is used would show that the same is
+likely to cause confusion especially in case of pharmaceutical preparations.
+Thus, for any unwary patients, the Defendant’s product would be clearly
+CS(COMM)912/2023 Page6of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:40
+deceiving. The Plaintiff is a large conglomerate in the medical business with an
+annual turnover figure of over USD 50 billion. When such is the extensive use
+of the mark ‘NOVARTIS’, the use of a confusingly similar mark would not be
+permissible.
+32. Further, in pharmaceutical preparations, such confusion is to be avoided.
+The test and the threshold in such products are much higher as held in the
+decision of Cadila Healthcare vs. Cadila Pharma, (2001) 5 SCC 73. In the
+said case, the Hon’ble Supreme Court specifically observed that strict measures
+need to be taken to ensure that similarity of marks of medicines is avoided,
+particularly due to the varying medical infrastructure in the country. The
+relevant extract of the said judgement is set out below:
+“34. As far as present case is concerned, although both
+the drugs are sold under prescription but this fact
+alone is not sufficient to prevent confusion which is
+otherwise likely to occur. In view of the varying
+infrastructure for supervision of physicians and
+pharmacists of medical profession in our country due
+to linguistic, urban, semi-urban and rural divide
+across the country and with high degree of possibility
+of even accidental negligence, strict measurers to
+prevent any confusion arising from similarity of marks
+among medicines are required to be taken.”
+33. Further, in Cadila Healthcare (supra), it was held that, confusion in the
+case of drugs could even be dangerous to the customers and patients. In the said
+case, the Hon’ble Supreme Court also held as under:
+“38. Trade mark is essentially adopted to advertise
+one's product and to make it known to the purchaser. It
+attempts to portray the nature and, if possible, the
+CS(COMM)912/2023 Page7of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:40
+quality of the product and over a period of time the
+mark may become popular. It is usually at that stage
+that other people are tempted to pass off their products
+as that of the original owner of the mark. That is why it
+is said that in a passing off action, the plaintiff's right
+is "against the conduct of the defendant which leads to
+or is intended or calculated to lead to deception.
+Passing off is said to be a species of unfair trade
+competition or of actionable unfair trading by which
+one person, through deception, attempts to obtain an
+economic benefit of the reputation which other has
+established for himself in a particular trade or
+business. The action is regarded as an action for
+deceit." (See Wander Ltd. Vs. Antox India Pvt Ltd.,
+1990 Suppl. SCC 727.
+39. Public interest would support lesser degree of
+proof showing confusing similarity in the case of trade
+mark in respect of medicinal product as against other
+non-medicinal products. Drugs are poisons, not
+sweets. Confusion between medicinal products may,
+therefore, be life threatening, not merely inconvenient.
+Noting the frailty of human nature and the pressures
+placed by society on doctors, there should be as many
+clear indicators as possible to distinguish two
+medicinal products from each other. It is not
+uncommon that in hospitals, drugs can be requested
+verbally and/or under critical/pressure situations.
+Many patients may be elderly, infirm or illiterate. They
+may not be in a position to differentiate between the
+medicine prescribed and bought which is ultimately
+handed over to them. This view finds support from
+McCarthy on Trade Marks, 3rd Edition, para 23.12 of
+which reads as under:
+"The tests of confusing similarity are modified
+when the goods involved are medicinal products.
+CS(COMM)912/2023 Page8of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:40
+Confusion of source or product between
+medicinal products may produce physically
+harmful results to purchasers and greater
+protection is required than in the ordinary case. If
+the goods involved are medicinal products each
+with different effects and designed for even subtly
+different uses, confusion among the products
+caused by similar marks could have disastrous
+effects. For these reasons, it is proper to require a
+lesser quantum of proof of confusing similarity for
+drugs and medicinal preparations. The same
+standard has been applied to medical products
+such as surgical sutures and clavicle splints."
+34. Under such circumstances, the Plaintiff has made out a prima facie case
+in its favour for grant of an ex parte ad interim injunction, as there is a
+complete possibility of the Defendants’ products being mistaken as that of
+Plaintiff. Considering the products in question are pharmaceutical and
+nutraceutical products, the balance of convenience is also clearly in favour of
+the Plaintiff. Further, irreparable injury shall be caused not just to the Plaintiff,
+but to the public at large as well, in case products with a deceptively similar
+mark as that of the Plaintiff are allowed to continue in the market.
+35. Accordingly, till the next date of hearing, the Defendants and everyone
+acting on their behalf shall stand restrained from using the impugned mark
+‘NOVOTAS’ and/or as represented above in
+respect of pharmaceutical preparations or other cognate and allied goods.
+CS(COMM)912/2023 Page9of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:40
+36. The Defendants shall also stand restrained from using any identical or
+imitative colour combination and packaging as that of the Plaintiff’s.
+37. Insofar as the corporate name of the Defendant is concerned, the relief
+qua the same shall be considered after completion of pleadings.
+38. Compliance of Order XXXIX Rule 3 be made within a period of two
+weeks.
+39. Let a reply to the application be filed within a period of four weeks.
+Rejoinder be filed within four weeks, thereafter.
+40. List before the Joint Registrar on 12th February, 2024.
+41. List before the Roster Bench on 9th May, 2024.
+PRATHIBAM. SINGH, J.
+DECEMBER 20, 2023
+Rahul/kt
+CS(COMM)912/2023 Page10of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:40
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 912/2023
+NOVARTIS AG
+..... Plaintiff
+Through: Mr. Naval Kastia & Ms.
+Saloni Chowdhary, Advs.
+versus
+NOVOTAS PHARMACEUTICALS PRIVATE LIMITED
+..... Defendant
+Through: Mr. Ashish Kumar Pandey
+& Mr. Shiva Kant Vats,
+Advs.
+Mr. Lakhan Singh, AR
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 12.02.2024
+The service-affidavit filed, vide diary no. 373957/24 shows
+that the defendant was served, via courier on 13.01.2024. It is yet
+to file the written statement. That be filed as per law, whereafter
+the replications be also filed in accordance with law.
+Once the pleadings are completed, the parties shall also file
+the physical copies of their respective documents, if not already
+filed and the joint schedule of the documents.
+List the matter for admission-denial and marking of exhibits
+on 07.05.2024.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 12, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:39
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 912/2023
+NOVARTIS AG .... Plaintiff
+Through: Mr. Sumit Wadhwa, Ms. Ananya
+Jain, Advocates
+versus
+NOVOTAS PHARMACEUTICALS PRIVATE LIMITED
+..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 07.05.2024
+Defendant has been served on 13.01.2024. Written
+statement however is yet to be filed. There is no appearance on
+behalf of the defendant.
+Matter is already listed before the Hon’ble Court for
+09.05.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 09.05.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 7, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:38
+
+===== ORDER =====
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 912/2023 & I.A. 25686/2023.
+NOVARTIS AG ..... Plaintiff
+Through: Mr. Sumit Wadhwa Advocate.
+versus
+NOVOTAS PHARMACEUTICALS PRIVATE LIMITED
+..... Defendant
+Through: Mr. Ashish Kumar Pandey, Adv
+(through VC)
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 09.05.2024
+1. Defendant was served on 13th January, 2024. Counsel for defendant
+appeared on 12th February, 2024 before the Joint Registrar.
+2. An ex parte ad interim injunction was passed by this Court on 20th
+December, 2023.
+3. List before the Joint Registrar on 22nd May,2024 for completion of
+pleadings and for further proceedings.
+4. Interim orders to continue.
+ANISH DAYAL, J
+MAY 9, 2024/RK
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:38
+
+===== ORDER =====
+
+$~8
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 912/2023
+NOVARTIS AG ..... Plaintiff
+Through: Ms. Ekta Sarin (VC),
+Ms. Ananya Jain, Advocates
+versus
+NOVOTAS PHARMACEUTICALS PRIVATE LIMITED
+..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 22.05.2024
+I.A. No. /2024 filed by the defendant to condone the delay of
+76 days in filing the written statement.
+There is no appearance on behalf of the defendant. Ld.
+Counsel for the plaintiff accepts notice and submits that no reply
+is to be filed but the request for condonation of delay is being
+objected to since no cogent reason has been mentioned in the
+application for filing the written statement belatedly.
+I have gone through the contents of the application
+wherein the only ground mentioned for not filing the reply within
+the statutory period of 30 days is that the counsel was busy in
+preparing for Bihar Higher Judicial Examinations. In the
+understanding of the Court, this is no ground for condonation of
+delay. Professional responsibilities of the counsel have to be
+discharged with utmost commitment and personal reasons, such
+as listed above, cannot form the basis for not discharging the
+responsibilities in a time bound matter. However, since the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:37
+written statement has been filed within the maximum permissible
+period, the same is taken on record subject to cost of Rs.4000/- to
+be paid to the plaintiff / counsel for the plaintiff within three
+weeks, failing which written statement shall be deemed to have
+been taken off the record. Replication however be filed within
+the period permissible, as worked out from today.
+IA stands disposed off.
+CS(COMM) 912/2023
+Put up for completion of pleadings on 06.08.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 22, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:37
+
+===== ORDER =====
+
+Not Available (Error: Could not read PDF)
+
+===== ORDER =====
+
+$~4
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 912/2023
+NOVARTIS AG .....Plaintiff
+Through: Mr. Sumit Wadhwa (VC),
+Ms. Ananya Jain, Advocates
+versus
+NOVOTAS PHARMACEUTICALS PRIVATE LIMITED
+.....Defendant
+Through: Mr. Krishna Dev Pandey,
+Mr. Ashish Pandey, Advocates
+for D-1.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 06.08.2024
+1. On 22.05.2024, an IA was taken up for consideration
+which had been moved on behalf of the defendant seeking
+condonation of delay of 76 days in filing the written statement.
+The IA was allowed subject to cost of Rs. 4000/-, to be paid to
+the plaintiff or the Counsel for the plaintiff within three weeks
+failing which written statement was to be deemed to have been
+taken off the record. The cost admittedly has not been paid even
+till today. Consequently, the written statement is taken off the
+record in terms of the order dated 22.05.2024.
+2. An additional defendant was impleaded vide order dated
+05.07.2024 passed by the Hon’ble Court. Ld. Counsel for the
+plaintiff submits that summons sent to defendant no. 2 are still in
+transit.
+3. Matter is already listed before the Hon’ble Court for
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:36
+19.09.2024. Put up before the Hon’ble Court on the date already
+fixed i.e. 19.09.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 6, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:36
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 912/2023 & I.A. 32424/2024
+NOVARTIS AG
+.....Plaintiff
+Through: Ms. Anuradha Salhotra, Advocate
+with Mr. Sumit Wadhwa and Ms.
+Ananya Jain, Advocates
+Mob: 9811068018
+Email: litigation@rahulchaudhry.com
+versus
+NOVOTAS PHARMACEUTICALS PRIVATE LIMITED
+.....Defendant
+Through: Mr. Ashish Kumar Pandey, Advocate
+for D-1.
+Mob: 9268353569
+Mr. Ashim Shridhar, Advocate for D-
+2. (through VC)
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 19.09.2024
+1. Mr. Ashim Shridhar, learned counsel puts in appearance on behalf of
+defendant no. 2.
+2. Learned counsel appearing for defendant no. 2 submits that he is a
+manufacturer for defendant no. 1. He submits, that in view of the present
+case, defendant no. 2 shall not manufacture for defendant no. 1.
+3. The statement on behalf of defendant no. 2 is taken on record, and
+defendant no. 2 is held bound by the same.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:36
+4. Learned counsel appearing for defendant no. 1 submits that he may be
+granted time to file reply to I.A. 32424/2024.
+5. Let the needful be done within a period of four weeks. Rejoinder
+thereto, if any, be filed within a period of two weeks, thereafter.
+6. List before the Joint Registrar on 4th November, 2024
+7. List before the Court on 24th January, 2025.
+MINI PUSHKARNA, J
+SEPTEMBER 19, 2024
+ak
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:36
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 912/2023
+NOVARTIS AG ....Plaintiff
+Through: Ms. Mugdha Palsule, Advocate
+versus
+NOVOTAS PHARMACEUTICALS PRIVATE LIMITED
+.....Defendant
+Through: Ms. Kangan Roda (VC),
+Mr. Yash A.Arora, Advocates for
+D-1.
+Mr. Ashim Shridhar (VC),
+Advocate for D-2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 04.11.2024
+I.A. No. 44008/2024 on behalf of defendant no. 2 seeking
+condonation of delay of 7 days in filing the written statement.
+1. Ld. Counsel for the plaintiff accepts notice and submits
+that since a copy of the IA as also the written statement filed
+alongwith has not been supplied yet, she would not be in a
+position to ‘not oppose’ the present application. Ld. Counsel for
+the defendant / applicant is directed to supply a copy of the IA
+alongwith the written statement within a week to ld. Counsel for
+the plaintiff. Reply if any, be filed within two weeks of receiving
+a copy of the IA and written statement.
+IA No. 32424/2024
+2. Despite two opportunities having been granted by the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:35
+Hon’ble Court i.e. of four weeks vide order dated 05.07.2024 and
+of four weeks vide order dated 19.09.2024, no reply has been
+filed till date. Ld. Counsel for defendant no. 1 submits that she
+has been engaged on Saturday last and consequently, prays for
+some more time to file reply. This Court does not find the reason
+of engaging a new Counsel cogent enough for further period to
+be granted for filing a reply. Given the conduct, I deem it
+appropriate to close the right of defendant no. 1 to file the reply.
+CS(COMM) 912/2023
+3. Written statement on behalf of defendant no. 2 is yet to be
+brought on record.
+4. Ld. Counsel for defendant no. 1 requests that the matter be
+placed before the Mediation Centre, in response to which ld.
+Counsel for the plaintiff submits that she needs to seek
+instructions in this regard.
+5. Put up for completion of pleadings on 09.01.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 4, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:35
+
+===== ORDER =====
+
+$~42
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 912/2023 & I.A. No. 47805/2024
+NOVARTIS AG .....Plaintiff
+Through: Mr. Sumit Wadhwa with Ms.
+Mugdha, Advocates.
+(M): 9958257119
+versus
+NOVOTAS PHARMACEUTICALS PRIVATE
+LIMITED .....Defendant
+Through: Ms. Kangan Roda with Mr. Sarthak
+Sharma and Mr. Chirantan
+Priyadarshan, Advocates for
+defendant no. 1.
+(M): 9711922132
+Email: info@illuminip.com
+Mr. Ashim Shridhar, Advocate for
+defendant no. 2.
+(M): 9971547353
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 10.12.2024
+I.A. No. 47805/2024 (Application for wilful disobedience of injunction
+order dated 20th December, 2023)
+1. The present application has been filed on behalf of the plaintiff under
+Order XXXIX Rule 2A read with Section 151 of the Code of Civil
+Procedure, 1908 (“CPC”) for wilful disobedience of the injunction order
+dated 20th December, 2023.
+CS(COMM)912/2023 Page1of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:34
+2. Learned counsel appearing for the plaintiff submits that vide order
+dated 20th December, 2023, an ex-parte ad-interim injunction order was
+passed in favour of the plaintiff and against the defendants, wherein the
+defendants were restrained from using the impugned mark ‘NOVOTAS’ and
+.
+3. Learned counsel appearing for the plaintiff submits that earlier also an
+application being I.A. No. 32424/2024 was filed by the plaintiff under Order
+XXXIX Rule 2A CPC, since there was violation of injunction order by the
+defendant no. 1. No reply to the said application has been filed by the
+defendant no. 1.
+4. Learned counsel appearing for the plaintiff further submits that a
+routine search of the defendant no. 1’s activities reveal that defendant no. 1
+has continued to use the marks ‘NOVOTAS’ and
+to sell and advertise pharmaceutical
+goods, as well as solicit customers on its website
+https://www.novotaspharma.com/on-sale-product/ until October, 2024, well
+after the order dated 20th December, 2023.
+5. Furthermore, it is submitted on behalf of the plaintiff that upon
+contacting the distributor of defendant no. 1, the distributor of defendant no.
+1 confirmed to possess stock of the defendant no. 1’s product MACUTAS
+tablet bearing impugned mark . He submits that plaintiff
+CS(COMM)912/2023 Page2of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:34
+was able to procure the sample product with invoice dated 19th September,
+2024.
+6. Issue notice.
+7. Notice is accepted by learned counsel appearing for the defendants.
+8. Learned counsel appearing for defendant no. 1 submits that the
+website in question has already been deactivated. She further submits that a
+letter of withdrawal has been written to the Trade Marks Registry on 09th
+December, 2024 for withdrawal of the trademark ‘NOVOTAS’ and
+bearing application no. 6073367 in Class 5. She
+further submits that they have already applied for change of the name of
+their corporate name.
+9. Learned counsel appearing for defendant no. 1 further submits that the
+defendant no. 1 is ready to suffer a decree. She submits that for this purpose
+the matter be referred for mediation.
+10. Learned counsel appearing for defendant no. 2 submits that the
+defendant no. 2 was the manufacturer of defendant no. 1 and that defendant
+no. 2 has already stopped manufacturing the infringing product. He draws
+the attention of this Court to the statement as recorded in the order dated 19th
+September, 2024.
+11. Considering the submissions made before this Court, the defendant
+no. 1 is directed to file an affidavit showing the details of the product
+manufactured under the infringing mark NOVOTAS’ and
+, along with the batch numbers from 20th
+CS(COMM)912/2023 Page3of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:34
+December, 2023, when injunction order was passed, till date.
+12. The defendant no. 1 is also directed to file its sale figures with respect
+to the sale of its products under the aforesaid mark ‘NOVOTAS’ and
+, from 20th December, 2023 till date.
+13. Let the needful be done within a period of two weeks from today.
+14. Learned counsel appearing for the plaintiff is also directed to take
+instructions as regards the extent of Damages and Costs which the plaintiff
+seeks to recover from the defendant on account of the infringing activity
+carried out by the defendant no. 1, as also on account of the fact that the
+defendant no. 1 has continued with its infringing activities, despite
+injunction order passed bythis Court.
+15. List on 24th January, 2025, i.e., the date alreadyfixed.
+MINI PUSHKARNA, J
+DECEMBER 10, 2024
+c
+CS(COMM)912/2023 Page4of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:34
+
+===== ORDER =====
+
+$~1
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 912/2023
+NOVARTIS AG .....Plaintiff
+Through: Ms. Mugdha Palsule, Advocate
+versus
+NOVOTAS PHARMACEUTICALS PRIVATE LIMITED
+.....Defendant
+Through: Mr. Chirantan Priyadarshan,
+Mr. Sarthak Sharma (VC),
+Advocates for D-1.
+Mr. Ashim Shridhar, Advocate
+for D-2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 09.01.2025
+I.A. No. 44008/2024 on behalf of defendant no. 2 for seeking
+condonation of delay of 7 days in filing the written statement.
+1. No reply is to be filed by the plaintiff. For the reasons
+stated in the application, application is allowed. Delay stands
+condoned. Written statement is taken on record. Replication be
+filed within the period permissible, as worked out from today.
+IA stands disposed off.
+IA No. 32424/2024
+2. This IA concerns defendant no. 1 only, whose right to file
+a reply has already been closed.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:34
+CS(COMM) 912/2023
+3. Replication to the written statement of defendant no. 1 is
+on record. However, the written statement of defendant no. 1
+itself has been taken off the record vide order dated 06.08.2024.
+Written statement of defendant no. 2 has been taken on record
+today.
+4. Matter is already listed before the Hon’ble Court for
+24.01.2025. Be placed before the Hon’ble Court on the date
+already fixed i.e. 24.01.2025, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 9, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:34
+
+===== ORDER =====
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 912/2023 & I.A. 32424/2024
+NOVARTIS AG .....Plaintiff
+Through: Ms. Mugdha Palsule, Advocate
+Mob: 7073569007
+versus
+NOVOTAS PHARMACEUTICALS PRIVATE LIMITED
+.....Defendant
+Through: Mr. Sarthak Sharma, Advocate for D-
+1
+Mob: 9557922691
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 24.01.2025
+1. Hon’ble Judge is on leave today.
+2. Re-notify on 7th April, 2025.
+BY ORDER
+COURT MASTER
+JANUARY 24, 2025
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:33
+
+===== ORDER =====
+
+$~34
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 912/2023, I.A. 25686/2023-Stay
+NOVARTIS AG .....Plaintiff
+Through: Ms. Mugdha Palsule, Adv. through
+VC.
+versus
+NOVOTAS PHARMACEUTICALS PRIVATE LIMITED AND
+ANR .....Defendants
+Through: Ms. Kangan Roda and Mr. Sarthak
+Sharma, Advs. for D-1.
+Mr. Ashim Shridhar, Ms. Niyati
+Patwardhan and Ms. Radhika
+Gupta, Advs. for D-2.
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 07.04.2025
+I.A. 32424/2024-O 39 R 2A, I.A. 47805/2024-O 39 R 2A
+1. Learned counsel for the parties, in compliance of order dated
+10.12.2024 (paragraph 14), submit that the total quantum to be recovered
+on behalf of the plaintiff is, as on date, Rs.8,66,25,000/-.
+2. Learned counsel for defendant No. 2 submits that since defendant
+No. 2 is a manufacturer and has no intentions to dealing in/
+manufacturing/ offering/ selling any of its services, which are similar to
+the plaintiff’s trademark(s). He seeks and is granted four weeks for filing
+an appropriate affidavit undertaking qua the aforesaid.
+3. Re-notify for arguments on 07.07.2025.
+SAURABH BANERJEE, J.
+APRIL 7, 2025/R
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:33
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 912/2023, I.A. 25686/2023-Stay, I.A. 32424/2024-O
+39 R 2A, I.A. 47805/2024-O 39 R 2A
+NOVARTIS AG .....Plaintiff
+Through: Ms. Ekta Sarin, Mr. Sumit Wadhwa
+and Mr. Mugdha Palsule, Advs.
+versus
+NOVOTAS PHARMACEUTICALS PRIVATE LIMITED AND
+ANR .....Defendants
+Through: Ms. Kangan Roda and Mr. Sarthak
+Sharma, Advs. for D-1
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 07.07.2025
+1. Though, the learned counsel for the defendant no.2 on the last date
+of hearing had made categoric statement qua its intent in dealing/
+manufacturing/ offering/ selling any of its services, which are similar to
+the plaintiff’s trademark, none is present on behalf of the defendant no.2.
+2. Today, learned counsel for the defendant no.1 also submits that the
+defendant no.1 was under a bona fide wrong belief, which led to usage of
+the trademark ‘NOVOTAS’ and despite the order of
+injunction dated 20.12.2023 passed by this Court. Moreover, she submits
+that the defendant no.1 has already started taking appropriate steps in
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:32
+giving up the said trademark ‘NOVOTAS’ and ,
+particularly, since the defendant no.1 has no intentions of using and/ or
+continue to use the same.
+3. As such, learned counsel for the defendant no.1 submits that the
+said defendant no.1 is in fact willing to suffer a decree in terms thereof as
+well. For this, learned counsel for the defendant no.1 seeks, and is granted,
+two weeks for filing an affidavit in terms thereof as also to bring any
+record any other pleadings/ averments to that effect.
+4. Learned counsel for the plaintiff on the other hand submits that she
+will seek appropriate instructions qua the aforesaid as also qua the relief(s)
+sought in the present proceedings.
+5. At this stage, learned counsel for defendant no.1 submits that she
+will revert with appropriate instructions qua deposit of a substantial sum
+of the sales made by the defendant no.1 from 20.12.2023 till the filing of
+affidavit vide diary no. 6273959 before this Court, since there was,
+admittedly, a clear violation of the order dated 20.12.2023 of this Court by
+the defendant no.1.
+6. Since the same will be adjudicated upon on the next date of hearing,
+i.e. 06.08.2025, one of the directors of the defendant no.1 is directed to
+remain present virtually then.
+SAURABH BANERJEE, J.
+JULY 07, 2025/Ab
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:32
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 912/2023, I.A. 25686/2023, I.A. 32424/2024 & I.A.
+47805/2024
+NOVARTIS AG .....Plaintiff
+Through: Ms. Ekta Sarin, Mr. Sumit Wadhwa
+and Ms. Mugdha, Advocates.
+versus
+NOVOTAS PHARMACEUTICALS PRIVATE LIMITED
+AND ANR .....Defendants
+Through: Ms. Kangan Roda, Ms. Apoorva
+Sharma and Mr. Tanishq Sharma,
+Advocates for D1 along with Ms.
+Ruby Singh Kahar, Director of D1.
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 06.08.2025
+1. The learned Counsel for Defendant No. 1 submits that an Affidavit of
+Compliance, as directed vide Order dated 07.07.2025, has been filed,
+however, it is noted that the same is returned under objection.
+2. The learned Counsel for Defendant No. 1 shall take steps to remove
+the objections and the Registry is directed to place the said Affidavit on
+record, irrespective of the delay in filing of the same. The delay, if any, in
+filing the said Affidavit is condoned.
+3. The learned Counsel for Defendant No. 1 submits that the Director of
+Defendant No. 1 is virtually present. His presence is noted and dispensed
+with on the next date of hearing.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:32
+4. List for further proceedings on 07.11.2025.
+TEJAS KARIA, J
+AUGUST 6, 2025/sms
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:32
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 912/2023
+NOVARTIS AG
+.....Plaintiff
+Through: Ms. Mugdha Palsule (VC),
+Advocate
+versus
+NOVOTAS PHARMACEUTICALS PRIVATE LIMITED
+AND ANR
+.....Defendant
+Through: Ms. Kangan Roda, Mr. Sarthak
+Sharma (VC), Advocates for D-1
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 11.08.2025
+I.A. No. 19510/2025 for condonation of delay of 9 days in
+filing the affidavit of compliance on behalf of defendant no. 1.
+1. Ld. Counsel for the appellant submits that present
+application has become infructuous as the delay in filing the
+affidavit of compliance has been condoned by the Hon’ble Court
+vide order dated 06.08.2024.
+2. In view of the submissions, present IA stands disposed off
+being infructuous.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 11, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:31
+
+===== ORDER =====
+
+$~230
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 912/2023
+NOVARTIS AG
+.....Plaintiff
+Through: Ms. Mugdha Palsule, Adv.
+versus
+NOVOTAS PHARMACEUTICALS PRIVATE LIMITED AND `
+ANR
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the defendant when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:30
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 912/2023, I.A. 25686/2023, I.A. 32424/2024 & I.A.
+47805/2024
+NOVARTIS AG .....Plaintiff
+Through: Ms. Ekta Sarin, Mr. Rahul Chaudhry,
+Mr. Sumit Wadhwa and Ms. Mugdha
+Palsule, Advocates.
+versus
+NOVOTAS PHARMACEUTICALS PRIVATE LIMITED AND
+ANR .....Defendants
+Through: Ms. Kangan Roda and Mr. Sarthak
+Sharma, Advocates for D-1.
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 07.11.2025
+1. Pursuant to the order dated 06.08.2025, Defendant No. 1 has placed
+on record the Affidavit of Compliance dated 30.07.2025. In the said
+Affidavit, Defendant No. 1 has undertaken not to function in the market
+under any Mark which is remotely similar to the Plaintiff’s Trade Mark
+‘NOVARTIS’. Defendant No. 1 further recognizes and acknowledges the
+Plaintiff’s Trade Mark ‘NOVARTIS’.
+2. The learned Counsel for Defendant No. 1 submits that Defendant No.
+1 has also filed another Affidavit of Compliance dated 24.12.2024, whereby,
+Defendant No. 1 has provided the sales figures from 20.12.2023 till the date
+of filing of the Affidavit i.e., 24.12.2024.
+3. As per the said sales figures, the total sales for the said period were of
+₹66,24,010/- and the total expenses were ₹52,15,812/-. Accordingly, as per
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:30
+Defendant No. 1, the profit from the sales by Defendant No. 1 by using the
+Mark ‘NOVOTAS / ’ was ₹3,96,069/-.
+4. The learned Counsel for Defendant No. 1, on instructions, submits
+that Defendant No. 1 is ready to pay the said amount of profit to the Plaintiff
+so that the Suit can be decreed in terms of the prayers sought by the
+Plaintiff.
+5. The learned Counsel for the Plaintiff, however, does not agree with
+the said suggestion and seeks time to file Reply to this Affidavit of
+Compliance dated 24.12.2024 stating the correct profit, which Defendant
+No. 1 would have earned by making the sales of ₹66,24,010/-.
+6. Let the Reply to this Affidavit of Compliance dated 24.12.2024 be
+filed within a period of four weeks.
+7. The learned Counsel for Defendant No. 1 requests for an opportunity
+to file the Rejoinder to the Reply to be filed by the Plaintiff.
+8. Accordingly, Defendant No. 1 is at liberty to file Rejoinder to the
+Reply to be filed by the Plaintiff within a period of two weeks after filing of
+the Reply.
+9. List on 16.02.2026.
+TEJAS KARIA, J
+NOVEMBER 7, 2025
+ap
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:30

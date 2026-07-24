@@ -1,0 +1,1049 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_843_2023
+case_status: PENDING
+n_orders: 23
+
+$~40
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 843/2023 & I.A. 23362/2023, I.A. 23363/2023,
+I.A. 23364/2023, I.A. 23365/2023
+UNDER ARMOUR, INC. ..... Plaintiff
+Through: Mr. Rishi Bansal and Mr.
+Mankaran Singh, Advs.
+versus
+ANISH AGARWAL & ANR. ..... Defendants
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE C. HARI SHANKAR
+O R D E R
+% 23.11.2023
+CS(COMM) 843/2023
+1. The AERO ARMOUR and AERO ARMR word marks and the
+, , and
+marks of the defendants, submits Mr. Rishi Bansal,
+infringe the UNDER ARMOUR, UNDR ARMR, ,
+, and
+registered marks of the plaintiff.
+2. Predicated on this assertion, the plaintiff has instituted the
+present suit, seeking a permanent injunction against the defendants
+CS(COMM) 843/2023 Page 1 of 4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:45
+from using the impugned marks, apart from delivery-up, rendition of
+accounts and costs and damages.
+3. Let the plaint be registered as a suit.
+4. Issue summons in the suit. Summons be served on the
+defendants by all modes.
+5. Written statement, accompanied by affidavit of
+admission/denial of the documents filed by the plaintiff be filed within
+30 days with advance copy to learned Counsel for the plaintiff who
+may file replication thereto, accompanied by affidavit of
+admission/denial of the documents filed by the defendants within 30
+days thereof.
+6. List before the learned Joint Registrar (Judicial) for completion
+of pleadings, admission and denial of the documents and marking of
+exhibits on 24 January 2024, whereafter the matter would be placed
+before the Court for case management hearing and further
+proceedings.
+I.A. 23362/2023 (under Order XXXIX Rules 1 and 2 of the CPC)
+7. This is an application by the plaintiff seeking interlocutory
+injunctive reliefs.
+8. It is admitted in para 82 of the plaint that the cause of action in
+this case arose in October 2022 when the plaintiff came to know of the
+infringing activities of the defendants.
+CS(COMM) 843/2023 Page 2 of 4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:45
+9. The present suit has been filed more than a year thereafter.
+10. As such, following the dictum laid down by the Supreme Court
+in para 9 of the decision in Wander Ltd. v. Antox India P. Ltd.1, I am
+of the opinion that the defendants are entitled to at least one
+opportunity to respond to this application before any orders are passed
+thereon.
+11. Accordingly, issue notice on this application.
+12. Notice be served on the defendants by all modes.
+13. Reply, if any, be filed within four weeks with an advance copy
+to learned Counsel for the plaintiff who may file rejoinder thereto, if
+any, within four weeks thereof.
+14. Re-notify this application before the Court on 5 February 2024.
+I.A. 23363/2023 (under Order XI Rule 1(4) of the CPC)
+15. This is an application by the plaintiff seeking permission to file
+additional documents.
+16. The plaintiff is at liberty to place additional documents on
+record in accordance with Order XI Rule 1(4) of the CPC as amended
+by the Commercial Courts Act, 2015 within 30 days from today.
+1 1990 Supp SCC 727
+CS(COMM) 843/2023 Page 3 of 4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:45
+17. The application stands disposed of accordingly.
+I.A. 23364/2023 (under Section 151 of the CPC)
+18. This is an application for permission to file original copies of
+the documents.
+19. The plaintiff is at liberty to file original documents of any
+illegible documents on which it seeks to place reliance within four
+weeks from today.
+20. The application stands disposed of accordingly.
+I.A. 23365/2023 (under Section 12A of the Commercial Courts
+Act)
+21. This is an application for exemption from the requirement of
+pre-institution mediation.
+22. Inasmuch as the court is not passing any ex-parte orders, this
+application is disposed of.
+C. HARI SHANKAR, J.
+NOVEMBER 23, 2023
+dsn
+Click here to check corrigendum, if any
+CS(COMM) 843/2023 Page 4 of 4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:45
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 843/2023
+UNDER ARMOUR, INC.
+..... Plaintiff
+Through: Mr. Mankaran Singh, Adv.
+through VC.
+versus
+ANISH AGARWAL & ANR.
+..... Defendant
+Through: Mr. Samik Mukherjee, Adv.
+for D-1 & 2.
+(M-7585965845)
+(del.lit@majumdarip.com)
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 24.01.2024
+Learned P.O is on half day leave today.
+Put up the matter on 02.02.2024 for purpose already fixed.
+Reader a/w
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 24, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:44
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 843/2023
+UNDER ARMOUR, INC.
+..... Plaintiff
+Through: Mr. Mankaran Singh, Adv.
+versus
+ANISH AGARWAL & ANR.
+..... Defendant
+Through: Mr. Samik Mukherjee and
+Mr. Bal Krishnan Singh,
+Advs.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 02.02.2024
+The counsel for the defendants states that he had received
+the summons on 16.01.2024. The defendants shall now file their
+written statements as per law, whereafter the replications be then
+filed in accordance with law.
+After the pleadings are completed, the parties shall then file
+the physical copies of their respective documents, if not already
+filed and the joint schedule of the documents.
+List the matter for admission-denial and marking of exhibits
+on 26.04.2024.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 2, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:44
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 843/2023
+UNDER ARMOUR, INC. ..... Plaintiff
+Through: Mr. Rishi Bansal & Mr. Harkaran
+Singh, Advs.
+versus
+ANISH AGARWAL & ANR. ..... Defendants
+Through: Mr. Samik Mukherjee and
+Mr. Bal Krishnan Singh, Advs.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 05.02.2024
+I.A. 23362/2023 (under Order XXXIX Rule 1 & 2 CPC)
+1. This matter is listed for proceedings in this application filed by the
+plaintiff.
+2. This Court vide order dated 2nd February, 2024 had permitted the
+plaintiff to serve the defendant.
+3. Counsel for the defendants have entered appearance and have also filed
+reply qua this application. However, the counsel pleads that he is led by
+Senior Counsel Mr. Raj Shekhar Rao who is indisposed today and therefore,
+requests for an accommodation.
+4. Accordingly, re-notify on 6th March, 2024.
+ANISH DAYAL, J
+FEBRUARY 5, 2024/sm /ig
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:43
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 843/2023, I.A. 23362/2023 & I.A. 5383/2024
+UNDER ARMOUR, INC. ..... Plaintiff
+Through: Mr. Rishi Bansal, Mr. Mankaran Singh
+and Mr. Deepak Srivastava,
+Advocates.
+versus
+ANISH AGARWAL & ANR. ..... Defendants
+Through: Mr. Rajshekhar Rao, Sr. Advocate
+(through VC) alongwith Mr. Samik
+Mukherjee, Mr. Manosij Mukherjee
+and Mr. Mehrunissa Anand Jaitley,
+Advocates.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 06.03.2024
+1. Arguments have been addressed in support of application under Order
+XXXIX Rules 1 & 2 of CPC by the plaintiff.
+2. Part submissions have been made by Mr. Rajshekhar Rao, counsel for
+the defendants, through video conferencing. Since he is indisposed, he wishes
+to complete his arguments in Court.
+3. Accordingly, at his request, list on 12th March, 2024.
+4. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+MARCH 6, 2024/kct
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:42
+
+===== ORDER =====
+
+$~26
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 843/2023, I.A. 23362/2023 & I.A. 5383/2024
+UNDER ARMOUR, INC. ..... Plaintiff
+Through: Mr. Rishi Bansal, Mr. Mankaran
+Singh and Mr. Deepak Srivastava,
+Advocates.
+versus
+ANISH AGARWAL & ANR. ..... Defendants
+Through: Mr. Rajshekhar Rao, Sr. Advocate
+(through VC) alongwith Mr. Samik
+Mukherjee, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 12.03.2024
+1. Re-notify on 1st April, 2024.
+2. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+MARCH 12, 2024/sm
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:42
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 843/2023, I.A. 23362/2023 & I.A. 5383/2024
+UNDER ARMOUR, INC. ..... Plaintiff
+Through: Mr. Rishi Bansal, Mr. Mankaran Singh
+and Mr. Rishav Gupta, Advocates.
+versus
+ANISH AGARWAL & ANR. ..... Defendants
+Through: Mr. Rajshekhar Rao, Sr. Advocate
+alongwith Mr. Samik Mukherjee, Mr.
+Manosij Mukherjee, Ms. Meherunissa
+Anand Jaitley and Mr. Rajarshi Roy,
+Advocates.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 01.04.2024
+I.A. 5383/2024 (seeking to place additional documents on record)
+1. This application has been filed under Order XI Rule 1(12) of the
+Commercial Courts Act, 2016 read with Section 151 of Code of Civil
+Procedure, 1908 (“CPC”), by the defendants for filing additional documents.
+2. The same is not objected to by the plaintiff.
+3. Accordingly, the documents are taken on record. These documents
+have been filed in support of arguments on application under Order XXXIX
+Rules 1 & 2 of CPC.
+4. Application is disposed of accordingly.
+I.A. 23362/2023 (under Order XXXIX Rules 1 & 2, CPC)
+1. This application has been filed under Order XXXIX Rules 1 & 2 of
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:40
+CPC by the plaintiff.
+2. Arguments heard.
+3. Order reserved.
+4. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+APRIL 1, 2024/
+kct
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:40
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 843/2023
+UNDER ARMOUR, INC. .... Plaintiff
+Through: Mr. Mankaran Singh, Advocate
+versus
+ANISH AGARWAL & ANR. ..... Defendant
+Through: Mr. Samik Mukherjee, Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 26.04.2024
+I.A. No. 9254/2024 filed by the defendants to condone the
+delay of 47 days in filing the written statement.
+Issue notice. Notice accepted by ld. Counsel for the
+plaintiff.
+Ld. Counsel for the plaintiff submits that he has no
+objection if the application is allowed subject to imposition of a
+cost.
+For the reasons stated in the application, application is
+allowed subject to cost of Rs.500/-, to be deposited with Delhi
+High Court Bar Clerk’s Association, Delhi High Court. Delay
+stands condoned. Written statement is taken on record. Cost be
+paid within two weeks.
+IA stands disposed off.
+CS(COMM) 843/2023
+Replication be filed within the period permissible, as
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:40
+worked out from today.
+Put up for completion of pleadings on 08.08.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 26, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:40
+
+===== ORDER =====
+
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+% Reserved on : 1st April, 2024
+Pronounced on : 29th May, 2024
++ I.A. 23362/2023 in CS(COMM) 843/2023
+UNDER ARMOUR, INC. ..... Plaintiff
+Through: Mr. Rishi Bansal, Mr. Mankaran Singh
+and Mr. Rishav Gupta, Advocates.
+versus
+ANISH AGARWAL & ANR. ..... Defendants
+Through: Mr. Rajshekhar Rao, Sr. Advocate
+alongwith Mr. Samik Mukherjee, Mr.
+Manosij Mukherjee, Ms. Meherunissa
+Anand Jaitley and Mr. Rajarshi Roy,
+Advocates.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+J U D G M E N T
+%
+I.A. 23362/2023 (Application under Order XXXIX Rules 1 & 2, CPC)
+1. This application has been filed by the plaintiff under Order 39 Rule 1&2
+Code of Civil Procedure, 1908 (hereinafter referred to as “CPC”) as part of the
+suit filed inter alia under Sections 134 and 135 of the Trade Marks Act 1999
+(hereinafter referred to as “the Act”) seeking an injunction restraining the
+defendants and all those acting for, or on their behalf, from selling,
+manufacturing, marketing and dealing in any manner with the wordmark
+“AERO ARMOUR” and / or “AERO ARMR” and logos
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 1/65
+or any other trademarks/ labels/ tradename/ domain name which may be
+identical with and/ or deceptively similar to trademarks of the plaintiff, and
+other attendant relief.
+2. While summons were issued in the suit on 23rd November 2023, when
+notice of this application was also issued, ex parte ad interim injunction was
+not granted at that stage. Subsequently, pleadings were completed in the
+application and counsels for the parties placed their respective submissions.
+Factual Background
+3. The case of the plaintiff essentially arises from their proprietorship in the
+registered trademark “UNDER ARMOUR” and the device mark
+both registered inter alia under class 25. Plaintiff claims to
+have been founded in the year 1996, by a young 23-year-old football player Mr.
+Kevin Plank, and is primarily engaged in the business of manufacture,
+distribution and sale of variety of goods including casual apparel, sports apparel
+and other related products. The brand ‘UNDER ARMOUR’ was founded by
+Mr. Plank, who decided to commence business from Washington D.C. The
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 2/65
+unique selling proposition (hereinafter referred to as “USP”) of Mr. Plank was
+to make a T-shirt using moisture - wicking synthetic fabric to keep athletes cool,
+dry, and light. Subsequently over the years, UNDER ARMOUR started gaining
+reputation in America and later worldwide. In 2004, plaintiff filed its first
+trademark application in India for the mark under class 25.
+In 2017, UNDER ARMOUR officially entered Indian market through Amazon
+Fashion, and in 2019 launched its first retail store at DLF Promenade Mall in
+Vasant Kunj, Delhi. As of 2021, plaintiff claims to have more than 23 stores of
+UNDER ARMOUR in 16 cities, with plans to expand further, along with a
+strong online presence. The tabulation of registrations in UNDER ARMOUR
+family of marks has been provided by plaintiff as under:
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 3/65
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 4/65
+4. It is an admitted position that plaintiff never applied for registration of
+just the word “ARMOUR” in India, however, plaintiff has registrations in
+trademark / labels inter alia “ARMOUR” in other jurisdictions in the world
+which have been tabulated by the plaintiff as under:
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 5/65
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 6/65
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 7/65
+5. It is claimed that ARMOUR is an essential, dominant and distinguishing
+feature of plaintiff’s trademarks / labels and has been granted registration
+outside India, in isolation and separate from registrations of “UNDER
+ARMOUR”. Plaintiff also claims registrations in various “ARMOUR”
+formative marks such as “ARMOURBLOCK”, “ARMOURVENT”,
+“ARMOURBITE”, “ARMOURFLEECE”, etc.
+6. Plaintiff’s grievance is against defendant no.1 who is engaged in business
+of manufacture and sale of identical goods i.e. clothing and footwear using the
+marks
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 8/65
+(hereinafter referred to as “impugned marks”). Defendant no. 2 is the company
+where defendant no.1 is the Director, and has adopted the mark “AERO
+ARMOUR” as part of their trade name.
+Submissions on behalf of the plaintiff
+7. Counsel for the plaintiff therefore contends that not only the impugned
+marks are an exact replica of plaintiff’s marks and similar in terms of overall
+get-up, structure and representation, but also defendants’ marks are written in
+same manner, in same font, as further depicted under:
+Plaintiff’s mark Respondent’s mark
+8. Plaintiff came to know about defendant no.1 in the month of October,
+2022, when defendants’ applied for registration of the mark “AERO
+ARMOUR” under class 25, under application no. 5398267, which was
+subsequently opposed by the plaintiff. A counter statement was filed by
+defendant to the notice of opposition by plaintiff. In the said counter statement
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 9/65
+defendant claimed the marks to be dissimilar. Defendants are also operating a
+domain name/website “www.aeroarmour.store” on which their goods are
+available for sale. Some illustrative screenshots of defendants’ impugned goods
+are extracted as under:
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 10/65
+9. Counsel for the plaintiff contends that it was a dishonest adoption by
+defendants which was evident from inter alia the following aspects:
+9.1. Firstly, that the manner in which the marks have been used on some of
+the products was engineered to cause confusion amongst minds of consumers.
+Representative comparison of the same is extracted as under:
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 11/65
+9.2. Secondly, defendant also used a shortform “ARMR” as part of “AERO
+ARMR” which is evident from pictures above. This, it was contended, was a
+peculiar and significant aspect of use by plaintiff on its own product.
+9.3. Thirdly, as depicted above, plaintiff’s font style was copied by the
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 12/65
+defendants.
+9.4. Plaintiff’s counsel therefore submitted that - firstly, the mark “UNDER
+ARMOUR” has to be seen as a whole and defendants’ impugned marks have to
+be compared for the purposes of deceptive similarity; secondly that the said
+marks were being used for identical goods i.e. apparels and therefore the
+likelihood of confusion was evident; thirdly, the possibility of association
+would arise considering the extremely distinct reputation of plaintiff’s marks
+which includes the word “ARMOUR” and this aspect was covered under
+section 29 of the Act ; fourthly, the initial interest test for likelihood of confusion
+would be applicable as a customer with imperfect recollection, would be in a
+‘sense of wonderment’ as to whether defendants’ product are a part of plaintiff’s
+portfolio; fifthly, considering that the pricing of defendants’ products was much
+lesser than that of plaintiff’s products (e.g. Rs. 799/- as opposed to Rs.2,000/-
+for a similar product) it amounted to dilution of plaintiff’s brand; sixthly, the
+plaintiff had been diligent in opposing registrations of other “ARMOUR” based
+marks in India for which details have been provided, through oppositions,
+rectifications and injunction suits; seventhly, Amritdhara principles as
+enunciated by the Hon’ble Supreme Court in Amritdhara Pharmacy v. Satya
+Deo Gupta, AIR 1963 SC 449, would apply where the Hon’ble Supreme Court
+had stated that the overall impression is the critical factor and rejected the plea
+of the opposing party that plaintiff was attempting to monopolise “DHARA” ;
+eighthly, that the anti-dissection rule which is applied to composite marks is
+not antithetical to the dominant mark rule as was stated by Division Bench of
+this Court in South India Beverages Pvt. Ltd. v. General Mills
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 13/65
+Marketing, 2014 SCC OnLine Del 1953; ninthly, the word “UNDER
+ARMOUR” is a coined word and was arbitrarily adopted with respect to a
+product and is therefore entitled to a high degree of protection; tenthly, balance
+of convenience was in favour of the plaintiff since plaintiff was a 2004
+registrant, while defendants was January, 2022 adopted and applied under on
+‘proposed to be used’ basis.
+Submissions on behalf of the defendant
+10. Mr. Rajshekhar Rao, Senior Counsel for the defendant, refuted the
+submissions of plaintiff’s counsel inter alia on the following grounds:
+10.1. Trademark registrations of plaintiff in India, basis which plaintiff rests its
+case, is of “UNDER ARMOUR” (word and device). There is no registration in
+India of the word “ARMOUR”, despite that plaintiff had applied for registration
+in other countries and has obtained registrations, as evident from the table
+above. Therefore, the plaintiff doesn’t have any dominance or proprietorship
+over the word “ARMOUR”.
+10.2. To the application for registration by plaintiff in trademark “UNDER
+ARMOUR”, examination report was issued by Trademark Registry on 19th
+August, 2020 citing several marks of “ARMOUR”. In the reply filed by the
+plaintiff to examination report at para 3, it was submitted that cited marks were
+visually and structurally different form the plaintiff’s trademark “UNDER
+ARMOUR” when viewed as a whole. Reliance was also placed on Cadila
+Health Care Limited v. Cadila Pharmaceuticals Limited, (2001) 5 SC 243,
+decision of the Hon’ble Supreme Court stating that marks must be compared as
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 14/65
+a whole. Thus, it was contended that the plaintiff had already taken a position
+that their mark had to be seen as a composite whole and therefore were estopped
+from canvassing a position contrary to the same. More importantly, the said
+reply to the examiner’s report, was not placed on record by the plaintiff as part
+of their plaint and therefore amounts to gross suppression.
+10.3. The goods of the defendant were essentially military inspired clothing
+and different from the sports and casual apparel which were being sold by the
+plaintiff under their brand. It was claimed that the mark was honestly adopted
+by defendant in the context that defendant No.1 was an aeronautical pilot who
+had started sole proprietorship in the year 2020 under the name “The
+Accessories” and had received a UDYAM registration certificate. Later, by the
+end of 2021, he realised that there was a huge market for apparel based on theme
+of aviation, army, defence forces, patriotism in India and therefore
+conceptualised the brand “AERO ARMOUR”, after ascertaining that there was
+no other trader using the said trademark. The work “AERO” was chosen from
+the word Aeronautics to signify defendant’s own background of being a
+qualified pilot, and the word “ARMOUR” was chosen for metal coverings
+historically worn in battle by soldiers, to connote the theme of defendant’s
+products which were inspired by the armed forces. He further conceived a logo
+that combines the element of shield, airplane and stripes
+indicative of military and aviation ranks, and was part of brand’s core theme.
+Defendant no.2 was a company incorporated in year 2022 with defendant no.1
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 15/65
+being one of directors of the said company.
+10.4. Defendant no.1 had filed an application for registration of its trademark
+“AERO ARMOUR” under No.5398267 in class 25 on 6th April, 2022 on
+‘proposed to be used basis’. This application is currently pending due to
+oppositions filed by the plaintiff herein, along with certain third parties.
+10.5. The defendant has registered the device mark , on a
+‘proposed to be used basis’ under No. 5398244 in Class 25, as of the date 06th
+April, 2022.
+10.6. Screenshots of nature of products which the defendants were supplying
+under their trademark are extracted as under:
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 16/65
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 17/65
+10.7. Reference was also made to website of defendants, which showed the
+manner in which these kinds of products were offered, with particular emphasis
+on T-shirts indicating a specific regiment of Indian Army.
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 18/65
+10.8. There was no reference to “UNDER ARMOUR” on the T-shirts and in
+fact, most of T-shirts even did not even have the brand “AERO ARMOUR”
+inscribed on top that could cause confusion. It was admitted that certain
+products may have had the tradename “AERO ARMOUR” on the top, but
+substantially many of these T-shirt products or apparels did not have the mark
+“AERO ARMOUR” on top even though it was being used as part of their trade
+name.
+10.9. The defendants have tabulated a list of marks containing the word
+“ARMOUR”, which were before the Trademark Registry in class 25 to assert
+the point that “ARMOUR” was a common mark which had been registered in
+that same class 25 as a word or as a device by multiple brands and therefore,
+plaintiff cannot claim distinctiveness in the same mark. The said table is as
+under:
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 19/65
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 20/65
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 21/65
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 22/65
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 23/65
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 24/65
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 25/65
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 26/65
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 27/65
+10.10. Attention was drawn to a registration provided for one of the marks
+“ARMOUR Casual Wear” where registration was given on the basis of a
+disclaimer that “this trademark shall give no right to the exclusive use of the
+word ARMOUR except as substantially shown in the label”. It was thus
+contended that the Registrar wanted to maintain purity of the Register and
+therefore had provided the said disclaimer in that no party could claim
+proprietorship of word “ARMOUR” exclusively. The said mark is extracted as
+under:
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 28/65
+10.11. The same was case with the device mark where
+disclaimer was provided as “the mark as a label should be used in whole as a
+composite mark and there is no exclusive right over the descriptive words in the
+logo”.
+10.12. The defendants had established huge reputation and goodwill in their
+products since the theme was based on patriotism and love for India. The
+tagline the brand is “WEAR YOUR VALOUR” and “WEAR YOUR PRIDE”
+thereby celebrating the idea of heroism and bravery. The website
+https://www.aeroarmour.store was launched as also promotional campaign on
+social media pages. Defendants’ products were available on various online
+shopping site such as Amazon India and Myntra. Due to this niche category of
+products, affordable pricing, high quality, defendants’ claim that their brand
+achieved wide reputation and has served more than 1,50,000 customers across
+India. It was the first fashion brand to create a collection inspired inter alia
+from Kargil War, the Operation Bright Star of the Indian Air Force. Defendants
+have supplied products to TATA Aerospace and Defence for the C-295
+program, where TATA is manufacturing aircrafts in collaboration with the
+Indian Air Force. Defendants have been participating in multiple events such
+as Aero India, Chennai Defence Expo, Indian Kargil Marathon Honour Run and
+Dubai Air Show. They have also supplied products to the Aviation Cell of IIT,
+Kharagpur and to the Indian Institute of Management. They claim to be official
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 29/65
+fashion partners of the Hollywood movie ‘Devotion’ in India and have been
+awarded the “Emerging Brands Award” by Shiprocket.
+10.13. As regards the plaintiff contention that defendants were using “ARMR”,
+in order to infuse confusion in the market and associate with plaintiff’s products,
+it is submitted in the reply that the word “ARMOUR” had been reduced to
+“ARMR” in few designs to match the letter count with “AERO”, to give a better
+symmetry and notwithstanding, the plaintiff did not have right over “ARMR”,
+it would not cause any confusion.
+10.14. As regards plaintiff’s contention that they were using the mark on the
+sleeves in a similar manner as that of plaintiff’s product, it is submitted that
+similar brand placements by various parties is a common industry practice and
+not unique to any particular brand. Some examples were presented as an
+illustration, as under:
+10.15. It was claimed that plaintiff’s and defendants’ products were based on
+different categories which is discernible from the images on their websites.
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 30/65
+While plaintiff’s products were relatable to various categories of sports such as
+running, golf, basketball; defendants’ products were relatable to categories of
+aviation, nautical, travel.
+Plaintiff’s products Defendants’ products
+10.16. There is huge difference in pricing of the products in that plaintiff’s
+products are priced around Rs. 2,000/- while average price point of defendants’
+product is around Rs.799/- per T-shirt. This significantly different pricing
+reflects different positions of brands in different segments of market, which
+would not confuse an average consumer with average intelligence and imperfect
+recollection.
+10.17. Balance of convenience is clearly in favour of defendants since while
+plaintiff came to know about impugned mark in October 2022, as per their own
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 31/65
+averments, suit was filed in November 2023 and as per principles of Wander
+Ltd. v. Antox India (P) Ltd., 1990 Supp SCC 727, inunction ought not to follow.
+10.18. It is further stated that even as regards copyright, artistic works in both
+the marks were totally different, as is evident from a comparison of device
+marks itself.
+10.19. Reliance was also placed on certain additional documents which were
+filed on 5th March, 2024, including WhatsApp chats between the defendant’s
+promoters and that of their designers. The chat shows that brand “AERO
+ARMOUR” was suggested since it was an armour for flight gear and included
+within it both aviation and armour category which was 80-85% of their
+business.
+10.20. Decision of this Court in Under Armour v. Aditya Birla Fashion dated
+20th April, 2023, 2023 : DHC : 2711 in which this Court had injuncted
+defendant’s mark “STREET ARMOUR”, was distinguished by the senior
+counsel, particularly relying on para 6.6.
+10.21. Reliance was placed on section 17 of the Trademarks Act to assert that
+exclusive right to the proprietor of a trademark is for use of trademark as a
+whole and does not confer any right in part of the said trademark.
+10.22. In support of his arguments, senior counsel for defendant relied upon
+inter alia the following decisions:
+a) Registrar of Trademarks v. Ashok Chandra Rakhit, (1955) SCC
+OnLine SC 12, in particular to para 8, for the exaggerated claims
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 32/65
+made by proprietors of trademarks, in spite of the fact that parts of
+their trademarks have been disclaimed;
+b) M/S Gufic Ltd. & Anr. v. Clinique Laboratories LLC & Anr.,
+(2010) SCC OnLine Del 2322, in particular on para 24, to point out
+that price differential between products being vast, no consumer
+would confuse one for the other;
+c) PP Jewellers Pvt. Ltd. v. PP Buildwell Pvt. Ltd., (2010) SCC OnLine
+Del 932, in particular para 23, relying on Kerly’s Law of Trademarks,
+in that if some parts of mark were common, the people who would
+know the distinguishing characteristics of the marks, would at all be
+deceived or not;
+d) Kirorimal Kashiram Marketing v. Shree Sita Chawal Udyog Mill,
+(2010) SCC OnLine Del 2933, on arbitrary adoption of marks;
+e) Vardhman Buidltech Pvt. Ltd. v. Vardhman Proprieties, (2016)
+SCC OnLine Del 4738, in particular para 8, in that the word
+Vardhman was itself of non-distinctive character and common to
+trade and therefore no exclusive right arose in favour of plaintiffs;
+f) Soothe Healthcare Pvt. Ltd. v. Dabur India Ltd., (2022) SCC
+OnLine Del 2006, in that the word ‘Super’ was widely used for
+various products and no claim cam be made in that regard;
+g) Hamdard National Foundation v. Sadar Laboratories, (2022) SCC
+OnLine Del 4523, in particular para 42, where the Court stated that
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 33/65
+principle of arbitrary adoption, as in Kirorimal Kashiram (supra),
+was worded in right terms and has to be read restrictively and in
+conformity with the anti-dissection rule;
+h) Vasundhra Jewellers Pvt. Ltd. v. Kirat Vinod Bhai Jagwani & Anr.,
+(2022) SCC OnLine Del 3370, in particular para 40, for reliance made
+on prosecution history of the plaintiff;
+i) Prasar Bharti v. Dish T.V. (India), (2024) SCC OnLine Del 1694,
+where the commonly used part of the marks ‘Dish’ was separated out
+from the distinguishing part of the whole mark;
+j) Premier SPG & WVG Mills Pvt. Ltd. v. Football Association
+Premier League Ltd., (2024) SCC OnLine Del 358, where Premier
+being part of competing marks was not to stand in the way of
+registration of a mark which have Premier only as part of it;
+k) Pidlite Industries Ltd. v. Sanjay Jain & Anr., 2024:DHC:2369,
+where the word ‘KWIK’ was held has part of the mark over the
+petitioner would not have an exclusive right thereof.
+Submissions in Rejoinder
+11. Counsel for the plaintiff responded to the submissions by senior counsel
+for defendants, and submitted as under:
+11.1. Plaintiff had been alert in opposing the marks which were deceptively
+similar to plaintiff’s marks and included the word “ARMOUR” in India. A list
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 34/65
+of such actions was adverted to and tabulated by plaintiff, as under:
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 35/65
+11.2. These actions were prior to filing the suits. In situations where trademarks
+had already been registered, defendants filed legal proceedings, as evident from
+the decision by a Coordinate Bench of this Court in Aditya Birla Fashion
+(supra).
+11.3. The issue which plaintiff was canvassing was of overall comparison of
+composite mark of plaintiff as well as defendants i.e. “UNDER ARMOUR” v.
+“AERO ARMOUR”, and the issue of “ARMOUR” being a common to the trade
+or being registered by the persons would not be relevant. In this regard reliance
+was placed on South India Beverages (supra) which held that anti-dissection
+rule is not inconsistent with dominant mark rule. The dominant part of the mark
+was “ARMOUR” since there was a full “ARMOUR” family of marks including
+“ARMOURVENT”, “ARMOURFLEECE”, “ARMOURBITE”,
+“ARMOURBLOCK” etc.
+11.4. Reliance was placed on Amritdhara principles, which were under Section
+10 the Trademarks Act, 1940, which is now succeeded by section 29 of the Act
+and includes the element of association with the earlier mark, to contend that an
+overall impression was important.
+11.5. As regards any allegations of delay by plaintiff in pursuing their right to
+the mark, it was stated that mark was applied by the defendant only on 06th April
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 36/65
+2022, was opposed on 25nd October 2022 by the plaintiff. The expansion of
+business by defendant, pursuant to that was at their own peril. Reliance was
+placed on the decision in Aditya Birla (supra).
+11.6. As regards estoppel that plaintiff has taken a position on the composite
+mark in reply to examination, reliance was placed on decision of this Court in
+AO Smith Corporation & Anr. V. Star Smith Export Pvt. Ltd. & Anr., 2024:
+DHC: 2366, to state that estoppel operates only inter se between the parties.
+11.7. As regards price difference between the products, this nature of plea of
+defendants had been rejected in South India Beverages (supra) and in any event
+it leads to dilution of plaintiff’s trademark.
+11.8. Reliance was placed on initial interest confusion test as enunciated in
+Google LLC v. DRS Logistics (P) Ltd., 2023 SCC OnLine Del 4809, since the
+goods were identical that too of casual apparel.
+11.9. Regards actions against other ARMOUR brands, it was stated that they
+had been diligent in pursuing the business which were expanding, and when it
+started to impact their businesses. There was no obligation on them to pursue
+marks simply because they were on the Trademark Register. ARMOUR use has
+become distinctive with plaintiff’s brand. In fact, they had filed rectifications as
+well including against “ARMOUR Heavy”.
+11.10. The decision in Vasundhra (supra) was distinguished on the ground that
+Vasundhra was generic whereas in this case, ARMOUR is not generic but is a
+coined word and has assumed distinctiveness in favour of the plaintiff.
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 37/65
+Moreover, the plea of the defendants that ARMOUR is not distinctive, is belied
+from the fact that they themselves have applied for registration of mark AERO
+ARMOUR and they are estopped from contending the same.
+11.11. In support of their arguments the plaintiff relied upon inter alia the
+following decisions:
+a) Pankaj Goel v. Dabur India Pvt Ltd., 2008 SCC OnLine Del 1744,
+on the aspect of dishonest adoption of a similar mark;
+b) Laxmikant v. Patel v. Chetan Bhai Shah, (2002) 3 SC 65, in that
+confusion was the real test and innocent adoption, even if considered,
+would not be defence;
+c) South India Beverages (supra), on the issue of price difference and
+consistency of rule of anti-dissection and rule of dominant mark;
+d) Raman Kwatra v. KEI Industries, 2023:DHC:0083, on the issue that
+estoppel operates inter se parties and not otherwise;
+e) Kaviraj Pandit Durga Dutt Sharma v. Navaratna Pharmaceuticals
+Laboratories, 1964 SCC OnLine SC 14, on essential features of a
+mark being adopted;
+f) Midas Hygiene Industries v. Sudhir Bhatia, (2004) 3 SCC 19, on
+issue of delay cannot preclude plaintiff from asserting their rights;
+g) Hindustan Pencils Private Limited v. India Stationery Products
+Company, AIR 1990 Del 19, on the issue of dishonest adoption.
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 38/65
+h) Swiss Bike Vertriebs Gmbh Subsidiary of Accell Group v. Reliance
+Brands Limited (RBL), 2024:DHC:1884, where phonetic similarity
+in a trademark was injuncted.
+i) AO Smith (supra) where there were two similar marks were
+compared and defendant’s mark was injuncted.
+Analysis
+12. Assessment of Confusion in Trademarks
+Through the years, courts have formulated and propounded various tests for a
+comparative assessment of trademarks in infringement/passing off cases, to
+somehow rationalize the inherent subjectivity in this assessment. Some of these
+tests have been a result of pure judicial innovation, and some have nuanced an
+already existing formulation. Though it would be impossible to give an
+exhaustive list of these tests which are scattered all over trademark
+jurisprudence, an attempt is being made under to provide an illustrative list of
+such tests, with their sources, and then to categorize the core elements of
+assessment into recognizable factors.
+13. Illustrative list of tests for assessment of trademark confusion
+- The “Pianotist Test” articulated by Parker J. in Pianotist Co. Ltd.’s
+application, 23 RPC 774 at 777, was cited with approval by the Hon’ble
+Supreme Court in Amritdhara Pharmacy v. Satya Deo Gupta, 1962 SCC
+OnLine SC 13;
+- The consumer test of “man of average intelligence with imperfect
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 39/65
+recollection” was articulated by the Hon’ble Supreme Court in Corn
+Products Refining Co. v. Shangrila Food Products Ltd., 1959 SCC
+OnLine SC 11;
+- In K.R. Chinna Krishna Chettiar v. Shri Ambal & Co., (1969) 2 SCC 131,
+the Hon’ble Supreme Court propounded in favour of phonetic similarity,;
+- The Supreme Court laid down the “added matter test” in Kaviraj Pandit
+Durga Dutt Sharma v. Navaratna Pharmaceutical Laboratories, AIR
+1965 SC 980;
+- This Court clarified the interplay between “dominant mark rule” and
+“anti-dissection” rule in South India Beverages Pvt. Ltd. v. General Mills
+Marketing, 2014 SCC OnLine Del 1953;
+- The test of “initial interest confusion” was referred to by this court in
+Baker Hughes Ltd. v. Hiroo Khushalani, 1998 SCC OnLine Del 481;
+- This Court in Shree Nath Heritage Liquor Pvt. Ltd. v. Allied Blender &
+Distillers Pvt. Ltd., 2015 SCC OnLine Del 10164, cited with approval the
+“Sleekcraft Factors”, the “Polaroid Factors” and the “DuPont
+Factors”, which form part of American trademark jurisprudence;
+- In the case of S. Syed Mohideen v. P. Sulochana Bai, (2016) 2 SCC 683,
+the Hon’ble Supreme Court held that a prior user has a superior right
+over a registered owner;
+- The Supreme Court laid down the “Cadila Principles” for determining
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 40/65
+likelihood of confusion in passing off cases, in Cadila Healthcare Ltd.
+(supra);
+- This Court in Pankaj Goel v. Dabur India Ltd., 2008 SCC OnLine Del
+1744, held that onus remains on the defendant to show significant
+business turnover, of other marks on the Register;
+- This Court in AMPM Fashions (P) Ltd. v. Akash Anil Mehta, 2021 SCC
+OnLine Del 4945, highlighted the relevance of an inter-dependent and
+holistic approach to balancing various considerations between marks and
+consequently laid down the “Global Appreciation Test”;
+- The Hon’ble Supreme Court in Midas Hygiene Industries (P) Ltd. v.
+Sudhir Bhatia, (2004) 3 SCC 90, held that mere delay in bringing an
+action is not sufficient to defeat grant of injunction;
+- This Court in Vardhman Buildtech Pvt. Ltd. v. Vardhman Properties Ltd.,
+2016 SCC OnLine Del 4738, in relation to part of a mark, held that
+registration does not confer any exclusive right;
+- The Hon’ble Supreme Court in Registrar of Trade Marks v. Ashok
+Chandra Rakhit Ltd., 1955 SCC OnLine SC 12, held that registration of
+the mark may not grant any statutory right or monopoly with respect to
+that part;
+- This Court in Kirorimal Kashiram Marketing & Agencies Pvt. Ltd. v. Sita
+Chawal Udyog Mill, 2010 SCC OnLine Del 2933, held that arbitrary
+adoption of a word mark with respect to a product with which it has no
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 41/65
+correlation is entitled to a very high degree of protection;
+- This Court in Automatic Electric Ltd. v. R.K. Dhawan & Anr., 1999 SCC
+OnLine Del, held that a party was estopped from claiming lack of
+distinctiveness, if itself had sought a proprietary claim and monopoly
+over the expression;
+- This Court in P.P. Jewellers (P) Ltd. v. P.P. Buildwell (P) Ltd., 2010 SCC
+OnLine Del 932, articulated the importance of distinguishing factors,
+where some parts of two marks are the same;
+- In the decision of Hindustan Pencils Pvt Ltd. v. India Stationery Products
+Co., 1989 SCC OnLine Del 34, this Court focussing on dishonest
+adoption, stated that an infringer adopting someone else’s mark must be
+aware of the consequences that would follow;
+- In the judgment of Neon Laboratories Ltd. v. Medical Technologies Ltd.,
+(2016) 2 SCC 672, the Hon’ble Supreme Court coined the term “first in
+the market” test;
+- This Court in Schering Corpn. v. Alkem Laboratories Ltd., 2008 SCC
+OnLine Del 760, provided that when the price difference of the products
+is of a high magnitude, the likelihood of deception` would also be greatly
+reduced;
+- In the decision of Nandhini Deluxe v. Karnataka Coop. Milk Producers
+Federation Ltd., (2018) 9 SCC 183, the Hon’ble Supreme Court held that
+the proprietor of a trademark cannot enjoy monopoly over an entire class
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 42/65
+of goods, if not using the said trademark in respect of certain goods (being
+different products) falling under the same class;
+14. Factors for assessment of trade mark confusion – The Guideposts
+These and various other tests and factors have been propounded from time to
+time by various courts. Rather than trundling through these innumerable
+parameters, factors and nuances scattered all over the jurisprudence, this Court
+has attempted to categorize them into intelligible, thematic silos. Each category
+strings together and collates factors, any or all of which may be needed for
+assessment of trademark confusion. Needless to state these factors are not
+exhaustive, but may serve as useful guideposts when embarking on a journey
+of trade mark assessment. These categories and factors are as under
+A. Strength of the marks
+A.1 Registration and user details
+A.2 History of enforcement
+A.3 Evidence of use
+A.4 Sales and advertising
+A.5 Portfolio of goods where mark is used
+A.6 Disclaimers in registrations
+A.7 Well-known marks
+A.8 Other similar/identical marks in use/ registered/common to trade
+B. Similarity between marks
+B.1 As to word and/or device
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 43/65
+B.2 As to appearance, layout, get-up, trade dress
+B.3 As to representation in commerce
+B.4 As to phonetic similarity
+B.5 As to overall impression
+B.6 As to connotation
+B.7 Extent of similarity/dissimilarity
+B.9 Anti-dissection rule
+B.9 Dominant mark rule
+B.10 Part of mark
+C. Proximity of goods and services
+C.1 Identical/ similar goods and services
+C.2 Allied/cognate goods and services
+C.3 Category of goods/services, registration classes
+C.4 Specialized goods/services e.g. pharmaceutical products
+C.5 Price point of goods/services
+C.6 Uniqueness of goods/services
+C.7 Quality of goods/services
+D. Confusion
+D.1 Nature of confusion
+D.2 Point of sale confusion
+D.3 Post purchase confusion
+D.4 Initial interest confusion
+D.5 Extent of confusion - substantial or de minimis
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 44/65
+D.6 Duration of confusion - concurrent use
+D.7 Evidence of confusion
+E. Consumer
+E.1 Socio/Economic category
+E.2 Sophistication of consumer
+E.3 Knowledge, awareness, access to information
+E.4 Market presence of goods/services
+E.5 Trade channels
+E.6 Likelihood of expansion of the business
+F. Intent
+F.1 Defendant’s good/bad faith
+F.2 Dishonest adoption
+F.3 Prior association with plaintiff
+F.4 Prior knowledge of plaintiff’s marks
+F.5 Monopolizing intent of plaintiff
+F.6 Arbitrary adoption of marks/origin of the mark
+F.7 Close competitors
+F.8 Publici juris
+G. Conduct
+G.1 Delay
+G.2 Estoppel
+G.3 TM oppositions
+I.A. 23362/2023 in CS(COMM) 843/2023 Page 45/65
+15. Having heard submissions of counsel for parties, perused the pleadings
+and documents on record, this Court is of the opinion that plaintiff is not entitled
+to injunction in terms of what it seeks, inter alia for the following reasons:
+15.1. There were some deliberations on whether the dominant part of plaintiff’s
+marks was “ARMOUR”. Counsel for plaintiff in his initial submissions had
+focussed on this aspect and pointed out to the registrations of “ARMOUR” in
+their favour in other jurisdictions of the world, though not registered in India. It
+was emphasized that “ARMOUR” had been registered since it was an essential,
+dominant and distinguishing feature of plaint
+
+[TRUNCATED — rights are established in the opening orders above]

@@ -1,0 +1,1084 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_845_2023
+case_status: DISPOSED
+n_orders: 14
+
+$~32
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 845/2023 & I.As. 23551/2023, 23552/2023,
+23553/2023, 23554/2023, 23555/2023
+G4S LIMITED & ANR. ..... Plaintiffs
+Through: Ms Swathi Sukumar, Mr. Essenese
+Obhan, Ms. Mehak Dhingra, Mr.
+Naveen Nagarjun, Advs. (M:
+9811048659)
+versus
+GRACE SECURITY AND SERVICES & ORS. ...Defendants
+Through: None.
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 28.11.2023
+1. This hearing has been done through hybrid mode.
+I.A. 23553/2023 (for exemption)
+2. This is an application seeking exemption from filing
+originals/certified/cleared/typed or translated copies of documents, left side
+margins, electronic documents, etc. Original documents shall be
+produced/filed at the time of Admission/Denial, if sought, strictly as per the
+provisions of the Commercial Courts Act and the DHC (Original Side)
+Rules, 2018.
+3. Exemption is allowed, subject to all just exceptions.
+4. Accordingly, application is disposed of.
+I.A. 23554/2023 (for additional documents)
+5. This is an application seeking leave to file additional documents under
+the Commercial Courts, Commercial Division and Commercial Appellate
+Division of High Courts Act, 2015 (hereinafter, ‘Commercial Courts Act’).
+CS(COMM)845/2023 Page1of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:56
+The Plaintiff, if it wishes to file additional documents at a later stage, shall
+do so strictly as per the provisions of the Commercial Courts Act and the
+DHC (Original Side) Rules, 2018.
+6. Application is disposed of.
+I.A. 23552/2023(for exemption)
+7. This is an application seeking exemption from filing
+certified/cleared/typed or translated copies of documents. Exemption is
+allowed, subject to all just exceptions. Application is disposed of.
+I.A.23555/2023 (u/S 12A of the Commercial Courts Act)
+8. This is an application filed by the Plaintiffs seeking exemption
+instituting pre-litigation mediation under Section 12A of the Commercial
+Courts Act. Considering the facts and circumstances of the case, the Court is
+satisfied that in terms of the judgment of the Hon’ble Supreme Court in
+Yamini Manohar v. T.K.D Keerthi, SLP(C) 023488/2023, that the present
+suit contemplates urgent interim relief.
+9. Considering the fact that, in paragraph 17 of the legal notice dated
+16th October, 2023 issued by the Plaintiff which clearly states that the
+Plaintiff was willing to refrain from initiating any legal proceedings, if the
+Defendants complied with the requisitions of the Plaintiff. However, the
+Defendants have refused to comply with the same, and thus the exemption is
+granted to the Plaintiffs.
+10. Accordingly, the application is disposed of.
+CS (COMM) 845/2023
+11. Let the plaint be registered as a suit.
+12. Issue summons to the Defendants through all modes upon filing of
+Process Fee.
+CS(COMM)845/2023 Page2of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:56
+13. The summons to the Defendants shall indicate that the written
+statement to the plaint shall be positively filed within 30 days from date of
+receipt of summons. Along with the written statement, the Defendants shall
+also file an affidavit of admission/denial of the documents of the Plaintiffs,
+without which the written statement shall not be taken on record.
+14. Liberty is given to the Plaintiffs to file a replication within 15 days of
+the receipt of the written statement(s). Along with the replication, if any,
+filed by the Plaintiffs, an affidavit of admission/denial of documents of the
+Defendants, be filed by the Plaintiffs, without which the replication shall not
+be taken on record. If any of the parties wish to seek inspection of any
+documents, the same shall be sought and given within the timelines.
+15. List before the Joint Registrar for marking of exhibits on 18th
+January, 2024. It is made clear that any party unjustifiably denying
+documents would be liable to be burdened with costs.
+16. List before Court on 3rd April, 2024.
+I.A. 23551/2023 (u/O XXXIX Rules 1 & 2 CPC)
+17. Issue notice.
+18. The Plaintiffs - G4S Limited (Plaintiff No. 1), a UK based company
+and its Indian subsidiary - G4S Secure Solutions (India) Pvt. Ltd. (Plaintiff
+No. 2) have preferred the present suit seeking a permanent injunction in
+respect of the Plaintiff’s marks ‘G4S’.
+19. The case of the Plaintiffs is that the Plaintiffs run a global, integrated
+security services business of providing security and related services to their
+customers across the world. Plaintiff No. 1- G4S Limited carries on
+business in around 90 countries with approximately 8,00,000 employees.
+The range of services offered by the Plaintiffs include security solutions,
+CS(COMM)845/2023 Page3of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:56
+facilities management, security systems, training, risk management,
+monitoring services, recruitment & placement services etc. The Plaintiffs
+started their business in India initially in the year 1988 as M/s. Group 4
+Securitas Hindustan Private Limited and thereafter in 2005, the mark ‘G4S’
+was adopted. Since 2005, the said mark has been used in respect of all
+services provided by the Plaintiffs. The ‘G4S’ mark is written in a
+distinctive form, which is set out below:
+20. The case of the Plaintiffs is that they have registered the domain
+names www.g4s.com and www.g4s.in in 1999 and 2005 respectively and
+market their business through websites hosted on the said domain names.
+The Plaintiffs also have a presence in social media platforms including
+Facebook, Instagram, Twitter, LinkedIn and YouTube. The Plaintiffs own
+various Trade Marks for the mark ‘G4S’ since 2005 in several classes,
+which were filed as multi-class applications including a word mark
+registration in Class 45. The list of all of marks registered by the Plaintiffs in
+relation to ‘G4S’ is as follows:
+Trade Mark Registration Class Registration Date of Status
+No. use
+1367702 99 June 29, June 29, Registered
+2005 2005
+1435723 99 March 30, March Registered
+2010 30,
+2006
+SECURING 2012839 45 August 23, Proposed Registered
+CS(COMM)845/2023 Page4of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:56
+YOUR 2010 to
+WORLD be used
+2754523 45 June 12, January Registered
+2014 01,
+2009
+G4S 4738401 45 November June 30, Registered
+09, 2020 2005
+21. The aggregate sales turnover of Plaintiff No. 2- G4S Secure Solutions
+(India) Pvt. Ltd. for the financial year 2021-22 was over Rs. 2000 crores,
+and expenditure on advertising for the same financial year is stated to be
+approximately INR 1.341 crores. The Plaintiffs have also received various
+awards and recognitions in the security services segment.
+22. The Plaintiffs have protected the mark ‘G4S’ against misuse by other
+entities as well. Copies of the orders protecting the mark ‘G4S’, passed in
+the suits concerning the use of the marks ‘C4S’, ‘G4EX’, ‘S4S’, ‘G2S’
+‘G1S’ and ‘G4S’ by other entities have been filed along with the plaint. The
+said mark has been protected in the following instances:
+Infringing Mark/s Matter and Suit No. Date of Order
+G4S Plc. & Anr. v. Injunction dated
+Mahavir Singh &Anr. 9th July, 2018
+[CS (COMM)
+995/2018]
+G4S Plc. & Anr. v. Mr. S. Injunction dated
+Srikumar &Anr. 12th February,
+[CS (COMM) 2021
+68/2021]
+CS(COMM)845/2023 Page5of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:56
+G4S Limited &Anr. Decree dated
+v. S4S Security 10th March, 2022
+Services & Ors.
+[CS (COMM)
+584/2021]
+G4S Plc. & Anr. v. M/S Injunction dated
+Green Seals Security 22nd November,
+Services Private Limited 2022
+[CS (COMM)
+808/2022]
+G4S Plc. & Anr. v. G4 Judgement dated
+Excellence Management 21st October,
+Security Solutions 2021
+Private Limited
+[CS (COMM)
+136/2020]
+G4S Plc. & Anr. v. Injunction dated
+Groupon 3 Security 24th January,
+Services India Private 2023
+Limited & Ors. [CS
+(COMM) 42/2023]
+G4S Limited &Anr. Injunction dated
+v. M/S G1S Secure 13th July, 2023
+Solutions Private Limited
+& Ors & Ors.
+[ CS(COMM)
+459/2023]
+G4S Limited &Anr. Injunction dated
+v. M/S G2S Facilities 14th July, 2023
+Private Limited
+& Ors. [ CS(COMM)
+464/2023]
+CS(COMM)845/2023 Page6of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:56
+G4S Limited & Anr. v. Injunction dated
+M/S G4Securex Facility 27th July, 2023
+Management Private
+“G4S” and Limited & Ors.
+[CS(COMM) 501/2023]
+23. The Plaintiffs are aggrieved by use of the mark ‘GSS’ for identical
+services by Defendant No. 1 – Grace Security & Services and its directors -
+Dheeravath Srinu Naik (Defendant No. 2) and Dheeravath Krishna Veni
+(Defendant No. 3).
+24. The grievance of the Plaintiffs in the present suit is that the
+Defendants are using an identical device/device mark/ logo for providing
+identical services i.e. security services. The comparison of the said two
+logos is set out below:
+25. It is averred that the Plaintiffs came to know about the Defendants’
+mark when an application- numbered 5747399 filed in Class 45, for
+registration of device mark ‘GSS’ was advertised in the Trade Mark Journal
+CS(COMM)845/2023 Page7of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:56
+in October, 2023.
+26. In the said application for registration of the mark, the Defendants
+sought registration on the ‘proposed to be used’ basis. The said application
+was filed on 2nd January, 2023. Plaintiffs are immediately stated to have
+filed an opposition proceeding.
+27. After filing the opposition proceedings, Plaintiffs claim to have made
+further enquiries and realised that the Defendants are providing security
+services akin to that of the Plaintiffs in Hyderabad. Additionally, Plaintiffs
+also discovered that the Defendants are also using the infringing marks on
+their website https://gracesecuritiesgroup.com and other social media and
+third-party websites for other official purposes/communications.
+28. In view of the above issue, the Plaintiffs issued a cease and desist
+legal notice dated 16th October, 2023 calling upon the Defendants to stop
+use of the impugned logo/device mark similar to Plaintiff’s mark as also the
+acronym ‘GSS’.
+29. However, in reply dated 28th October, 2023 to the legal notice issued
+by the Plaintiffs, a claim was made by the Defendants that they incorporated
+their business in 2007 and has an active official website
+https://gracesecuritiesgroup.com/ registered since 2022, and the same is
+accessible to people across the world. However, no clarity was provided as
+to when the impugned logo/device mark was adopted by the Defendants.
+30. Ms. Sukumar, ld. Counsel for the Plaintiff, submits that the Plaintiff
+has no objection in Defendants using the mark ‘Grace Security & Services’
+or the name in a full form. However, the Plaintiffs are aggrieved by use of
+the abbreviated mark ‘GSS’ and the device mark ‘GSS’, which is identical
+to Plaintiff’s registered mark ‘G4S’.
+CS(COMM)845/2023 Page8of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:56
+31. The Court has perused the Trade Mark registration application, which
+has been filed by the Defendants as also the website of the Defendants being
+www.gracesecuritiesgroup.com.
+32. Even if the Defendant company was registered in 2007 under the full
+name ‘Grace Security & Services’, there cannot be any explanation at all for
+the adoption of identical logo form, and device mark in an identical
+abbreviated form. The extraction above would show that the black, red and
+white combination and the writing style is almost indifferentiable.
+33. The stand of the Defendants in the reply dated 28th October 2023 to
+the legal notice is mostly denial of the Plaintiffs’ requisitions. It is also
+sought to argue on behalf of the Defendants that the mark of the Defendants
+is spelt and pronounced as ‘G’ + ‘S’ + ‘S’ while the mark of the Plaintiffs
+is ‘G’ + ‘4’ + ‘S’. The Defendants have further averred that there is
+difference in pronunciation and phonetics of the marks. It is stated by the
+Defendants that presence of a few common elements does not make the rival
+marks similar in any conceivable way.
+34. The above stand of the Defendants leaves no manner of doubt in the
+mind of the Court that the Defendants have not agreed to the requisitions of
+the Plaintiffs and the use of the impugned device, abbreviated name- ‘GSS’
+and the device mark is bound to cause confusion in the minds of consumers.
+Further the similarity in marks in bound to create affiliation or connection
+between services provided by the Plaintiffs and Defendants. Security
+services by their very nature involve a relationship of trust and confidence,
+which if compromised, can significantly hurt the business of the Plaintiff as
+also its customers.
+35. Accordingly, the Plaintiffs have made out a prima facie case in their
+CS(COMM)845/2023 Page9of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:56
+favour for grant of ex-parte ad interim injunction. The balance of
+convenience also lies in favour of the Plaintiffs. If an injunction is not
+passed at this stage, irreparable harm would be caused not only to the
+reputation of the Plaintiffs, but would also jeopardise the interests of general
+public who would get confused regarding the two services.
+36. In view of the above, the Defendants are restrained from using the
+abbreviated form of ‘Grace Security & Services’ i.e. ‘GSS’, as also the logo
+‘GSS’ which is similar or imitative of the Plaintiffs’ mark/ device mark/
+name, in the manner as extracted above or in any other manner. The
+Defendants are, however, free to use the full form ‘Grace Security &
+Services’.
+37. Compliance of Order XXXIX Rule 3 CPC be made within one week.
+38. Reply to this application be filed within four weeks after service of
+the present order along with the copy of the paper book.
+39. List before the Joint Registrar on 18th January, 2024.
+40. List before Court on 3rd April, 2024.
+PRATHIBA M. SINGH, J.
+NOVEMBER 28, 2023/dk/bh
+CS(COMM)845/2023 Page10of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:56
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 845/2023
+G4S LIMITED & ANR. ..... Plaintiffs
+Through: Ms. Yogita Rathor, Advocate.
+versus
+GRACE SECURITY AND SERVICES & ORS. ..... Defendants
+Through: None.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 18.01.2024
+CS(COMM) 845/2023 & IA no. 23551/2023
+1. The defendants could not be served through the ordinary mode on
+account of lack of jurisdiction of the process serving agency. However, as
+per of affidavit of service/ compliance, defendants have been served through
+courier, speed post, email as also through Whatsapp.
+2. Written statement/s be filed as per Rules with an advance copy of the
+same to be served on the plaintiff’s counsel.
+3. List again on 15.03.2024 for completion of pleadings.
+Dr. AJAY GULATI, J
+JANUARY 18, 2024/MR
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:55
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 845/2023
+G4S LIMITED & ANR. .... Plaintiff
+Through: Ms. Yogita Rathore (VC),
+Advocate
+versus
+GRACE SECURITY AND SERVICES & ORS.
+..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 15.03.2024
+CS(COMM) 845/2023 & I.A no. 23551/2023(stay).
+No appearance has been put in on behalf of the defendants
+despite being served on 01.01.2024.
+Matter is already listed before the Hon’ble Court for
+03.04.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 03.04.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 15, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:55
+
+===== ORDER =====
+
+$~33
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 845/2023 & I.A. 23551/2023
+G4S LIMITED & ANR. ..... Plaintiffs
+Through: Ms. Yogita Rathore, Advocate.
+versus
+GRACE SECURITY AND SERVICES & ORS. ..... Defendants
+Through: None.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 03.04.2024
+1. Counsel for the Plaintiffs states that, despite service, the Defendants
+have not appeared and not filed any written statement(s). Accordingly, she
+requests that the hearing be adjourned till after the overall condonable period
+of 120 days expires, so that an appropriate application for a decision under
+Order VIII Rule 10 of the Code of Civil Procedure, 1908 can be moved on
+behalf of the Plaintiffs.
+2. In view of the above, at request, re-notify on 22nd July, 2024.
+SANJEEV NARULA, J
+APRIL 3, 2024
+as
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:54
+
+===== ORDER =====
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 845/2023, I.A. 23551/2023-Stay
+G4S LIMITED & ANR. .....Plaintiffs
+Through: Mr. Essewese Obhan and Ms.
+Ayesha, Advocates
+versus
+GRACE SECURITY AND SERVICES & ORS. .....Defendants
+Through: none
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 22.07.2024
+1. Despite service, none of the defendants have either appeared or
+filed their respective written statements as noted in order dated
+18.01.2024.
+2. Therefore, right of the defendant nos.1, 2 and 3 to file written
+statements are closed and said defendants are proceeded ex-parte.
+3. Learned counsel appearing for the plaintiffs submits that she shall
+be moving an appropriate application for seeking summary judgment
+against the said defendants.
+4. Accordingly, renotify on 04.09.2024 before the Joint Registrar for
+completion of pleadings.
+SAURABH BANERJEE, J
+JULY 22, 2024/So
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:54
+
+===== ORDER =====
+
+$~2
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 845/2023
+G4S LIMITED & ANR. .....Plaintiff
+Through: Ms. Yogita Rathore (VC),
+Advocate
+versus
+GRACE SECURITY AND SERVICES & ORS.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 04.09.2024
+1. Ld. Counsel for the plaintiff submits that an application for
+seeking summary judgment against the defendants has been filed.
+However, the same is yet to be listed.
+2. Put up for further proceedings on 28.10.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 4, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:53
+
+===== ORDER =====
+
+$~36
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 845/2023
+G4S LIMITED & ANR. .....Plaintiffs
+Through: Ms. Swathi Sukumar, Mr. Essenese
+Obhan, Ms. Yogita Rathore and Mr.
+Ritik Raghuwanshi, Advocates
+versus
+GRACE SECURITY AND SERVICES & ORS. .....Defendants
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 09.09.2024
+I.A. 38759/2024-by plaintiffs seeking summary judgement
+1. By virtue of the present application, the plaintiffs seek summary
+judgment in terms of the paragraph 69 (i) and 69 (ii) of the plaint.
+2. On the plaintiffs taking requisite steps within a period of one week,
+issue notice to defendants by all permissible modes, returnable before
+learned Joint Registrar on 06.11.2024.
+3. Let a reply thereto be filed by the defendants within a period of four
+weeks. Rejoinder thereto, if any, be filed within a period of two weeks
+thereafter.
+4. Accordingly, renotify for completion of pleadings before the
+learned Joint Registrar on 06.11.2024.
+SAURABH BANERJEE, J
+SEPTEMBER 9, 2024/So
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:53
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 845/2023
+G4S LIMITED & ANR. .....Plaintiff
+Through: Ms. Yogita Rathore (VC),
+Advocate
+versus
+GRACE SECURITY AND SERVICES & ORS.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 28.10.2024
+1. Defendants no. 1, 2 & 3 have been proceeded against ex-
+parte.
+2. Ld. Counsel for the plaintiff submits that though
+defendants have been proceeded against ex-parte, Hon‟ble Court
+had directed issuance of notice in IA no. 38759/2024 which is for
+seeking a summary judgment. Ld. Counsel further requests that
+the matter be placed before the Hon‟ble Court since the
+defendants have already been proceeded against ex-parte. This
+submission shall be taken up again when the matter is listed
+before this Court on 06.11.2024.
+3. Put up for completion of pleadings on 06.11.2024, the date
+already fixed.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+OCTOBER 28, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:52
+
+===== ORDER =====
+
+$~39
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 845/2023 with I.A. 44077-44078/2024
+G4S LIMITED & ANR. .....Plaintiffs
+Through: Ms Swathi Sukumar, Mr Essenese
+Obhan, Ms Yogita Rathore, Ms
+Raceme, Mr Ritik Raghuwanshi and
+Mr Rishabh Aggarwal, Advocates.
+versus
+GRACE SECURITY AND SERVICES & ORS. .....Defendants
+Through: None.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 05.11.2024
+I.A. 44078/2024 (filed by plaintiffs for direction)
+1. This application has been filed on behalf of the plaintiffs seeking the
+following relief:
+“a. Direct PDR LTD. D/B/A PUBLICDOMAINREGISTRY.COM, a
+wholly-owned subsidiary of the Endurance International Group, Inc. to
+takedown/ deletetheDefendants’websitedisplayinginfringingcontent;”
+2. The present suit has been filed by the plaintiff seeking permanent
+injunction against the defendants restraining the defendants from using the
+plaintiffs’ trademarks “G4S/ ” in all its forms and variants or any
+other trade name or domain name deceptively similar to the plaintiffs’
+trademarks.
+3. This Court vide order dated 28th November, 2023 had passed an ex
+parte ad interim injunction in favour of the plaintiffs and against the
+defendants.
+CS(COMM)845/2023 Page1of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:51
+4. Ms Swathi Sukumar, Advocate appearing on behalf of the plaintiffs
+submits that despite the aforesaid order, the impugned marks i.e., “GSS
+/ ” continue to appear on the website of the defendants.
+5. To be noted, since the defendants did not appear in the present suit,
+the Predecessor Bench vide order dated 22nd July 2024, proceeded ex-parte
+against the defendants.
+6. Accordingly, a direction is sought to direct the Domain Name
+Registrar (DNR) of the defendants’ website
+“http://gracesecuritiesgroup.com” i.e., PDR LTD. D/B/A
+PUBLICDOMAINREGISTRY.COM, to block the pages on the website of
+the defendants which contain the impugned mark “GSS / ”.
+7. A prima facie case is made out in favour of the plaintiff. In order to
+give full effect to the interim order passed by this Court on 28th November,
+2023 and taking into account that the defendants have been proceeded ex
+parte, it would be necessary to issue the aforesaid directions to the DNR.
+8. Accordingly, PDR LTD. D/B/A PUBLICDOMAINREGISTRY.COM
+is directed to block access to the pages of the website of defendants
+displaying the impugned mark “GSS / ”.
+9. Application is disposed of.
+10. Plaintiff is permitted to serve a copy of this order to the DNR.
+I.A. 44077/2024 (filed by plaintiffs under Order XXXIX Rule 2A CPC)
+11. Renotify on 29th November, 2024.
+AMIT BANSAL, J
+NOVEMBER 5, 2024/PB
+CS(COMM)845/2023 Page2of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:51
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 845/2023
+G4S LIMITED & ANR. .....Plaintiff
+Through: Ms. Yogita Rathore (VC),
+Advocate
+versus
+GRACE SECURITY AND SERVICES & ORS.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 06.11.2024
+1. Defendant nos. 1, 2 & 3 have been proceeded against ex-
+parte.
+2. Ld. Counsel for the plaintiff submits that IA No.
+38759/2024 has been listed today for completion of pleadings.
+However, since defendants have been proceeded against ex-
+parte, the IA may be placed before the Hon’ble Court on
+29.11.2024 when another application filed by the plaintiff is
+coming up for consideration before the Hon’ble Court.
+3. In view of the above, IA No. 38759/2024 be also placed
+before the Hon’ble Court on the date already fixed i.e.
+29.11.2024, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 6, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:51
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 845/2023 with I.A. 44077/2024
+G4S LIMITED & ANR. .....Plaintiffs
+Through: Ms. Swathi Sukumar, Mr. Essenese
+Obhan, Ms. Yogita Rathore, Mr. Ritik
+Raghuwanshi and Mr. Rishubh
+Agarwal, Advs.
+versus
+GRACE SECURITY AND SERVICES & ORS. .....Defendants
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 29.11.2024
+1. Notice in the application for summary judgment bearing I.A. No.
+38759/2024 was issued on 9th September, 2024 and the defendants were
+given time to file their reply.
+2. However, no reply has been filed nor has anyone appeared on behalf
+of the defendants.
+3. To be noted, defendants have already been proceeded ex-parte vide
+order dated 22nd July, 2024.
+4. List on 23rd December, 2024.
+5. In the meanwhile, counsel for the plaintiff shall file a brief note of
+written arguments.
+AMIT BANSAL, J
+NOVEMBER 29, 2024/tp
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:50
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+% Date of Decision: 23rd December, 2024
++ CS(COMM) 845/2023 with I.A. 23551/2023, I.A. 38759/2024 and
+I.A. 44077/2024
+G4S LIMITED & ANR. .....Plaintiffs
+Through: Mr. Essenese Obhan, Ms. Anjuri
+Saxena and Ms. Urvika Aggarwal,
+Advocates.
+versus
+GRACE SECURITY AND SERVICES & ORS. .....Defendants
+Through:
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+AMIT BANSAL, J. (ORAL)
+CS(COMM) 845/2023 & I.A. 38579/2024 (Under Order XIII-A of the
+CPC seeking summary judgement against the defendants)
+1. The present suit has been filed seeking relief of permanent injunction
+restraining the defendants from infringing the trade mark of the plaintiff,
+passing off their services as those of the plaintiffs, and other ancillary
+reliefs.
+PLEADINGSINTHEPLAINT
+2. The plaintiffs, G4S Limited (plaintiff no.1) a UK-based company and
+its Indian subsidiary – G4S Security Services (India) Pvt. Ltd. (plaintiff
+no.2) (hereinafter collectively referred to as the “plaintiffs”), are the world’s
+CS(COMM)845/2023 Page1of11
+leading global, integrated company specializing in the delivery of security
+and related services to customers across the world under the marks ‘G4S’,
+‘ ’ and their variants (hereinafter collectively referred to as the
+“G4S marks”).
+3. The plaintiff no.1 carries on its business in around 90 countries with
+approximately 8,00,000 employees. The range of services rendered by the
+plaintiffs includes security solutions, facilities management, security
+systems, training, risk management, monitoring services, recruitment and
+placement services, etc. The plaintiffs started their business in India initially
+in the year 1988 as M/s. Group 4 Securitas Hindustan Private Limited and
+thereafter in 2005, the mark ‘G4S’ was adopted. Since 2005, the said mark
+has been used in respect of all services rendered by the plaintiffs.
+4. The plaintiffs have obtained multiple trade mark registrations for the
+G4S marks filed in Class 45, a list of which is provided in paragraph no. 24
+of the plaint. The list of marks registered by the Plaintiffs in relation to
+‘G4S’ is as follows:
+CS(COMM)845/2023 Page2of11
+The certificates for use in Legal Proceedings have been filed as documents
+no. 3 of the documents filed along with the plaint. All the aforesaid
+registrations remain valid and subsisting.
+5. The plaintiffs have registered the domain names www.g4s.com and
+www.g4s.in in 1999 and 2005, respectively, and market their business
+through websites hosted on the said domain names. The plaintiffs also have
+a presence on social media platforms including Facebook, Instagram,
+Twitter, LinkedIn and YouTube.
+6. The external sales turnover of plaintiff no.2 for the financial year
+2023 was over Rs. 2907 crores, and expenditure on advertising for the same
+financial year is stated to be approximately INR 1.49 crores. The plaintiffs
+have also received various awards and recognitions in the security services
+segment.
+7. In October 2023, the plaintiffs came across the advertisement of the
+trademark application filed by the defendants for the trademark ‘ ’
+bearing Application No. 5747399 in Class 45 for identical services namely,
+CS(COMM)845/2023 Page3of11
+providing security services on the ‘proposed to be used’ basis. The plaintiffs
+submit that upon further enquiry, it was found that the defendants were
+using the infringing marks on their website viz
+https://gracesecuritiesgroup.com/.
+8. The plaintiffs are aggrieved by the use of the mark ‘GSS/ ’ for
+identical services by defendant no. 1 – Grace Security & Services, a
+partnership firm and its partners, Dheeravath Srinu Naik (defendant no. 2)
+and Dheeravath Krishna Veni (defendant no.3).
+9. In view of the above, the plaintiffs issued a cease and desist notice on
+16th October, 2023 calling upon the defendants to stop using infringing
+marks/device or any other deceptively similar marks. The plaintiffs also
+subsequently initiated opposition proceedings against the defendants’
+trademark application on the same day.
+10. Defendants vide their reply dated 28th October, 2023, blatantly denied
+any knowledge of the plaintiffs’ marks and stated that the infringing mark
+‘ ’ was dissimilar to that of the plaintiffs’ ‘ ’ mark while
+claiming a prior use since 2007. However, no clarity was provided as to
+when the impugned logo/device mark was adopted by the defendants.
+11. Counsel for the plaintiff submitted that the plaintiffs have no
+objection in defendants using the mark ‘Grace Security & Services’ or the
+name in its full form. However, the plaintiffs are aggrieved by the use of the
+abbreviated mark ‘GSS’ and the device mark ‘ ’, which is identical
+to the plaintiffs’ ‘ ’.
+CS(COMM)845/2023 Page4of11
+12. Accordingly, the plaintiffs filed the present suit on 23rd November,
+2023 seeking to restrain the defendants from carrying on their infringing
+activities.
+PROCEEDINGSINTHESUIT
+13. On 28th November, 2023, this Court issued summons in the present
+suit and granted an ex-parte ad-interim injunction against the defendants
+restraining the defendants from using the abbreviated form of ‘Grace
+Security & Services’, i.e. ‘GSS’ and its logo ‘ ’. The defendants were
+however, allowed to freely use the full form for their services.
+14. The plaintiffs served the complete copy of the Order dated 28th
+November, 2023, suit paperbook and the copy of the summons upon the
+defendants through all modes by 2nd January, 2024.
+15. The plaintiffs submit that the defendants filed a letter of withdrawal
+dated 11th January, 2024 for their trademark application for ‘ ’.
+However, the defendants have continued using the infringing marks on their
+website.
+16. It has been recorded in the order dated 18th January, 2024 that the
+defendants have been served successfully by courier, speed post, Email and
+WhatsApp. Furthermore, it was noted that none of the defendants appeared,
+nor did they file their written statement.
+17. Vide Order dated 22nd July 2024, the defendants were proceeded ex-
+parte.
+18. In view of the above, the counsel for the plaintiff has filed the present
+application under Order XIII-A of the Code of Civil Procedure, 1908
+CS(COMM)845/2023 Page5of11
+(hereinafter ‘CPC’) for passing of a summary judgement.
+19. On 9th September, 2024, the application seeking summary judgement
+was listed before this Court and notice was issued to the defendants via all
+permissible modes.
+20. Despite the injunction operating against the defendants, the
+defendants continued to use the infringing marks on their website.
+Consequently, the plaintiffs filed an application seeking a direction to the
+domain name service provider (hereinafter ‘DNS provider’) of the
+defendants’ website, to take down/delete the defendants’ website displaying
+infringing content. Furthermore, an application under Order XXXIX Rule
+2A of the CPC was filed by the plaintiffs against the aforementioned wilful
+breach and disobedience of this Court’s order dated 28th November, 2023 by
+the defendants.
+21. On 5th November 2024, this Court directed the DNS provider of the
+defendants’ website to block access to the said website.
+21.1. The defendants’ website was duly taken down by the DNS provider.
+22. It has been recorded in the Order dated 29th November, 2024 that
+neither any reply has been filed to the said application, nor has any
+appearance been made on behalf of the defendants. Furthermore, the
+defendants had already been proceeded against ex-parte.
+23. The plaintiffs now seek a decree in terms of Order XIII-A of the CPC.
+ANALYSISANDFINDINGS
+24. I have heard the submissions of the counsel for the plaintiffs and also
+perused the material on record.
+25. The plaint has been duly verified and is also supported by the affidavit
+CS(COMM)845/2023 Page6of11
+of the plaintiffs. In view of the fact that no written statement has been filed
+on behalf of the defendants, all the averments made in the plaint have to be
+taken to be admitted. Further, since no affidavit of admission/denial has
+been filed on behalf of the defendants in respect of the documents filed with
+the plaint, in terms of Rule 3 of the Delhi High Court (Original Side) Rules
+2018, the same are deemed to have been admitted.
+26. Therefore, I am of the opinion that no purpose would be served by
+directing the plaintiffs to lead ex-parte evidence by filing an affidavit of
+examination in chief and the plaintiffs are entitled to a summary judgment.
+27. From the averments made in the plaint and the evidence on record, the
+plaintiffs have been able to prove that the plaintiffs are the registered
+proprietor of the ‘G4S’ marks.
+28. A comparison between the plaintiffs’ registered marks and the
+impugned marks used by the defendants is set out below:
+29. The comparison above shows that the defendants have copied the
+essential feature of the plaintiffs’ mark ‘ ’ coupled with the manner,
+style, colour combination and font thereby creating the same commercial
+impression as the Plaintiffs’ marks in the minds of the consumers. The
+defendant has merely replaced the “4” in the plaintiffs’ marks with “S” in
+their infringing mark. Here, upon examining the overall commercial
+impression of the two marks as a whole, the infringement becomes apparent.
+CS(COMM)845/2023 Page7of11
+30. The defendants have deliberately adopted the infringing marks which
+are a colourable imitation of the plaintiffs’ registered G4S marks. It is
+evident that the infringing marks are deceptively similar to that of the
+plaintiffs’ and have been adopted for identical services and are bound to
+cause confusion amongst the public.
+31. Furthermore, the visual and structural similarity between the
+defendants’ impugned marks and the plaintiffs’ registered marks is so
+blatant that an average consumer with an imperfect recollection is bound to
+confuse the two marks, even at the first instance.
+32. Based on the discussion above, a clear case of infringement of
+trademarks is made out. The defendants have taken unfair advantage of the
+reputation and goodwill of the plaintiffs’ trademark and have also deceived
+the unwary consumers of their association with the plaintiffs by dishonestly
+adopting the plaintiffs’ registered marks without any plausible explanation.
+Therefore, the plaintiffs have established a case of passing off as well.
+33. At this stage, it may be relevant to note that the defendants did not
+appear before the Court, despite service of summons on 2nd January, 2024.
+Further, no communication on behalf of the defendants have been placed on
+record in respect of the allegations of the plaintiffs in this suit.
+34. Since the defendants have failed to take any requisite steps to contest
+the present suit, despite having suffered an ad interim injunction order, it is
+evident that the defendants have no defence to put forth on merits.
+35. In Su-Kam Power Systems Ltd. v. Kunwer Sachdev, 2019 SCC
+OnLine Del 10764, this Court has observed as under:
+“90. To reiterate, the intent behind incorporating the summary judgment
+procedure in the Commercial Court Act, 2015 is to ensure disposal of
+CS(COMM)845/2023 Page8of11
+commercial disputes in a time-bound manner. In fact, the applicability of
+Order XIIIA, CPC to commercial disputes, demonstrates that the trial is
+nolonger thedefault procedure/norm.
+91. Rule 3 of Order XIIIA, CPC, as applicable to commercial disputes,
+empowers the Court to grant a summary judgement against the defendant
+where the Court considers that the defendant has no real prospects of
+successfully defending the claim and there is no other compelling reason
+why the claim should not be disposed of before recording of oral
+evidence. The expression “real” directs the Court to examine whether
+there is a “realistic” as opposed to “fanciful” prospects of success. This
+Court is of the view that the expression “no genuine issue requiring a
+trial” in Ontario Rules of Civil Procedure and “no other compelling
+reason…..for trial” in Commercial Courts Act can be read mutatis
+mutandis. Consequently, Order XIIIA, CPC would be attracted if the
+Court, while hearing such an application, can make the necessary finding
+of fact, apply the law to the facts and the same is a proportionate, more
+expeditious andless expensivemeans of achieving afair andjust result.
+92. Accordingly, unlike ordinary suits, Courts need not hold trial in
+commercial suits, even if there are disputed questions of fact as held by
+the Canadian Supreme Court in Robert Hryniak (supra), in the event, the
+Court comes to the conclusion that the defendant lacks a real prospect of
+successfullydefendingtheclaim.”
+36. The aforesaid principles are fully applicable in the facts and
+circumstances of the present case. As elaborated above, the defendants have
+no real prospect of successfully defending the claims in the present suit.
+Further, taking into account that the defendants have not set up any defence,
+there is no compelling reason for the recording of oral evidence.
+37. Therefore, this is a fit case where a summary judgment in terms of
+Order XIII-A of the CPC can be passed in favour of the plaintiffs and
+against the defendants.
+38. In view of the foregoing analysis, a decree of permanent injunction is
+passed in favour of the plaintiffs and against the defendants in terms of in
+CS(COMM)845/2023 Page9of11
+terms of prayer clauses 69(i) and (ii) of the plaint.
+39. Insofar as the reliefs of damages sought in prayer clauses 69 (iv) are
+concerned, reference may be made to the judgement in Hindustan Lever
+Ltd. v. Satish Kumar, 2012 SCC OnLine Del 1378. The relevant
+observations are set out below:
+“23. One of the reasons for granting relief of punitive damages is
+that despiteof serviceof summons/notice,thedefendant hadchosen
+not to appear before the court. It shows that the defendant is aware
+of the illegal activities otherwise, he ought to have attended the
+proceedings and give justification for the said illegal acts. Since,
+the defendant has maintained silence, therefore, the guilt of the
+defendant speaks for itself and the court, under these
+circumstances, feels that in order to avoid future infringement,
+relief of punitive damages is to be granted in favour of the
+plaintiff.”
+40. In light of the foregoing analysis, I am of the view that the defendants
+conduct not only warrants but also necessitates the imposition of both costs
+and aggravated damages. Thus, in addition to the decree passed above,
+taking into account the entire facts and circumstances presented in the case,
+the Court also awards damages amounting to INR 5,00,000/- in favour of the
+plaintiffs and against the defendants.
+41. Insofar as reliefs of costs sought in prayer clause 69 (v) is concerned,
+the plaintiffs are directed to file their bill of costs in terms of Rule 5 of
+Chapter XXIII of the Delhi High Court (Original Side) Rules, 2018 within
+four weeks.
+42. For this purpose, the representatives of the plaintiffs shall appear
+before the taxation officer on 13th February, 2025 who shall determine the
+actual costs incurred by the plaintiffs in the present litigation.
+CS(COMM)845/2023 Page10of11
+43. In view of the above, the plaintiffs do not press for the reliefs sought
+under prayer clause 69 (iii).
+44. Let the decree sheet be drawn up.
+45. All pending applications stand disposed of.
+AMIT BANSAL, J
+DECEMBER 23, 2024
+Corrected and uploaded on: 04th January, 2025
+kd
+CS(COMM)845/2023 Page11of11
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 845/2023
+G4S LIMITED & ANR. ....Plaintiff
+Through: Ms. Yogita Rathore (VC),
+Advocate
+versus
+GRACE SECURITY AND SERVICES & ORS.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 13.02.2025
+1. As per the affidavit of cost filed, the plaintiff has incurred
+a total cost of approximately Rs.13,98,271/- (Rupees thirteen lacs
+ninety eight thousand two hundred seventy one only).
+2. Let the memo of cost be prepared by the concerned officer
+of Registry on the basis of material available / bill of cost filed by
+ld. Counsel for the plaintiff and after calculation, send it back for
+the purpose of taxation, on 29.04.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 13, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:49
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 845/2023
+G4S LIMITED & ANR.
+.....Plaintiff
+Through: Ms. Yogita Rathore (VC),
+Advocate
+versus
+GRACE SECURITY AND SERVICES & ORS.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 29.04.2025
+1. The memo of cost has been prepared by the Officer on the
+basis of affidavit of cost and the material available on record.
+Same has been checked by concerned Assistant Registrar/
+Administrative Officer (Judicial). The calculation made by the
+office is accepted and cost of the suit is taxed at Rs. 13,96,924/-
+(Rupees Thirteen Lakh Ninety Six Thousand Nine Hundred and
+Twenty Four only).
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 29, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:48

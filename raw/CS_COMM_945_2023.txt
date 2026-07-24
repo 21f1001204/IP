@@ -1,0 +1,547 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_945_2023
+case_status: DISPOSED
+n_orders: 7
+
+$~10
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 945/2023
+KHADI AND VILLAGE INDUSTRIES COMMISSION
+..... Plaintiff
+Through: Ms. Shwetasree Majumdar, Ms.
+Diva Arora Menon, Ms. Devyani Nath and
+Mr. Shiv Mehrotra, Advs.
+versus
+MS. KAVERI SINGH ..... Defendant
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE C. HARI SHANKAR
+O R D E R
+% 22.12.2023
+IA 26161/2023 (Order XI Rule 1(4) of the CPC)
+1. This application seeks permission to file additional documents.
+The plaintiff is permitted to place additional documents on record in
+accordance with Order XI Rule 1(4) of the Code of Civil Procedure,
+1908 (CPC) as amended by the Commercial Courts Act within four
+weeks from today.
+2. The application stands disposed of accordingly.
+I.A. 26162/2023 (exemption)
+3. Subject to the plaintiff filing legible copies of any dim or
+illegible documents on which it may seek to place reliance within 30
+days from today, exemption is granted for the present.
+CS(COMM) 945/2023 Page 1 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:25
+4. The application is disposed of.
+CS(COMM) 945/2023
+5. The plaintiff asserts the trade marks, KHADI, and
+.
+6. On 25 September 1956, the plaintiff adopted KHADI as part of
+its trade name, corporate name and trading style. The mark has been
+in continuous use since then. It is averred in the plaint that the trade
+mark KHADI is the prominent feature of the plaintiff’s trade marks
+and is being continuously used since 1956.
+7. The plaintiff is the proprietor of the following registered trade
+marks:
+Trademark Registration Application User claim Class
+no. date
+(es)
+KHADI 2851543 27/11/2014 25/09/1956 25
+KHADI 2851552 27/11/2014 25/09/1956 35
+3864173 19/06/2018 25/09/1956 25
+3864180 19/06/2018 25/09/1956 35
+2854735 02/12/2014 31/05/2000 25
+CS(COMM) 945/2023 Page 2 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:25
+2854742 02/12/2014 31/05/2000 35
+8. In its judgment dated 26 July 2022 in CS (Comm) 133/2022 and
+order dated 26 July 2022 in CS (Comm) 244/2021, this Court has
+declared “KHADI” as a well-known trade mark within the meaning of
+Section 2(1)(zg) of the Trade Marks Act, 1999. Thereafter, on 15
+August 2022, the trade mark KHADI was included in the list of well-
+known trade marks maintained by the Trade Mark registry.
+9. The plaint also refers to various orders of this Court whereby
+injunctions have been granted against infringement of the mark
+KHADI.
+10. The plaintiff is aggrieved by the use, by the defendant, of
+KHADI as part of her trade mark as well as her id on their social
+media webpages such as Instagram, Facebook, YouTube and X as
+under:
+S. Social Media Platform Impugned User name
+No.
+1. Instagram Khadirebellion
+(@khadirebellion
+2. Facebook Khadi Rebellion-
+Victor's Choice
+3. YouTube Khadi RebellionIN
+(@khadirebellion)
+4. X (Formerly Twitter)
+Khadi Rebellion
+(@ Rebellion_VC)
+11. The plaint alleges that the defendant is operating the website
+www.khadi.rebellion.in and is selling goods on the said website under
+the mark “KHADI REBELLION”.
+CS(COMM) 945/2023 Page 3 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:25
+12. In view of the aforesaid facts, and especially as the trade mark
+KHADI stands acknowledged as a well-known trade mark, the
+plaintiff alleges that it is not open to any person to use KHADI as a
+part of its mark and that any such use amounts to infringement of the
+plaintiff’s trade mark and may also amount to passing off, as the
+public would inevitably be led to associate the use of the said mark
+with the plaintiff.
+13. In these circumstances, the plaintiff addressed a notice to the
+defendant on 28 April 2022, calling upon the defendant to cease and
+desist from using the mark KHADI in connection with the goods
+manufactured and sold by it. This was followed by a communication
+dated 11 October 2023. However, there was no response to either of
+the said communications.
+14. The plaintiff claims to have placed an order for a Kurta
+manufactured under the defendant’s mark KHADI REBELLION
+which was delivered to the plaintiff at Delhi. The photographs of the
+said Kurta along with its tag, and the invoices issued by the defendant
+in that regard, have been thus provided:
+CS(COMM) 945/2023 Page 4 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:25
+15. It is in these circumstances that the plaintiff has filed the present
+suit against the defendant seeking a restraint against the defendant, as
+well as all others acting on her behalf, from manufacturing, selling,
+offering for sale, marketing, advertising or directly or indirectly
+providing any kind of goods or services under the trade mark or trade
+name KHADI REBELLION or any name or mark which is identical
+or deceptively similar to the plaintiff’s registered trade marks, apart
+from other reliefs.
+16. Let the plaint be registered as a suit.
+17. Issue summons in the suit.
+18. Written statement, accompanied by affidavit of admission and
+denial of the documents filed by the plaintiff may be filed within 30
+days with advance copy to learned Counsel for the plaintiff who may
+file replication thereto, accompanied by affidavit of admission and
+denial of the documents filed by the defendant within 30 days thereof.
+19. List before the learned Joint Registrar (Judicial) for completion
+of the pleadings, admission and denial of documents and marking of
+exhibits on 4 March 2024, whereafter the matter would be placed
+before the Court for case management hearing and further
+proceedings.
+IA 26159/2023 (Order XXXIX Rules 1 and 2 of the CPC)
+CS(COMM) 945/2023 Page 5 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:25
+20. This is an application under Order XXXIX Rules 1 and 2 of the
+Code of Civil Procedure, 1908 (CPC), seeking interlocutory injunctive
+relief.
+21. As the plaintiff has already placed the defendant on notice by
+two cease and desist notices, and advance service was also effected on
+the defendant by e-mail, and as the plaintiff’s mark is recognized by
+this Court as a well-known trade mark, I am of the opinion that the
+plaintiff is entitled to ex parte interlocutory reliefs.
+22. In view of these facts, the failure to grant relief would also
+result in irreparable prejudice to the plaintiff. The balance of
+convenience would also be in favour of grant of relief as prayed, to
+obviate further infringement.
+23. As such, issue notice, returnable before the Court on 8 April
+2024.
+24. Reply, if any, be filed within four weeks with advance copy to
+learned Counsel for the plaintiff who may file rejoinder thereto within
+four weeks thereof.
+25. Till the next date of hearing, the defendant, as well as all others
+acting on her behalf, shall stand restrained from using the impugned
+mark KHADI REBELLION or any other mark which is confusingly
+or deceptively similar to the plaintiff’s registered trade mark KHADI.
+CS(COMM) 945/2023 Page 6 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:25
+26. The defendant is also directed to suspend the use of its domain
+name www.khadirebellion.in.
+27. Compliance with Order XXXIX Rule 3 of the CPC be effected
+within a period of one week.
+I.A.26160/2023 (Section 12A of the Commercial Courts Act, 2015)
+28. Issue notice, returnable before the Court on 8 April 2024.
+29. Reply, if any, be filed within a period of four weeks with
+advance copy to learned Counsel for the plaintiff who may file
+rejoinder thereto, if any, within four weeks thereof.
+C. HARI SHANKAR, J.
+DECEMBER 22, 2023
+dsn
+Click here to check corrigendum, if any
+CS(COMM) 945/2023 Page 7 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:25
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 945/2023
+KHADI AND VILLAGE INDUSTRIES COMMISSION
+..... Plaintiff
+Through: Ms. Devyani Nath, Advocate.
+versus
+MS. KAVERI SINGH
+..... Defendant
+Through: None.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI (DHJS)
+O R D E R
+% 04.03.2024
+Sole defendant has been served on 28.1.24. No appearance has been
+put in yet on its behalf. Let the written statement be filed as per rules.
+Put up before the Hon’ble Court on 8.4.2024 which is the date already
+scheduled, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 4, 2024/ss
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:24
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 945/2023, I.A. 26159/2023
+KHADI AND VILLAGE INDUSTRIES COMMISSION ..... Plaintiff
+Through: Ms. Divya Arora and Mr. Shiv
+Mehrotra, Advocates.
+versus
+MS. KAVERI SINGH ..... Defendant
+Through: Mr. Venkatesh Mohanran and Mr. K.S.
+Elangovan and Mr. S. Gowthaman,
+Advocates.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 08.04.2024
+I.A. 26160/2023 (Application under Section 12A of the Commercial Courts
+Act, 2015)
+1. This application has been filed under Section 12 of the Commercial
+Courts Act, 2015 read with Section 151 of Code of Civil Procedure, 1908
+(“CPC”) by plaintiff. Since the orders are already passed by this Court on 22nd
+December, 2023 passing an ex parte ad interim injunction.
+2. Accordingly, application is disposed of.
+CS(COMM) 945/2023, I.A. 26159/2023
+1. Counsel for plaintiff has handed up in the Court a set of documents
+related to the website and social media pages of the defendant showing that
+while they have changed their brand to ‘K REBELLION’ but still some pages
+are showing ‘KHADI REBELLION’ as well.
+2. Counsel for defendant will take instructions in this regard and will
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:23
+ensure that the orders of this Court are completely complied with an affidavit of
+compliance in this regard shall be filed within the next four weeks.
+3. List before the Joint Registrar on 25th April, 2024.
+4. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+APRIL 8, 2024/RK
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:23
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 945/2023
+KHADI AND VILLAGE INDUSTRIES COMMISSION
+..... Plaintiff
+Through: Mr. Shiv Mehrotra, Advocate
+versus
+MS. KAVERI SINGH ..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 25.04.2024
+CS(COMM) 945/2023, I.A. 26159/2023 (for stay):
+There is no appearance on behalf of the defendant today
+although appearance has been put in before the Hon’ble Court on
+behalf of the defendant on 08.04.2024. No affidavit of
+compliance has been filed by the defendant as was directed by
+the Hon’ble Court on 08.04.2024. No written statement has been
+filed till date although defendant was served on 28.01.2024.
+Put up for completion of pleadings on 07.08.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 25, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:23
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 945/2023
+KHADI AND VILLAGE INDUSTRIES COMMISSION
+.....Plaintiff
+Through: Mr. Shiv Mehrotra, Advocate
+versus
+MS. KAVERI SINGH ....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 07.08.2024
+CS(COMM) 945/2023, I.A. No. 26159/2023 (for stay):
+1. No written statement has been filed on behalf of the
+defendant. Maximum permissible period to file a written
+statement for the defendant has expired. Consequently, right to
+file a written statement stands closed.
+2. Defendant has also not filed reply to the IA No.
+26159/2023 which has been preferred under Order 39 Rule 1 & 2
+despite four weeks having been granted by the Hon’ble Court
+way back on 22.12.2023. Consequently, right to file reply to the
+said IA also stands closed. Further, ld. Counsel for the plaintiff
+has highlighted that defendant has also not filed a compliance
+affidavit which was required to be filed in terms of the directions
+issued on 08.04.2024 by the Hon’ble Court.
+3. In view of the above, put up before the Hon’ble Court on
+24.09.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 7, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:22
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 945/2023 & I.A. No. 26159/2023
+KHADI AND VILLAGE INDUSTRIES
+COMMISSION .....Plaintiff
+Through: Mr. Shiv Mehrotra, Advocate.
+versus
+MS. KAVERI SINGH .....Defendant
+Through: Mr. Keshav Mittal with Mr. Bhavesh
+Kr. Verma and Mr. Arpit Mittal,
+Advocates.
+(M): 9466616500
+Email: advkeshavmittal@gmail.com
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 24.09.2024
+1. Hon’ble Judge is on leave today.
+2. Re-notify on 23rd October, 2024.
+BY ORDER
+COURT MASTER
+SEPTEMBER 24, 2024
+c
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:22
+
+===== ORDER =====
+
+$~32
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 945/2023 & I.A. 26159/2023
+KHADI AND VILLAGE INDUSTRIES COMMISSION .....Plaintiff
+Through: Ms. Diva Arora, Ms. Devyani Nath,
+Mr. Shiv Mehrotra, Advocates
+(M:9650260265)
+versus
+MS. KAVERI SINGH .....Defendant
+Through: Mr. Keshav Mittal, Mr. Bhavesh Kr.
+Verma, Mr. Aayush Rao, Advocates
+(M:8527200596)
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 23.10.2024
+1. The present suit has been filed seeking permanent injunction
+restraining the defendant from using the impugned mark ‘KHADI
+REBELLION’, which is deceptively similar to the plaintiff’s registered
+mark KHADI, device marks and .
+2. When the present matter was listed for hearing on 22nd December,
+2023, this Court had passed an injunction order in favour of the plaintiff and
+against the defendant, wherein, the defendant was restrained from using the
+impugned mark ‘KHADI REBELLION’, or any other mark, which is
+confusing or deceptively similar to the plaintiff’s registered trademark
+KHADI.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:21
+3. Subsequently, a Compliance Report dated 17th September, 2024 has
+been filed on behalf of the defendant, wherein, it has been stated as follows:
+“xxx xxx xxx
+3. That it is submitted that the respondent has removed the word
+KHADI from its brand name on all social media and also suspended
+the domain name www .khadirebellion.in in compliance of the order
+dated 22.12.2023 by this Hon’ble Court. A copy of the Social Media
+Pages are attached and marked as Annexure R-1. (Pg. 3 - 11)
+4. That it is further submitted that the respondent/deponent has
+changed the brand name from 'Khadi Rebellion' to 'K Rebellion' on all
+the social media pages (i.e. Facebook, Instagram, Twitter now X) and
+has also suspended the domain name www.khadirebellion.in.
+xxx xxx xxx”
+4. Learned counsel for the defendant appearing today reiterates the fact
+that the defendant is no longer using the word KHADI, and the word
+KHADI has been removed from the brand name of the defendant on all
+social media, and has also suspended the domain name,
+www.khadirebellion.in.
+5. Learned counsel appearing for the defendant further undertakes that
+the defendant shall not use any mark, which is similar or deceptively similar
+to the mark of the plaintiff in future also.
+6. Learned counsel for the plaintiff submits that she is satisfied with the
+undertaking given by the defendant. However, she submits that in view of
+the fact that the plaintiff had to approach this court, she insists that cost may
+be granted in favour of the plaintiff.
+7. Learned counsel appearing for the defendant submits that the
+defendant has no means to pay and that he is appearing in this case pro
+bono. He further submits that any cost that shall be imposed by this Court
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:21
+would be paid by the counsel himself from his own pocket.
+8. Accordingly, the present suit is decreed in favour of the plaintiff and
+against the defendant, in terms of Paragraph 55 (i) to (iv).
+9. The defendant is also directed to intimate to the plaintiff that all the
+packaging, promotional and printing material in the possession of the
+defendant bearing the infringing mark ‘KHADI REBELLION’, has been
+destroyed.
+10. Considering the fact that the plaintiff has accepted the undertaking of
+the defendant at this stage and the suit is being closed at the nascent stage on
+the basis of the undertaking of the defendant, the Registry is directed to
+issue a certificate of refund of full court fees to the plaintiff.
+11. Decree sheet be drawn up.
+12. Accordingly, the present suit, along with pending application stands
+disposed of.
+MINI PUSHKARNA, J
+OCTOBER 23, 2024
+au
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:21

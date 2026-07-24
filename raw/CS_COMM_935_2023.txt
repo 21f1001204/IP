@@ -1,0 +1,936 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_935_2023
+case_status: PENDING
+n_orders: 17
+
+$~8
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 935/2023
+PANASONIC LIFE SOLUTIONS INDIA PVT. LTD
+..... Plaintiff
+Through: Mr. Aman Abbi, Adv.
+versus
+HARISH PLASTIC & ANR.
+..... Defendant
+Through: Mr. Shreshtha Kumar, Adv. for D-1
+Mr. S.K.S. Bhadauria, Adv. for D-2
+alongwith A.R. Mr. Santosh sharma
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 28.02.2024
+Both defs. have been served on 24.1.2023. Respective appearances
+have been put in. Let the written statements be filed as per rules.
+Ld. Counsel for the plaintiff submits that there might have to be an application
+moved for impleading addl. Defs and that he is awaiting a certified copy of
+the local commissioner’s report in this regard.
+Put up before the Hon’ble Court on 1.4.2024 which is the date already
+fixed, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 28, 2024
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:17
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 935/2023 & I.A. 26052/2023
+PANASONIC LIFE SOLUTIONS INDIA PVT. LTD ..... Plaintiff
+Through: Mr. Anuj Goyal, Adv.
+versus
+HARISH PLASTIC & ANR. ..... Defendants
+Through: Mr. Shreshtha Kumar, Adv. for D-1
+Mr. S.K.S. Bhadauria, Adv. for D-2
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 01.04.2024
+1. Pursuant to the ex parte ad interim order by this Court by order dated
+22nd December, 2023 and summons being issued, counsel appears on behalf
+of defendant no.1 (Harish Plastic) states that they are only the landlords and
+owners of the premises at Building No.28-29, Gali No.6, Friends Industrial
+Colony area and they have nothing to do with the alleged infringing material
+which was found at the premises, since part of the premises where it was
+found was rented out to one Vardhman Cables. A perusal of report of the
+Local Commissioner, appointed by this Court, at para 4 also bears out the
+same.
+2. Accordingly, counsel for the plaintiff seeks liberty to amend the memo
+of parties as regards defendant no.1, in that Harish Plastic may be deleted and
+Vardhman Cables be arrayed as defendant no.1.
+3. Counsel for defendant no.2, who appears through VC, states that they
+have already filed their written statement.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:16
+4. List before the Joint Registrar on 16th April, 2024 for further
+proceedings including application for condonation of delay.
+5. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+APRIL 1, 2024/sm
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:16
+
+===== ORDER =====
+
+$~4
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 935/2023
+PANASONIC LIFE SOLUTIONS INDIA PVT. LTD
+..... Plaintiff
+Through: Mr. Aman Abbi,
+Advocate.
+versus
+HARISH PLASTIC & ANR.
+..... Defendant
+Through: Mr. S.K.S. Bhadauria,
+Adv. for D-2(VC)
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 16.04.2024
+IA no. 8403/24 for seeking condonation of delay on behalf of
+def no. 2 in filing the written statement.
+Ld. counsel for the plaintiff accepts notice and submits that
+there is no opposition to the delay being condoned. The IA is
+therefore allowed for the reasons mentioned therein. Written
+statement is taken on record. Replication be filed within the
+period permissible, as worked out from today.
+CS (COMM) 935/2024
+Ld. counsel for the plaintiff submits that def no. 1 is not
+required to be deleted and instead Vardhman cables is to be
+impleaded as def no. 2 for which an application shall be moved
+shortly.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:16
+Written statement has been filed by def no. 1 but is under
+scrutiny as on today.
+Put up again on 30.07.2024 before this Court for further
+completion of pleadings.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 16, 2024
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:16
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 935/2023
+PANASONIC LIFE SOLUTIONS INDIA PVT. LTD
+..... Plaintiff
+Through: Mr. Aman Abbi (VC), Advocate
+versus
+HARISH PLASTIC & ANR. ..... Defendant
+Through: Mr. Saurabh Sharma, Advocate
+for D-1.
+Mr. S.K.S. Bhadauria (VC),
+Advocate for D-2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 17.05.2024
+I.A. No. 29575/2024 to implead M/s Vardhman Cables
+through its Proprietor Mr. Ankur Jain as defendant no. 3
+being a necessary and proper party to the suit.
+Issue notice to the proposed defendant. PF be filed within
+a week. Reply be filed within four weeks of receiving notice.
+Advance copy of the reply be supplied to ld. Counsel for the
+plaintiff. Rejoinder, if any be filed on receiving advance copy of
+the reply, within two weeks.
+Put up for completion of pleadings on 30.07.2024, the date
+already fixed.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 17, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:15
+
+===== ORDER =====
+
+$~4
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 935/2023
+PANASONIC LIFE SOLUTIONS INDIA PVT. LTD
+.....Plaintiff
+Through: Mr. Anuj Goyal, Advocate
+versus
+HARISH PLASTIC & ANR. .....Defendant
+Through: Ms. Deeksha Pakhiddey,
+Ms. Dolly Nair (VC), Advocates
+for D-1.
+Mr. S.K.Bhaduria (VC),
+Advocate for D-2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 30.07.2024
+I.A. No. 29575/2024 to implead M/s Vardhman Cables
+through its Proprietor Mr. Ankur Jain as defendant no. 3
+being a necessary and proper party to the suit.
+1. Ld. Counsel for the plaintiff submits that fresh opportunity
+may be granted to serve the proposed defendant no. 3. Let PF be
+filed within a week where after Registry is directed to issue
+summons through all modes.
+CS(COMM)-935/2023:
+2. Replication qua defendant no. 2 has been filed by the
+plaintiff and the same is on record. Pleadings are complete qua
+defendant no. 2.
+3. Although written statement on behalf of defendant no. 1 is
+being reflected on the Registry records, ld. Counsel for the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:15
+plaintiff has raised an objection that same could not be taken on
+record since it was filed with a delay. The concerned Registry
+Official was called who has informed that the written statement
+was passed by the Registry since they were informed that
+application for condonation of delay has been filed and is under
+scrutiny. On checking up the e-filing log, it has come to light
+that the said application which was filed under diary no.
+952917/2024 was marked as defective way back on 03.04.2024
+and since then, it has not been re-filed. In view of the above,
+defendant no. 1 is directed to get the IA listed within two weeks.
+Needless to highlight that defendant no. 1 will have to move an
+application for condonation of delay in re-filing also.
+4. Put up for completion of pleadings on 13.09.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 30, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:15
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 935/2023
+PANASONIC LIFE SOLUTIONS INDIA PVT. LTD
+.....Plaintiff
+Through:
+versus
+HARISH PLASTIC & ANR.
+.....Defendant
+Through: Mr. Shreshtha Kumar, Advocate for
+Defendant no. 1
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 20.08.2024
+I.A. No. 36763/2024 filed by Def.-1 to condone the delay of 19 days in
+filing the written statement.
+&
+I.A. No. 36764/2024 filed by Def.-1 to condone the delay of 130 days in
+filing the written statement.
+1. Issue notices to ld. Counsel for the plaintiff. Notices be issued
+through email only. PF be filed within four days. Replies be filed within two
+weeks of receiving the notices. Advance copies of the replies be supplied to
+ld. Counsel for defendant no.-1 who may file a rejoinder/s within one week
+of receiving advance copy of the replies.
+2. Re-notify for date already fixed i.e. 13.09.2024 this Court.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 20, 2024 Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:14
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 935/2023
+PANASONIC LIFE SOLUTIONS INDIA PVT. LTD
+.....Plaintiff
+Through: Mr. Aman Abbi, Mr. Anuj
+Goyal, Advocates
+Versus
+HARISH PLASTIC & ANR. .....Defendant
+Through: Mr. Shreshtha Kumar (VC),
+Advocate for D-1 and
+proposed D-3.
+Mr. Deepak Goel (VC),
+Advocate for D-2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 13.09.2024
+I.A. No. 36763/2024 filed by defendant no. 1 to condone the
+delay of 19 days in filing the written statement.
+1. Submissions heard. For the reasons stated in the IA, delay
+in filing written statement is condoned. It needs a highlight that
+the cost which has been imposed while disposing of IA No.
+36764/2024, if not paid within three weeks, will result in the
+written statement being deemed to have been taken off the
+record. Subject to the above, delay stands condoned. Written
+statement is taken on record. Replication be filed within the
+period permissible, as worked out from today. IA stands
+disposed off.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:13
+I.A. No. 36764/2024 filed by defendant no. 1 to condone the
+delay of 130 days in re-filing the written statement.
+2. Although notice to the plaintiff could not be issued through
+email as defendant no. 1 did not collect the notice which was to
+be sent through email on the present IA to ld. Counsel for the
+plaintiff, arguments have been addressed from both the sides.
+There is a delay of 130 days in re-filing the written statement.
+The written statement was initially filed on 16.03.2024.
+Thereafter, since there was a delay in filing the written statement,
+an application seeking condonation of delay was filed which was
+put under objections on 03.04.2024. Subsequent thereto, in the
+submission of ld. Counsel for defendant no. 1, steps were not
+taken to follow up with the application seeking condonation of
+delay for the reason that in the order dated 01.04.2024 it was
+observed by the Hon’ble Court that plaintiff seeks to amend the
+memo of parties by deleting defendant no. 1 and impleading the
+correct entity i.e. Vardhman Cables which had been highlighted
+by defendant no. 1.
+3. In response, ld. Counsel for the plaintiff submits that after
+01.04.2024, when the matter came up before this Court on
+16.04.2024, it was made clear on behalf of the plaintiff that
+defendant no. 1 is not to be deleted and instead, the entity pointed
+out by defendant no. 1 shall be impleaded as defendant no. 3. On
+that date, some time was sought to move an appropriate
+application in this regard. However, it needs a highlight that on
+the said date there was no appearance on behalf of defendant no.
+1. Subsequent thereto i.e. on 17.05.2024 appearance was put in
+on behalf of defendant no. 1. The re-filing of the written
+statement was subsequently carried out on 13.08.2024 i.e. after a
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:13
+delay of 130 days. The only explanation regarding this delay has
+already been highlighted above. Additionally, ld. Counsel for the
+plaintiff has also highlighted that they had also served an
+application for impleadment of proposed defendant no. 3 on ld.
+Counsel for defendant no. 1 as well. And hence it was clear to
+defendant no. 1 that defendant no. 1 was not to be deleted. The
+said IA was filed on 15.05.2024.
+4. I have carefully considered the rival submissions.
+5. Defendant no. 1 has clearly over stepped even the 120 day
+timeline, in re-filing the written statement which is the maximum
+permissible period to file a written statement initially. However,
+it is also true that the legal considerations which are relevant for
+adjudicating an application for seeking condonation of delay in
+filing the written statement are different than those while
+considering an application for seeking condonation of delay in
+re-filing. So far as the facts of the present application are
+concerned, it was clear as early as 17.05.2024 to defendant no. 1
+that defendant no. 1 was not to be deleted. Since defendant no. 1
+did not appear on 16.04.2024 but appeared on 17.05.2024, it is
+fair to assume that ld. Counsel for defendant no. 1 would have
+read the order dated 16.04.2024. Yet it took almost three months
+to file an application seeking condonation of delay in re-filing.
+As per rules, the steps for removing objections after they have
+been raised by the Registry, are to be taken within a week. Even
+assuming that defendant no. 1 was under the impression that
+defendant no. 1 was to be deleted, in view of the order passed by
+the Hon’ble Court on 01.04.2024, by 17.05.2024 that impression
+stood dispelled. Nevertheless, given the fact that defendant no. 1,
+as per the submissions made before the Hon’ble Court on
+01.04.2024, is purportedly not the entity which has infringed the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:13
+rights of plaintiff, a lenient view can be taken and the delay in re-
+filing can be condoned but subject to a stern cost. Consequently,
+application is allowed subject to cost of Rs.20,000/-, to be paid to
+the plaintiff / counsel for the plaintiff within three weeks. Delay
+in re-filing stands condoned. IA stands disposed off.
+I.A. No. 29575/2024 to implead M/s Vardhman Cables
+through its Proprietor Mr. Ankur Jain as defendant no. 3
+being a necessary and proper party to the suit.
+6. Ld. Counsel for proposed defendant no. 3 seeks time to file
+reply to the present IA. Let the reply be filed within three weeks,
+with an advance copy of the same to the opposite side. Rejoinder
+thereto, if any, be filed thereafter within two weeks of receiving
+an advance copy of the reply. Any unnecessary delay in filing
+the reply shall entail imposition of a cost.
+CS(COMM)- 935/2023:
+7. Pleadings qua D-2 are complete.
+8. Put up for completion of pleadings on 18.11.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 13, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:13
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 935/2023
+PANASONIC LIFE SOLUTIONS INDIA PVT. LTD
+.....Plaintiff
+Through: None
+versus
+HARISH PLASTIC & ANR. .....Defendant
+Through: Mr. Shreshtha Kumar (VC),
+Advocate for D-1
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 28.10.2024
+I.A. No. 43688/2024 on behalf of the defendant no. 1 for
+deletion of the name of defendant no. 1 from the array of
+parties in the matter titled "Panasonic Life Solutions India
+Pvt. Ltd. Vs Barish Plastic & Others" having CS(COMM)
+No. 935 of 2015.
+1. Issue notice to the plaintiff, to be served on the Counsel for
+the plaintiff only, through email. PF be deposited within a week.
+2. Let the reply be filed within two weeks, with an advance
+copy of the same to the opposite side. Rejoinder thereto, if any,
+be filed thereafter within a week of receiving an advance copy of
+the reply.
+3. Matter is already listed before the Hon‟ble Court for
+18.11.2024. Be placed before the Hon‟ble Court on the date
+already fixed i.e. 18.11.2024, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+OCTOBER 28, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:13
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 935/2023
+PANASONIC LIFE SOLUTIONS INDIA PVT. LTD
+.....Plaintiff
+Through: None
+versus
+HARISH PLASTIC & ANR. .....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 12.11.2024
+File has been taken up today on an office noting for
+correction / rectification of order dated 28.10.2024.
+In the order dated 28.10.2024, inadvertently, the next date
+has been mentioned as 18.11.2024 before the Hon’ble Court,
+whereas the matter is listed before this Court on 18.11.2024 as
+mentioned in order dated 13.09.2024. The error stands rectified
+accordingly.
+Put up before this Court on the date already fixed i.e.
+18.11.2024.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 12, 2024/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:12
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 935/2023
+PANASONIC LIFE SOLUTIONS INDIA PVT. LTD
+.....Plaintiff
+Through: Mr. Aman Abbi, Mr. Anuj
+Goyal, Advocates
+versus
+HARISH PLASTIC & ANR. .....Defendant
+Through: Mr. Shreshtha Kumar, Advocate
+for D-1.
+Mr. Saurabh Sharma, Advocate
+for proposed D-3.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 18.11.2024
+I.A. No. 45184/2024 filed on behalf of proposed defendant no.
+3 for condonation of delay of eight weeks in filing reply in I A
+No. 29575/2024 under order 1 Rule 10 CPC filed by the
+plaintiff.
+1. Issue notice. Notice accepted by ld. Counsel for the
+plaintiff who submits that if the delay is to be condoned, same
+should be subject to a reasonable cost.
+2. For the reasons stated in the application, application is
+allowed subject to cost of Rs. 4000/-, to be paid to the plaintiff /
+counsel for the plaintiff within three weeks failing which the
+reply shall be deemed to have been taken off the record. Delay
+stands condoned. Reply in IA No. 29575/2024 is taken on
+record. IA stands disposed off.
+I.A. No. 29575/2024 to implead M/s Vardhman Cables
+through its Proprietor Mr. Ankur Jain as defendant no. 3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:11
+being a necessary and proper party to the suit.
+3. The reply on behalf of proposed defendant no. 3 has been
+taken on record today. Let the rejoinder be filed as per the
+timeline already indicated in the order dated 17.05.2024, as
+worked out from today.
+I.A. No. 43688/2024 on behalf of defendant no. 1 for deletion of
+name of defendant no. 1 from the array of parties in the matter
+titled "Panasonic Life Solutions India Pvt. Ltd. Vs Harish Plastic
+& Others" having CS(COMM)No. 935 of 2015.
+4. Although there is a report from the Registry that notice has
+been issued on the present IA to the ld. Counsel for the plaintiff,
+there is no delivery of service report by the Registry. Ld. Counsel
+for the plaintiff however accepts notice today and prays for some
+time to file a reply. Let the reply be filed within two weeks, with
+an advance copy of the same to the opposite side. Put up for
+completion of pleadings.
+CS(COMM)-935/2023
+5. Pleadings between the plaintiff and defendant no. 2 are
+complete.
+6. Ld. Counsel for the plaintiff is requested to supply a copy
+of the plaint and the accompanying document to ld. Counsel for
+proposed defendant no. 3 on his email within a week.
+7. Cost imposed on defendant no. 1 is yet to be paid.
+8. Put up for completion of pleadings on 31.01.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 18, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:11
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 935/2023
+PANASONIC LIFE SOLUTIONS INDIA PVT. LTD
+.....Plaintiff
+Through: Mr. Aman (VC), Advocate
+Versus
+HARISH PLASTIC & ANR. .....Defendant
+Through: Mr. Shreshtha Kumar, Advocate
+for D-1.
+Mr. Deepak Goel (VC),
+Advocate for D-2.
+Mr. Saurabh Sharma, Advocate
+for proposed D-3.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 31.01.2025
+I.A. No. 29575/2024 to implead M/s Vardhman Cables
+through its Proprietor Mr. Ankur Jain as defendant no. 3
+being a necessary and proper party to the suit.
+1. Rejoinder to the reply filed on behalf of proposed
+defendant no. 3 is stated to have been filed yesterday. Same is
+not on record yet.
+I.A. No. 43688/2024 on behalf of defendant no. 1 for deletion
+of name of defendant no. 1 from the array of parties in the
+matter titled "Panasonic Life Solutions India Pvt. Ltd. Vs
+Harish Plastic & Others" having CS(COMM) No. 935 of
+2015.
+2. Reply to the present IA is stated to have been filed
+yesterday by the plaintiff. Same is not on record yet and is
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:11
+pending scrutiny. Put up again for completion of pleadings on the
+next date.
+CS(COMM)- 935/2023
+3. Pleadings between the plaintiff and defendant no. 2 are
+complete.
+4. Put up for completion of pleadings, in view of pending
+above captioned IA’s, on 16.04.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 31, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:11
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 935/2023
+PANASONIC LIFE SOLUTIONS INDIA PVT. LTD
+.....Plaintiff
+Through: Mr. Anuj Goyal, Advocate
+versus
+HARISH PLASTIC & ANR.
+.....Defendant
+Through: Mr. Shreshtha Kumar, Advocate
+for D-1.
+Mr. Saurabh Sharma, Advocate
+for proposed D-3.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 05.03.2025
+I.A. no. 5955/2025 on behalf of the plaintiff for condonation
+of delay of 58 days in filing the reply to the application under
+order 1 rule 10 CPC filed by the defendant no. 1 seeking its
+deletion.
+1. Issue notice. Notice accepted by ld. Counsel for defendant
+no. 1 who submits that if the delay is to be condoned, same
+should be subject to a reasonable cost.
+2. For the reasons stated in the application, application is
+allowed subject to cost of Rs. 2000/-, to be paid to defendant no.
+1 / counsel for defendant no. 1 within three weeks failing which
+the reply shall be deemed to have been taken off the record.
+Delay stands condoned. Reply is taken on record. IA stands
+disposed off.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:10
+I.A. no. 5956/2025 on behalf of the plaintiff for condonation
+of delay of 58 days in filing rejoinder to reply filed by
+proposed defendant no. 3 to application under Order 1 Rule
+10 CPC filed by the plaintiff.
+3. Issue notice. Notice accepted by ld. Counsel for proposed
+defendant no. 3 who submits that if the delay is to be condoned,
+same should be subject to a reasonable cost.
+4. For the reasons stated in the application, application is
+allowed subject to cost of Rs. 2500/-, to be paid to proposed
+defendant no. 3 / counsel for proposed defendant no. 3 within
+three weeks failing which the rejoinder shall be deemed to have
+been taken off the record. Delay stands condoned. Rejoinder is
+taken on record. IA stands disposed off.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 5, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:10
+
+===== ORDER =====
+
+$~2
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 935/2023
+PANASONIC LIFE SOLUTIONS INDIA PVT. LTD
+.....Plaintiff
+Through:
+versus
+HARISH PLASTIC & ANR.
+.....Defendant
+Through: Mr. Aman Abbi, Mr. Anuj Goyal
+Mr. Shreshtha Kumar for D-1.
+Mr. Saurabh Sharma for non-
+applicant/proposed def
+CORAM:
+JOINT REGISTRAR (JUDICIAL) DR. AJAY GULATI
+O R D E R
+% 16.04.2025
+Ld. Presiding officer is on leave today.
+Re-notify on 17.07.2025 for purpose fixed.
+Reader to
+Dr. AJAY GULATI,
+JOINT REGISTRAR (JUDICIAL)
+APRIL 16, 2025
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:10
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 935/2023
+PANASONIC LIFE SOLUTIONS INDIA PVT. LTD
+.....Plaintiff
+Through: Mr. Anuj Goyal (VC), Advocate
+Versus
+HARISH PLASTIC & ANR.
+.....Defendant
+Through: Mr. Shreshtha Kumar, Advocate
+for D-1.
+Mr. Saurabh Sharma, Advocate
+for proposed D-3.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 17.07.2025
+I.A. No. 29575/2024 to implead M/s Vardhman Cables
+through its Proprietor Mr. Ankur Jain as defendant no. 3
+being a necessary and proper party to the suit.
+&
+I.A. No. 43688/2024 on behalf of defendant no. 1 for deletion
+of name of defendant no. 1 from the array of parties in the
+matter titled "Panasonic Life Solutions India Pvt. Ltd. Vs
+Harish Plastic & Others" having CS(COMM) No. 935 of
+2015.
+1. Ld. Counsel for the plaintiff is appearing through VC and
+submits that he is seeking an adjournment since he wants to
+address arguments physically. Put up again for arguments on the
+next date.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:09
+CS(COMM) 935/2023
+2. Pleadings qua defendant no. 2 are complete. Replication
+has been filed on behalf of the plaintiff to the written statement of
+defendant no. 1. However, the written statement still is under
+objections. Ld. Counsel for defendant no. 1 is directed to take
+steps to bring the same on record.
+3. Put up for arguments in the aforementioned IAs on
+09.10.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 17, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:09
+
+===== ORDER =====
+
+$~241
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 935/2023
+PANASONIC LIFE SOLUTIONS INDIA PVT. LTD
+.....Plaintiff
+Through: Mr. Anuj Goyal, Adv. (VC)
+versus
+HARISH PLASTIC & ANR.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the defendant when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:09
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 935/2023
+PANASONIC LIFE SOLUTIONS INDIA PVT. LTD
+.....Plaintiff
+Through: Mr. Anuj Goyal, Advocate.
+versus
+HARISH PLASTIC & ANR. .....Defendants
+Through: Mr. Saurabh Sharma, Advocate and
+Shreshtha Kr., Advocate for
+Defendant No.1.
+Mr. Deepak Goel and Mr. Kanik Jain,
+Advocates for defendant No.2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. AJAY GULATI
+O R D E R
+% 09.10.2025
+Ld. Presiding Officer is on leave today.
+Re-notify on 10.12.2025 for purpose fixed
+Reader to
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+OCTOBER 9, 2025
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:08
+
+===== ORDER =====
+
+$~10
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 935/2023
+PANASONIC LIFE SOLUTIONS INDIA PVT. LTD
+.....Plaintiff
+Through: Mr. Aman Abbi, Mr. Anuj
+Goyal, Advocates
+versus
+HARISH PLASTIC & ANR.
+.....Defendant
+Through: Mr. Shreshtha KR, Advocate for
+D-1
+Mr. Deepak Goel (VC),
+Advocate for D-2
+Mr. Saurabh Sharma (VC),
+Advocate for Proposed D-3
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 10.12.2025
+I.A. No. 29575/2024 to implead M/s Vardhman Cables
+through its Proprietor Mr. Ankur Jain as defendant no. 3
+being a necessary and proper party to the suit.
+&
+I.A. No. 43688/2024 on behalf of defendant no. 1 for deletion
+of name of defendant no. 1 from the array of parties in the
+matter titled "Panasonic Life Solutions India Pvt. Ltd. Vs
+Harish Plastic & Others" having CS(COMM) No. 935/2015.
+1. Both the IA’s are listed today for arguments. During the
+course of submissions in IA No. 29575/2024, ld. Counsel for the
+plaintiff sought to place reliance on the averments of the written
+statement of defendant no. 1. However, the same is under
+objections although delay in filing the written statement was
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:07
+condoned and written statement was brought on record vide order
+dated 13.09.2024. The same is still not on record for the reason
+that the same needs to be re-filed. Consequently, defendant no. 1
+is directed to re-file its written statement within 5 days
+whereafter Registry is directed to place the same on record. It is
+made clear that no changes shall be permitted to the written
+statement of defendant no. 1. Put up again for arguments on the
+next date.
+CS(COMM) 935/2023
+2. Pleadings qua defendant no. 2 are complete.
+3. Put up for arguments in IA No. 29575/2024 and
+43688/2024 on 05.02.2026.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+DECEMBER 10, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:07

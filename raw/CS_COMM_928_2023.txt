@@ -1,0 +1,537 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_928_2023
+case_status: PENDING
+n_orders: 12
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 928/2023
+DHARAMPAL PREMCHAND LIMITED
+..... Plaintiff
+Through: Mr. Achutam Sreekumar,
+Mr. Rohil Bansal, Ms.
+Apoorv Prasad & Mr.
+Bhagwati Prasad, Advs.
+versus
+SHABU KN ACHARY
+..... Defendant
+Through: None.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 15.02.2024
+Learned P.O is on leave today.
+Put up the matter on 11.03.2024 for purpose already fixed.
+Reader a/w
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 15, 2024
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:11
+
+===== ORDER =====
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 928/2023
+DHARAMPAL PREMCHAND LIMITED ..... Plaintiff
+Through: Mr. Achuthan Sreekumar,
+Mr. Rohil Bansal,
+Mr. Apoorva Prasad R,
+Advocates
+versus
+SHABU KN ACHARY ..... Defendant
+Through: None.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 11.03.2024
+Defendant has been served with the summons sent through
+speed post, on 16.01.2024. However, no written statement has
+been filed till now nor any appearance has been put in on behalf
+of the defendant.
+Matter is already listed before the Hon’ble Court for
+14.03.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 14.03.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 11, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:10
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 928/2023 & I.A. 25877/2023
+DHARAMPAL PREMCHAND LIMITED ..... Plaintiff
+Through: Mr. Achutham Shree Kumar and Mr.
+Rohil Bansal, Advs.
+versus
+SHABU KN ACHARY ..... Defendant
+Through:
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 14.03.2024
+I.A. 25877/2023 (Application under Order XXXIX Rule 1 and 2 CPC)
+1. A perusal of the order-sheet would show that the defendant has been
+served in summon sent through speed-post as well on 16th January, 2024. No
+written statement has been filed nor is there any appearance on behalf of the
+defendant. This is also noted in the order of the Joint Registrar dated 11th
+March, 2024. Accordingly, the defendant is proceeded ex-parte. Right to file
+written statement is closed.
+1. An ex-parte ad interim injunction was granted by this Court in favour
+of the plaintiff on 21st December, 2023. Considering that there is no
+appearance on behalf of the defendant, the said order is made absolute.
+2. Application is disposed of.
+CS(COMM) 928/2023
+2. The counsel for the plaintiff has also pointed out to the report of the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:10
+Local Commissioner dated 05th January, 2024 which records a seizure of more
+than 500 Kgs of the infringing product which according to the counsel for the
+plaintiff would amount to about more than Rs.20 Lacs.
+3. He prays for a decree in this regard, however, prays for costs and
+damages. For this purpose, he shall file an affidavit by way of evidence in
+respect of the claim for damages within the next six weeks.
+4. The same shall be considered on the next date of hearing.
+5. List on 15th July, 2024.
+6. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+MARCH 14, 2024/MK
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:10
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 928/2023
+DHARAMPAL PREMCHAND LIMITED .....Plaintiff
+Through: Mr. Achuthamn Sreekumar, Mr.
+Rohil Bansal and Mr. Swastik,
+Advocates.
+Mob: 999756265
+versus
+SHABU KN ACHARY .....Defendant
+Through: None.
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 15.07.2024
+1. Pursuant to the order dated 14th March, 2024, affidavit by way of
+evidence in respect of claim of damages has been filed by the plaintiff.
+2. Learned counsel appearing for the plaintiff submits that there is no
+need to place the matter for leading ex parte evidence and that there are
+judgments to the effect that a summary judgment can be passed in favour of
+the plaintiff, in this regard.
+3. Accordingly, the plaintiff is directed to file a short note of
+submissions along with the relevant judgments on this aspect, before the
+next date of hearing.
+4. Re-notify on 14th August, 2024.
+MINI PUSHKARNA, J
+JULY 15, 2024/ak
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:09
+
+===== ORDER =====
+
+$~25
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 928/2023
+DHARAMPAL PREMCHAND LIMITED .....Plaintiff
+Through: Mr. Achuthan Sreekumar, Mr. Rohil
+Bansal, Mr. Swastik Bisarya,
+Advocates (M:9079965359)
+versus
+SHABU KN ACHARY .....Defendant
+Through: Mr. Shivam Sachdeva, Advocate
+(M:9971358035)
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 14.08.2024
+1. The present suit has been filed for permanent injunction restraining
+the defendant as well as others acting on its behalf, from manufacturing,
+selling or dealing in any manner with the impugned product and packaging,
+in which it was selling at the time of filing of the suit, or any other
+packaging, which may be confusingly similar to the plaintiff’s packaging.
+2. Mr. Shivam Sachdeva, Advocate has put in appearance on behalf of
+the defendant. He submits that his clients are willing to settle the matter with
+the plaintiff.
+3. Learned counsel for the plaintiff submits that he has no instructions to
+consent to settlement, as the plaintiff is seeking summary judgment in the
+matter.
+4. When the matter was listed for hearing on 21st December, 2023, the
+court was prima facie of the view that the products of the plaintiff and
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:09
+defendant are almost identical to each other, the only difference being, that
+towards the top of the label, the defendant’s pack contains the mark
+‘Dillagi’, whereas, the plaintiff’s pack contains the mark ‘BABA’.
+5. Thus, considering the fact that the defendant had replicated the
+essential features of the plaintiff’s products, an interim injunction order was
+passed favour of the plaintiff and against the defendant.
+6. Subsequently, the ex-parte ad interim injunction granted in favour of
+the plaintiff on 21st December, 2023, was made absolute vide order dated
+14th March, 2024.
+7. Considering the aforesaid submissions, this Court is of the view that
+parties can explore the possibility of settlement.
+8. Accordingly, the matter is referred to Delhi High Court Mediation and
+Conciliation Centre, to be listed before the Mediator on 22nd August, 2024.
+9. List before the Court on 13th September, 2024.
+10. A copy of this order shall be sent to Delhi High Court Mediation and
+Conciliation Centre, forthwith.
+MINI PUSHKARNA, J
+AUGUST 14, 2024
+au
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:09
+
+===== ORDER =====
+
+$~34
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 928/2023
+DHARAMPAL PREMCHAND LIMITED .....Plaintiff
+Through: Mr. Achuthan Sreekumar, Mr. Rohil
+Bansal and Mr. Swastik Bisarya,
+Advs. (Through VC)
+M: 9079965359
+versus
+SHABU KN ACHARY
+.....Defendant
+Through: Mr. Shivam Sachdeva, Adv.
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 13.09.2024
+1. Mediation Report dated 11th September, 2024 has been received. As
+per the same, the matter is pending before the learned Mediator, the next
+date before the Mediator being, 26th September, 2024.
+2. Accordingly, re-notify on 10th December, 2024.
+MINI PUSHKARNA, J
+SEPTEMBER 13, 2024/kr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:08
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 928/2023
+DHARAMPAL PREMCHAND LIMITED .....Plaintiff
+Through: Mr. Achuthan Sreekumar with
+Mr. Rohil Bansal and Mr. Swastik
+Bisarya, Advocates.
+(M): 7800902538
+Email: swastik@anandandanand.com
+versus
+SHABU KN ACHARY .....Defendant
+Through: Mr. Kunal Lakra, proxycounsel for
+Mr. Shivam Sachdeva, Advocate.
+(M): 9971358035
+Email: shivam.sachdeva1298@gmail.com
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 10.12.2024
+1. Mediation Report dated 25th November, 2024 has been received, as
+per which, the matter remains ‘Non-Settled’.
+2. Learned counsel appearing for the defendant submits that the main
+counsel is in some personal difficultytoday.
+3. Accordingly, at request, list on 16th April, 2025.
+MINI PUSHKARNA, J
+DECEMBER 10, 2024/c
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:07
+
+===== ORDER =====
+
+$~31
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 928/2023
+DHARAMPAL PREMCHAND LIMITED .....Plaintiff
+Through: Mr. Pravin Anand, Adv.
+versus
+SHABU KN ACHARY .....Defendant
+Through: Mr. Shivam Sachdeva, Adv.
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 16.04.2025
+List before the learned Joint Registrar on 28.05.2025 at 02:30 PM,
+for cross-examination of the sole witness of the plaintiff namely, Mr. Ajay
+Kumar Jaiswal.
+SAURABH BANERJEE, J
+APRIL 16, 2025/bh
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:07
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 928/2023
+DHARAMPAL PREMCHAND LIMITED
+.....Plaintiff
+Through: Mr. Achuthan Sreekumar,
+Mr. Rohil Bansal, Mr. Swastik
+Bisarya, Advocates
+versus
+SHABU KN ACHARY
+.....Defendant
+Through: Mr. Himansh Yadav, Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 28.05.2025
+1. Matter has been listed today for examination of sole
+witness of plaintiff Mr. Ajay Kumar Jaiswal. However, the
+witness has not been called as ld. Counsel for the plaintiff had
+received an intimation from the arguing counsel for the defendant
+that he will not be available today on account of some medical
+emergency in his family.
+2. Request for adjournment has not been opposed by the
+plaintiff.
+3. Put up for PE on 16.09.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 28, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:06
+
+===== ORDER =====
+
+$~238
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 928/2023
+DHARAMPAL PREMCHAND LIMITED
+.....Plaintiff
+Through: Mr. Achuthan Sreekumar, Mr. Rohil
+Bansal & Mr. Swastik Bisarya, Adv.
+(9079965359) (VC)
+versus
+SHABU KN ACHARY
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the defendant when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:05
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 928/2023
+DHARAMPAL PREMCHAND LIMITED
+.....Plaintiff
+Through: Ms. Prachi Agarwal, Ms. Medha
+Singh, Advocates
+versus
+SHABU KN ACHARY
+.....Defendant
+Through: Mr. Shivam Sachdeva, Mr. Yash
+Agrawal, Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 16.09.2025
+1. Matter has been listed today for recording of evidence of
+PW-1 Mr. Ajay Kumar Jaiswal. PW-1 is present today.
+However, affidavit in evidence of the witness has been filed in e-
+form only. Let the affidavit in evidence of PW-1 be filed in
+physical form within four weeks.
+2. Put up again for PE on 08.12.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 16, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:05
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 928/2023
+DHARAMPAL PREMCHAND LIMITED
+.....Plaintiff
+Through: Ms. Prachi Agarwal, Ms. Medha
+Singh, Advocates
+versus
+SHABU KN ACHARY
+.....Defendant
+Through: Mr. Shivam Sachdeva, Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 08.12.2025
+Commencement of evidence: 1:05 pm
+Conclusion of evidence: 1:30 pm
+Commencement of evidence: 2:30 pm
+Conclusion of evidence: 3:25 pm
+No of pages – 07
+1. Matter has been listed today for recording of plaintiff’s
+evidence.
+2. PW-1 Mr. Ajay Kumar Jaiswal is present. He has been
+examined-in-chief and partly cross-examined. His cross-
+examination has been deferred in view of the line of cross
+examination adopted by ld. Counsel for the defendant which is
+being objected to by ld. Counsel for the plaintiff. Consequently,
+on request, matter be placed before the Hon’ble Court on
+16.01.2026, for further directions in this regard.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+DECEMBER 8, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:04

@@ -1,0 +1,1137 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_835_2023
+case_status: PENDING
+n_orders: 20
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023, I.As. 23091/2023, 23092/2023, 23093/2023,
+23094/2023 & 23095/2023
+LOUIS VUITTON MALLETIER ..... Plaintiff
+Through: Ms. Pooja Dodd, Advocate.
+versus
+DURGA TRADING COMPANY AND ORS ..... Defendants
+Through:
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 21.11.2023
+1. This hearing has been done through hybrid mode.
+2. Subject to the orders of Hon’ble the Judge-in-Charge (Original Side),
+list this matter before another Bench on today itself i.e. 21st November,
+2023.
+PRATHIBA M. SINGH, J.
+NOVEMBER 21, 2023
+Rahul
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:02
+
+===== ORDER =====
+
+$~37
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023, IAs. 23091/2023, 23092/2023,
+23093/2023, 23094/2023 & 23095/2023
+LOUIS VUITTON MALLETIER ..... Plaintiff
+Through: Ms. Akanksha Singh, Adv.
+versus
+DURGA TRADING COMPANY AND ORS. .... Defendants
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 21.11.2023
+1. This is a matter which has been transferred from Coordinate
+Bench.
+2. Re-notify on 22 November 2023 for preliminary hearing.
+C. HARI SHANKAR, J.
+NOVEMBER 21, 2023
+dsn
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:03
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023
+LOUIS VUITTON MALLETIER
+..... Plaintiff
+Through: Ms. Akansha S., Adv.
+through VC.
+versus
+DURGA TRADING COMPANY AND ORS
+..... Defendant
+Through: None.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 23.01.2024
+Learned P.O is on half day leave today.
+Put up the matter on 20.02.2024 for purpose already
+fixed.
+Reader a/w
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 23, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:02
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023
+LOUIS VUITTON MALLETIER
+..... Plaintiff
+Through: Ms. Rishika Aggarwal, Adv.
+(M- 9811045646).
+versus
+DURGA TRADING COMPANY AND ORS
+..... Defendant
+Through: Mr. Roshan Santhali, Adv.
+(AOR) & Mr. Raghav
+Makkar, Adv. for D-1 to 6.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 20.02.2024
+The counsel for the defendant nos. 1 to 6 states that he had
+already filed the written statement, vide diary no. E - 492976/2024.
+The office noting in respect thereof is however awaited.
+The defendant no. 7 had been served on 16.01.2024, vide
+speed post. It is yet to file any written statement.
+The pleadings shall be completed by the parties in
+accordance with the timelines provided under law.
+The parties shall then file the physical copies of their
+respective documents, if not already filed and the joint schedule of
+the documents.
+List the matter for admission-denial and marking of exhibits
+on 29.05.2024.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 20, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:01
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023 & I.A. 23091/2023
+LOUIS VUITTON MALLETIER .... Plaintiff
+Through: Ms. Akanksha Singh, Adv.
+versus
+DURGA TRADING COMPANY AND ORS ..... Defendants
+Through: Mr. Roshan Santhalia, Adv. for D-1
+to 6.
+Mr. Tejaswi Bhanu and Mr.
+Priyadarshi, Advs. for D-7.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 22.02.2024
+1. Counsel for parties state that they would like to explore amicable
+resolution through mediation.
+2. Accordingly, parties along with counsel will appear before the
+Mediator, Delhi High Court Mediation and Conciliation Centre on 05th
+March, 2024 at 4:00 P.M.
+3. Copy of the order be sent to Organising Secretary, Delhi High Court
+Mediation and Conciliation Centre for information and compliance.
+4. Accordingly, list on 24th July, 2024.
+5. In the meantime, if the parties achieve a settlement, they will be at
+liberty to file an appropriate application before this Court.
+6. Interim orders to continue.
+7. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+FEBRUARY 22, 2024/MK
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:01
+
+===== ORDER =====
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023
+LOUIS VUITTON MALLETIER .... Plaintiff
+Through: Ms. Akanksha Singh (VC),
+Advocate
+versus
+DURGA TRADING COMPANY AND ORS.... Defendant
+Through: Mr. Roshan Santhalia, Ms. Ekta
+Bharti, Advocates for D-1 to D-6
+Ms. Priya, Advocate for D-7
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 29.05.2024
+Mediation efforts have failed.
+Written statement is stated to have been filed on behalf of
+defendant nos. 1 to 6 and on behalf of defendant no. 7. However,
+both the written statements were under objections which are
+stated to have been cleared and written statements have been re-
+filed yesterday. Both sets of defendants have also filed
+applications for condonation of delay in filing / re-filing.
+However the applications are yet to be listed.
+Matter is already listed before the Hon‟ble Court for
+24.07.2024.
+Put up before the Hon‟ble Court on the date already fixed
+i.e. 24.07.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 29, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:00
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023
+LOUIS VUITTON MALLETIER .....Plaintiff
+Through: Ms. Akanksha Singh (VC),
+Advocate
+versus
+DURGA TRADING COMPANY AND ORS.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 12.07.2024
+I.A. No. 33052/2024 filed by the defendants to condone the
+delay of 64 days in re-filing the written statement.
+1. Issue notice.
+2. Notice accepted by ld. Counsel for the plaintiff.
+3. Ld. Counsel for the plaintiff submits that the application is
+practically devoid of any reason for seeking condonation of delay
+in re-filing the written statement.
+4. I have gone through the contents of the application which
+states that the delay in re-filing was on account of distance
+between the location of the applicant which is of Chandigarh
+whereas the present litigation is being pursued in New Delhi. In
+the understanding of the Court, ground stated is frivolous, to say
+the least. Chandigarh is hardly at any distance from Delhi and
+delay of 64 days in re-filing the written statement cannot be
+justified on this count. However, in the interest of justice, delay
+is condoned, subject however to a cost of Rs.5000/-, to be paid to
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:00
+the plaintiff / counsel for the plaintiff within three weeks failing
+which the written statement shall be deemed to have been taken
+off the record. Delay stands condoned. Written statement is
+taken on record. Replication, if any, be filed within the period
+permissible, as worked out from today.
+5. IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 12, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:00
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023
+LOUIS VUITTON MALLETIER .....Plaintiff
+Through: Ms. Akansha Singh (VC),
+Advocate
+versus
+DURGA TRADING COMPANY AND ORS.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 18.07.2024
+I.A. No. 33432/2024 filed on behalf of defendant no. 1 for
+exemption from filing original copies of documents.
+1. Issue notice. Notice accepted by the ld. Counsel for the
+plaintiff.
+2. In view of submissions of ld. Counsel and grounds
+mentioned in the application, the application is allowed subject to
+just exceptions.
+3. IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 18, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:59
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023 & I.A. 23091/2023
+LOUIS VUITTON MALLETIER .....Plaintiff
+Through: Ms. Pooja Dodd, Ms. Akanksha
+Singh and Ms. Rishika Aggarwal,
+Avs.
+versus
+DURGA TRADING COMPANY AND ORS. .....Defendants
+Through: Mr. Roshan Santhalia and Ms. Ekta
+Bharati, Advs. for D-1 to 6.
+M: 8789348120
+Email: bharatiekta@gmail.com
+Mr Tejaswi Bhanu & Mr
+Chaitanyashil Priyadarshi, Advs for
+the D-7 (Through VC)
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 24.07.2024
+1. Learned counsel appearing for the plaintiff submits that the settlement
+talks between the parties have failed.
+2. She further submits that an application has been filed on behalf of the
+plaintiff, for the purposes of discovery and interrogatories. However, the
+said application is not before this Court today.
+3. Accordingly, re-notify before the Joint Registrar (Judicial) on 29th
+August, 2024.
+MINI PUSHKARNA, J
+JULY 24, 2024/kr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:59
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023
+LOUIS VUITTON MALLETIER ....Plaintiff
+Through: Ms. Akansha Singh (VC),
+Advocate
+versus
+DURGA TRADING COMPANY AND ORS ....Defendant
+Through: Mr. Roshan Santhalia, Ms. Ekta
+Bharat (VC), Advocates for D-1
+to D-6.
+Ms. Priya, Mr. Chaitanyashil
+Priyadarshi, Advocates for D-7
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 29.07.2024
+I.A. No. 34608/2024 filed by the plaintiff for interrogatories
+and discovery and production of documents.
+1. Issue notice. Notice accepted by ld. Counsel for defendant
+no. 1 to 6 who presses for an opportunity to file a response.
+2. Let the reply be filed within three weeks, with an advance
+copy of the same to the opposite side. Rejoinder thereto, if any,
+be filed thereafter within a week of receiving an advance copy of
+the reply.
+3. Put up for completion of pleadings / further consideration
+on 29.08.2024 before this Court, the date already fixed.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 29, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:58
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023
+LOUIS VUITTON MALLETIER .....Plaintiff
+Through: Ms. Akanksha Singh,
+Ms. Shubhanshi Pohani (VC),
+Advocates
+versus
+DURGA TRADING COMPANY AND ORS.....Defendant
+Through: Mr. Roshan Santhalia, Ms. Ekta
+Bharti, Mr. Prateek Charan,
+Mr. Apurv Sharma, Advocates
+for D-1 to 6.
+Mr Tejaswi Bhanu (VC),
+Advocate for D-7.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 29.08.2024
+I.A. No. 34608/2024 filed by the plaintiff for interrogatories
+and discovery and production of documents.
+1. Final opportunity is granted to defendant nos. 1 to 6 to file
+a reply to the present IA within two weeks failing which the right
+to file a reply shall automatically stand closed without any further
+order. A copy of the reply be supplied to ld. Counsel for the
+plaintiff. Rejoinder, if any, be filed as already permitted.
+2. Put up for completion of pleadings on 22.10.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 29, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:58
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023
+LOUIS VUITTON MALLETIER .....Plaintiff
+Through: Ms. Shubhanshi Pohani,
+Advocate
+versus
+DURGA TRADING COMPANY AND ORS
+.....Defendant
+Through: Mr. Roshan Santhalia, Ms. Ekta
+Bharti, Mr. Prateek Charan,
+Mr. Apurv Prasad, Advocates for
+D-1 to 6.
+Ms. Tejaswi Bhanu, Advocate
+for D-7
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 22.10.2024
+I.A. No. 34608/2024 filed by the plaintiff for interrogatories
+and discovery and production of documents.
+1. Reply has been filed and is on record. No rejoinder is to
+be filed. Put up for arguments on 09.12.2024.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+OCTOBER 22, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:57
+
+===== ORDER =====
+
+$~10
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023
+LOUIS VUITTON MALLETIER ....Plaintiff
+Through: Ms. Pooja Dodd, Advocate
+Versus
+DURGA TRADING COMPANY AND ORS.....Defendant
+Through: Ms. Ekta Bharti, Mr. Prateek
+Charan, Advocates for D-1 to 6.
+Ms. Priya (VC), Advocate for
+D-7.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 09.12.2024
+I.A. No. 47562/2024 filed by the plaintiff seeking condonation
+of delay in filing the affidavits of admission and denial on
+behalf of the plaintiff.
+1. Issue notice. Notice accepted by ld. Counsel for defendants
+no. 1 to 6 and defendant no. 7. Ld. Counsel for the defendant no.
+7 has no objection to the present application. However, ld.
+Counsel for defendants no. 1 to 6 presses for an opportunity to
+file a response.
+2. Let the reply be filed within three weeks, with an advance
+copy of the same to the opposite side. Rejoinder thereto, if any,
+be filed thereafter within two weeks of receiving an advance
+copy of the reply. Put up again for completion of pleadings.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:57
+I.A. No. 34608/2024 filed by the plaintiff for interrogatories
+and discovery and production of documents.
+3. On the request of ld. Counsel for the defendants no. 1 to 6,
+since the arguing counsel is not available today, adjourned for
+arguments on 14.02.2025. It is made clear that no further
+adjournment shall be granted.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+DECEMBER 9, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:57
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023
+LOUIS VUITTON MALLETIER .....Plaintiff
+Through: Ms. Pooja Dodd (VC) with
+Mr. Anuraj Tirthankar,
+Advocates
+versus
+DURGA TRADING COMPANY AND ORS.....Defendant
+Through: Mr. Roshan Santhalia, Advocate
+for D-1 to 6.
+Mr. Tejaswi Bhanu (VC),
+Advocate for D-7
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 14.02.2025
+I.A. No. 47562/2024 filed by the plaintiff seeking condonation
+of delay in filing the affidavits of admission and denial on
+behalf of the plaintiff.
+1. Pleadings are complete in the present IA. Put up for
+arguments on the next date.
+I.A. No. 34608/2024 filed by the plaintiff for interrogatories
+and discovery and production of documents.
+2. Submissions heard at length.
+3. Put up for orders on 08.04.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 14, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:56
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023
+LOUIS VUITTON MALLETIER
+.....Plaintiff
+Through: Ms. Pooja Dodd (VC),
+Mr. Anuraj Tirthankar,
+Advocates
+Versus
+DURGA TRADING COMPANY AND ORS
+.....Defendant
+Through: Mr. Roshan Santhalia (VC),
+Advocate for D-1 to 6
+Ms. Priya (VC), Advocate for D7
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 08.04.2025
+IA No. 34608/2024 filed by the plaintiff for seeking discovery/
+production of documents and serving interrogatories, on the
+defendants.
+1. The present application concerns the suit which has been
+filed by the plaintiff company seeking redressal of its grievance
+against defendant no. 1’s alleged role in manufacture/trade of
+counterfeit jewelry bearing Plaintiff’s renowned TM - Louis
+Vuitton. During the course of submissions in the present IA, it
+was contended on behalf of the plaintiff/applicant that defendants
+(def. no. 1 a partnership firm and is the contesting defendant as
+per the memo of parties) have admitted itself to be involved in
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:55
+selling counterfeit products of the plaintiff co. by stating in its
+written statement that it is an innocent first time infringer.
+However, the contention has been refuted. Nevertheless, there is
+a broad consensus that the suit now has to go to trial primarily for
+the purpose of seeking damages from the defendants, in addition
+to any other relief. The present IA has also been moved for the
+purpose of seeking answers to interrogatories, and relevant
+documents from the defendants towards having necessary
+information for the plaintiff to seek appropriate damages.
+2. The prayer in the application has been opposed on the
+ground that defendants have never infringed the TM of the
+plaintiffs nor have earned any revenue from sale of goods which
+purportedly infringe plaintiff’s TM. The prayer has also been
+opposed on the following grounds:
+i. Plaintiff is indulging in a roving and fishing inquiry;
+ii. The interrogatories as also the documents sought from the
+defendants have no bearing on the suit prayer;
+iii. Defendant no.1 employs craftsmen form marginalized
+sections of the society and they have been manufacturing
+goods without any knowledge that the goods produced
+infringe any brand
+3. Interestingly, however, in its reply, while responding to the
+interrogatory no. 7, there is clear admission on behalf of the
+defendants that they have been selling goods bearing the mark
+LV.
+4. In this backdrop, the interrogatories served on the
+defendants and the documents sought from them do not appear to
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:55
+be a fishing inquiry. However, not all interrogatories and
+documents sought appear to be relevant for the purpose of
+seeking damages, which is the dominant purpose for moving the
+present IA.
+5. Plaintiff seeks a response to the following interrogatories
+from the defendants:
+(i) When did the Defendant Nos. 1 to 6 commence their
+business of selling/ offering for sale jewelry items?
+What is the total number of employees employed by
+Defendant Nos. 1 to 6?
+(ii) What are the sales figures and profits generated by
+Defendant Nos. 1 to 6 in the last 5 financial years?
+(iii) Since when have Defendant Nos. 1 to 6 been
+selling/offering for sale jewelry bearing Plaintiffs
+LV Marks?
+(iv) Do Defendant Nos. 1 to 6 manufacture jewelry
+products bearing Plaintiffs LV Marks and/or procure
+these from third party entities?
+(v) If procured, what are the details (including the name
+and address) of the entities from whom Defendant
+Nos. 1 to 6 procure jewelry products bearing
+Plaintiffs L V Marks?
+(vi) What is the total quantity of jewelry bearing
+Plaintiffs LV Marks that has been manufactured/
+procured by Defendant No. 1 to 6 to date?
+(vii) What is the total quantity of jewelry bearing the
+Plaintiffs LV Marks that has been sold by Defendant
+Nos. 1 to 6 to date? Additionally, what is the total
+revenue generated from the aforementioned sales?
+(viii) What is the total profit earned by Defendant Nos. 1
+to 6 to till date from sale of jewellery products
+bearing Plaintiffs LV Marks?
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:55
+(ix) What is the nature (i.e. necklaces, bracelets,
+earrings, etc.) and composition (gold, silver,
+precious metals) of each jewelry item bearing
+Plaintiffs L V Marks manufactured/ procured and
+offered for sale/sold by Defendant Nos. 1 to 6 to
+date?
+(x) What is the total selling price of each jewelry item
+bearing Plaintiffs L V Marks manufactured/procured
+and offered for sale/sold by the Defendant Nos. 1 to
+6 till date?
+(xi) What is the total cost price of manufacturing and/or
+procuring each jewelry item bearing Plaintiffs LV
+Marks offered for sale/sold by the Defendant Nos. 1
+to 6?
+(xii) What is Defendant Nos. 1 to 6's relationship with
+Defendant No.7?
+Further, plaintiff seeks production of the following
+documents from the defendants:
+(xiii) Defendant Nos. 1 to 6 to produce the balance sheets,
+profit and loss statements of Defendant No. 1
+Company.
+(xiv) Defendant Nos. 1 to 6 to furnish copies of all cash
+books or cash registers utilized by Defendant No. 1
+company for recording daily transactions from the
+commencement of its business till date.
+(xv) Defendant Nos. I to 6 to produce all sales records,
+including invoices, receipts, and sales logs,
+pertaining to the goods provided by the Defendant
+No. I company from the commencement of its
+business till date.
+(xvi) Defendant Nos. I to 6 to produce all contracts/
+agreements, or documents evidencing arrangements
+with third-party vendors/suppliers in relation to
+procurement of L V branded counterfeit products.
+(xvii) Defendant Nos. I to 6 to provide information about
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:55
+any partner or any other person involved in selling
+of L V counterfeit products.
+(xviii) Defendant Nos. I to 6 to provide all the information
+about any other trademark infringement law suit
+filed against them?
+6. I have carefully assessed the rival submissions.
+7. Interrogatories no.1 and 2 seek a general information about
+the business of defs. which does not appear to have any relevance
+for the purpose of seeking damages. Ld. Counsel for the plaintiff
+insists that the interrogatories no. 1 and 2 are relevant for the
+purpose of determining the period for which the defendants have
+been (allegedly) selling/manufacturing counterfeit products of the
+plaintiff co. However, the plaint does not allege that defendants
+are only indulging in counterfeit products of the plaintiff co. or
+that they are only dealing in counterfeit products. Interrogatory
+no. 3 seeks to specifically ask as to since when have the defs.
+been selling/offering the jewelry bearing plaintiff’s LV mark?
+This inquiry is relevant and for the same reason, interrogatories
+no.1 & 2 are not relevant as those interrogatories are very
+general.
+8. Interrogatories no. 4 to 11 are all concerning specifically
+the defs. role in (alleged) counterfeiting of plaintiff’s products
+and hence, become relevant. So far as interrogatory no. 12 is
+concerned i.e. relationship of def. no. 1 with def. no. 7, same has
+already been denied by defs. no. 1 to 6.
+9. In view of the above discussion, defs. are directed to
+respond to interrogatories no. 3 to 11 only.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:55
+10. Moving now to the prayer for production of documents
+from the defs. no. 1 to 6, plaintiff has sought production of
+documents pertaining to the balance sheets/ profit and loss
+statements of def. no. 1, and all cash. Books/ cash registers of
+def. no. 1 from the commencement of its business till date, under
+serial no. 13 and 14 of annexure A (containing interrogatories
+and list of documents sought). In the best understanding of this
+Court, there is no reason to seek all of these documents as the
+plaintiff is concerned only with the profits made by def. no. 1 on
+account of (alleged) sale of products bearing plaintiff’s LV mark.
+Similarly, documents sought under serial no. 15 are also too vide
+in scope. However, defs. no. 1 to 6 can be directed to produce all
+of such documents mentioned in serial no. 15 so far as they relate
+to sales by def no. 1 of products bearing plaintiff’s LV mark.
+Documents sought under serial no. 16 also would be relevant as
+they specifically pertain to the sale of products bearing the
+infringing mark. For the same reason, documents sought under
+serial no. 17 would also be relevant. However, documents
+pertaining to ‘any other infringement suit having been filed
+against defs. no. 1 to 6’ is again a roving inquiry i.e. as sought
+under serial no. 18, and hence, cannot be permitted. If at all
+plaintiffs want to seek that information for the purpose of seeking
+higher damages, it’s for the plaintiffs to dig out that information.
+11. The present IA is thus allowed in the above terms. Defs.
+no. 1 to 6 are directed to file their response, in terms of this order,
+within 4 weeks. IA is disposed off.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:55
+I.A. No. 47562/2024 filed by the plaintiff seeking condonation
+of delay in filing the affidavits of admission and denial on
+behalf of the plaintiff.
+12. Part arguments heard. Put up for further arguments on
+26.05.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 8, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:55
+
+===== ORDER =====
+
+$~10
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023
+LOUIS VUITTON MALLETIER
+.....Plaintiff
+Through: Mr. Anuraj Tirthankar, Advocate
+versus
+DURGA TRADING COMPANY AND ORS
+.....Defendant
+Through: Mr. Roshan Santhalia,
+Mr. Aayush Mishra, Mr. Apurv
+Prasad, Advocates for D-1 to 6.
+Ms. Tejaswi Bhanu (VC),
+Advocate for D-7.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 26.05.2025
+I.A. No. 47562/2024 filed by the plaintiff seeking condonation
+of delay in filing the affidavits of admission and denial on
+behalf of the plaintiff.
+1. Further submissions addressed on either behalf.
+2. Put up for orders on 30.05.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 26, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:55
+
+===== ORDER =====
+
+$~1
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023
+LOUIS VUITTON MALLETIER
+.....Plaintiff
+Through: Mr. Anuraj Tirthankar (VC),
+Advocate
+versus
+DURGA TRADING COMPANY AND ORS
+.....Defendant
+Through: Ms. Priya (VC), Advocate for
+D-7.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 30.05.2025
+I.A. No. 47562/2024 filed by the plaintiff seeking condonation
+of delay in filing the affidavits of admission and denial to the
+documents filed by defendant nos. 1 to 6, and defendant no. 7.
+1. Plaintiff has moved this composite application seeking
+condonation of delay of 88 days in filing affidavit of admission
+& denial to the documents of def. nos. 1 to 6, and an unspecified
+delay in filing affidavit of admission / denial to the documents of
+def. no. 7.
+2. Ld. Counsel for def. no. 7 had given a no-objection at the
+outset when notice was issued in the present IA. In any case, it
+needs a highlight that written statement of def. no. 7 though has
+been placed on record by the Registry, an application seeking
+condonation of delay in filing the written statement bearing filing
+no. E – 1693117 OF 2024 has been under objections since July
+2024. Consequently, even otherwise, affidavit of admission &
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:54
+denial to the documents of def. no. 7 suffers from no delay as the
+written statement itself has to formally come on record.
+3. So far as def. nos. 1 to 6 are concerned, the present IA has
+been opposed on the ground that plaintiff‟s affidavit of admission
+& denial of def.s‟ documents has to be filed along with the
+replication, in terms of Chapter VII, Rule 5 of the Delhi High
+Court Rules (Original side) 2018. In the present case, same not
+having been filed along with the replication, cannot be now
+permitted to be brought on record since the outer limit for filing
+of replication along with affidavit of admission & denial is 45
+days, from the date of receipt of a copy of the written statement
+i.e. as per Chapter VII Rule 5 of DHC Rules 2018 (OS). To
+buttress the submission, reliance has been placed on a judgement
+of the Hon‟ble High Court of Delhi i.e. Atlanta Limited vs.
+National Highways and Infrastructure Development Corporation
+and Others MANU/DE/3851/2019, dt. 6.11.2019. The cited
+judgment lays down that there cannot be any extension of max.
+permissible period to file replication and affidavit of admission &
+denial alongwith. It was further highlighted by ld. counsel for the
+def. nos. 1 to 6 that Chapter VII Rule 6 of the 2018 Rules
+mandates filing of affidavit of admission & denial along with the
+replication.
+4. In response, ld. counsel for the plaintiff has submitted that
+the index of the documents filed by def. no. 1 to 6 alongwith the
+written statement was not in the prescribed format, as applicable
+to commercial suits, which resulted in a confusion for the
+plaintiff as to how should they respond to those docs. in their
+affidavit of admission & denial. Ld. counsel for defs. no. 1 to 6
+countered by submitting that post 12.7.2024, when the written
+statement was brought on record, plaintiff never raised any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:54
+objection on this count even though matter was being repeatedly
+listed before the Court. However, it was not specifically denied
+that the index of documents was not in the prescribed format.
+5. Further, ld. counsel for the plaintiff has placed reliance on
+a judgment of the Hon‟ble High Court of Delhi i.e. Louis Dreyfus
+Company India Pvt. Ltd. vs. Nutrilite Agro prodicts Pvt. Ltd.
+2024 SCC OnLine Del 278 to contend that on a reasonable
+explanation for delay being furnished, affidavit of admission &
+denial can be taken on record after condonation of delay even
+beyond the max. permissible 45 day period. In the afore-cited
+judgment, Hon‟ble Court interpreted Rule 7 of Chapter VII of the
+Delhi High Court Rules of 2018 (Original side)
+6. I have carefully considered the rival submissions and also
+gone through the cited judgments.
+7. The judgment cited by ld. counsel for the plaintiff is much
+later in time. Additionally, in the judgment relied upon by the
+defs., Hon‟ble Court has discussed the implication of Rule 5 of
+Chapter VII, DHC Rules 2018 (OS), whereas in the judgment
+relied upon by the plaintiff, Hon‟ble Court has interpreted Rule 7
+of Chapter VII, DHC Rules 2018 (OS) which specifically deals
+with filing of affidavit of admission & denial. Replication to the
+written statement of defs. no. 1 to 6 is already on record.
+Consequently, the relevant provision of law which needs to be
+considered and applied is Rule 7 of Chapter VII.
+8. This brings us to the question of whether plaintiff has
+offered a reasonable explanation for filing the affidavit of
+admission & denial with a delay. Defs. no. 1 to 6 have only filed
+2 documents along with the written statement i.e. as mentioned in
+para B of the written statement. One of these documents is a
+Registration certificate under The Punjab Shops and Commercial
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:54
+Establishment Act, 1958, and the other is authorization letter in
+favour of def. no. 1 to pursue/defend the present suit on behalf of
+defs. no. 1 to 6. It needs a highlight at this stage that along with
+the written statement which is on record, no index of the
+documents has been filed i.e. as is required in a prescribed
+format. Infact, the incorrect format of document index which the
+plaintiff counsel has referred to in his arguments, was filed along
+with the written statement with e-dairy no. 492976 of 2024. This
+filing continues to be under objections since 28.5.2024.
+9. Subsequently, the written statement was again filed with a
+different diary no. i.e. e – 1756484 of 2024 which is now on
+record but which does not have the document index. There is
+another twist to this factual narration. Defs. no. 1 to 6 filed an IA
+bearing no. 33052 of 2024 for seeking condonation of delay in
+„re-filing‟ the written statement which was filed under diary no.
+e – 492976 of 2024 (i.e. written statement having incorrect index
+format). The said IA was allowed but instead, Registry appears to
+have placed on record the written statement filed with diary no. e
+– 1756484 which does not have the document index. The filing
+with diary no. e-492976 of 2024 is still being shown as under
+objections. Consequently, given this maze of facts referred to
+above, it is natural to assume that ld. counsel for the plaintiff was
+confused in how to file the affidavit of admission & denial. This
+Court thus believes that plaintiff has been able to furnish a
+reasonable explanation for the delayed filing. Hence, the
+application is allowed. The delay qua def. no. 1 and 6 stands
+condoned. Further, there is no delay qua def. no. 7. Plaintiff‟s
+affidavits of admission & denial to the documents filed by defs.
+no. 1 to 6, and by def. no. 7 are brought on record.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:54
+CS(COMM) 835/2023
+10. Plaintiff and defendant nos. 1 to 6 are directed to file their
+documents in physical form within eight weeks.
+11. Put up for completion of pleadings on behalf of defendant
+no. 7 on 22.09.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 30, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:54
+
+===== ORDER =====
+
+$~205
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023
+LOUIS VUITTON MALLETIER
+.....Plaintiff
+Through: Ms. Shubhanshi Pohani, Adv. (VC)
+versus
+DURGA TRADING COMPANY AND ORS
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the defendant when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:54
+
+===== ORDER =====
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023
+LOUIS VUITTON MALLETIER
+.....Plaintiff
+Through: Ms. Pooja Dodd, Mr. Anuraj
+Tirthakar, Advocates
+versus
+DURGA TRADING COMPANY AND ORS
+.....Defendant
+Through: Mr. Roshan Santhalia and
+Ms. Kavya Arora, Advocates for
+D-1 to 6.
+Ms. Priya (VC), Advocate for
+D-7.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 22.09.2025
+1. The matter has been listed today for completion of
+pleadings.
+2. Written statement on behalf of defendant no. 7 though has
+been placed on record, an application seeking condonation of
+delay was filed but which itself is under objections since
+July’2024. In order to expedite the matter, on the oral request of
+ld. Counsel for defendant no. 7, the delay in filing the written
+statement of 63 days and subsequent delay in re-filing is
+condoned subject to cost of Rs. 5000/- to be paid to the plaintiff
+within three weeks failing which the written statement shall be
+deemed to have been taken off the record. The cost be paid to the
+plaintiff through its counsel. Replication be filed within the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:53
+period permissible, as worked out from today. In case, any
+affidavit of admission / denial is required to be filed to the
+documents filed alongwith the replication (which might be filed
+by the plaintiff), defendant no. 7 is at liberty to file affidavit of
+admission / denial to those documents within four weeks of
+receiving a copy of the replication and documents.
+3. Parties are now directed to file their documents in physical
+form alongwith Joint document schedule, also in physical form,
+within ten weeks.
+4. Put up for admission / denial of documents on 09.01.2026.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 22, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:53
+
+===== ORDER =====
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 835/2023
+LOUIS VUITTON MALLETIER
+.....Plaintiff
+Through: Ms. Pooja Dodd, Mr. Anuraj
+Tirthankar, Advocates
+Versus
+DURGA TRADING COMPANY AND ORS
+.....Defendant
+Through: Mr. Roshan Santhalia,
+Ms. Kavya Arora, Advocates
+for D-1 to 6
+Ms. Priya (VC), Advocate for D7
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 09.01.2026
+1. The matter has been listed today for carrying out
+admission / denial of documents.
+2. Documents in physical form are not yet on record either on
+behalf of the plaintiff or the defendants. Ld. Counsel for the
+plaintiff however submits that the documents filed by the
+plaintiff were under objections but as per the confirmation
+received from the Registry, they have now been placed on record.
+3. Ld. Counsel for defendant nos. 1 to 6 submits that their
+documents have been denied by the plaintiff. However, the
+documents be still filed in physical form. Ld. Counsel for
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:53
+defendant no. 7 is also directed to file its documents in physical
+form within four weeks. Previous cost imposed on defendant no.
+7 stands paid.
+4. Put up for admission / denial of documents on 20.03.2026.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 9, 2026/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:53

@@ -1,0 +1,1227 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_816_2023
+case_status: PENDING
+n_orders: 15
+
+$~62
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 816/2023, I.A. 22525/2023, I.A. 22526/2023, I.A.
+22527/2023, I.A. 22528/2023, I.A. 22529/2023 & I.A.
+22530/2023
+WOW MOMO FOODS PRIVATE LIMITED .... Plaintiff
+Through: Mr. Ankur Sangal, Adv.
+versus
+ASHOK KUMAR & ORS. ..... Defendant
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE C. HARI SHANKAR
+O R D E R
+% 09.11.2023
+CS(COMM) 816/2023
+1. The plaintiff was incorporated in 2008. It claims to serve
+customers fresh nutritious and flavour-infused momos, dumplings,
+momo filled burgers (MoBurgs), Chinese and Italian cuisine, both on
+dine-in as well as delivery basis. It claims to have adopted the mark
+in 2008, since when it is continuously using the said mark. It
+is also the proprietor of the following registrations, under the Trade
+Marks Act, 1999:
+Trade Mark Reg. No Class Description User Date of
+Details Reg.
+2014802 30 Spices Momo, Veg 16-06- 27-08-
+Momo, Non-Veg 2008 2010
+Momo, all kinds of
+Momo, Breakfast
+Cereals, Chinese
+noodles
+(uncooked),
+Chinese rice
+CS(COMM) 816/2023 Page 1 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:15
+noodles (bifun
+uncooked),
+Chinese steamed
+dumplings(shumai,
+cooked), Chinese
+stuffed dumplings
+(gyoza cooked),
+Dried sugared
+cakes of rice flour
+(rakugan),
+Farinaceous Food
+pastes for human
+consumption,
+tapioca, sago,
+artificial coffee;
+flour and
+preparations made
+from
+cereals, bread,
+pastry, ices.
+2831210 30 Spices momo, veg 16-06- 22-10-
+momo, non-veg 2008 2014
+memo, momo,
+Breakfast cereals,
+Chinese noodles
+(uncooked),
+Chinese
+rice noodles
+(bifun, uncooked),
+Chinese Steamed
+dumplings
+(shumai, cooked),
+Chinese Stuffed
+dumplings
+(gyoza, cooked),
+dried
+cooked-Rice, dried
+pasta, dried pieces
+of wheat gluten
+(fu. uncooked),
+dried sugared
+cakes of rice flour
+(rakugan),
+farinaceous food
+pastes for human
+Consumption,
+tapioca, sago,
+CS(COMM) 816/2023 Page 2 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:15
+artificial coffee;
+flour And
+preparations made
+from
+cereals, bread,
+pastry, Ices.
+3293676 30 Spices momo, veg 16-06- 25-06-
+momo, non-veg 2008 2016
+momo, all kinds of
+momo, breakfast
+cereals, Chinese
+noodles
+(uncooked),
+Chinese rice
+noodles (bifun,
+uncooked),
+Chinese steamed
+dumplings
+(shumai, cooked),
+Chinese stuffed
+dumplings (gyoza,
+cooked), dried
+cooked-rice, dried
+pasta, dried pieces
+of wheat gluten
+(fu. Uncooked),
+dried sugared
+cakes of rice flour
+(rakugan),
+farinaceous food
+pastes for
+human
+consumption,
+tapioca,
+sago, artificial
+coffee; flour and
+preparations made
+from
+cereals, bread,
+pastry, ices.
+2831211 35 franchise, Retail 16-06- 22-10-
+Outlet, Retail 2008 2014
+shop for Foodstuff,
+Advertising,
+Exhibitions.
+CS(COMM) 816/2023 Page 3 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:15
+2831212 43 Services for 16-06- 22-10-
+providing food 2008 2014
+and drink;
+Temporary
+Accommodation,
+Café restaurants,
+Momo shop,
+Catering for the
+provision of food
+and beverages,
+Catering in fast -
+food cafeterias,
+Catering of food
+and Drinks,
+Coffee shops,
+Coffee-house and
+snacks-bar, Momo
+bar & services,
+Fast food and non-
+stop Restaurant
+services, Fast-food
+restaurants, Fast-
+food Restaurants
+and snack bars.
+4665744 29 Foods prepared 16-06- 21-09-
+from meat, 2008 2020
+fish, poultry
+products; meat
+extracts;
+preserved, dried
+and
+cooked fruits and
+vegetables;
+jellies, jams, fruit
+sauces; eggs,
+cheese; pickles,
+desserts, edible
+oils and fats. Non-
+vegetarian food
+items, meat, fish,
+poultry, meat
+extracts, preserved
+and dried and
+cooked vegetables
+and fruits, and
+fruit items, milk
+and other dairy
+CS(COMM) 816/2023 Page 4 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:15
+products, fruit
+juices, frozen;
+cabbage rolls
+stuffed with meat,
+shish kebabs;
+chicken burger
+patties; fish burger
+patties; soya
+burger patties; tofu
+burger patties;
+vegetable burger
+patties; veggie
+burger patties
+prepared meals
+consisting
+primarily of kebab,
+vegetable salads,
+fruit salads,
+fruit desserts,
+desserts made
+from milk
+products, grilled
+vegetables, grilled
+chicken.
+WOW MOMO 4665747 29 Foods prepared 16-06- 21-09-
+from meat, fish, 2008 2020
+poultry products;
+meat extracts;
+preserved, dried
+and cooked fruits
+and vegetables;
+jellies, jams, fruit
+sauces; eggs,
+cheese; pickles,
+desserts, edible
+oils and fats. Non-
+vegetarian food
+items, meat, fish,
+poultry, meat
+extracts, preserved
+and dried and
+cooked vegetables
+and fruits, and
+fruit items, milk
+and other dairy
+products, fruit
+juices, frozen;
+cabbage rolls
+CS(COMM) 816/2023 Page 5 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:15
+stuffed with meat,
+shish kebabs;
+chicken burger
+patties; fish burger
+patties; soya
+burger patties; tofu
+burger patties;
+vegetable burger
+patties; veggie
+burger patties
+prepared meals
+consisting
+primarily of kebab,
+vegetable salads,
+fruit salads, fruit
+desserts, desserts
+made from milk
+products, grilled
+vegetables, grilled
+chicken.
+2014803 43 Services for 16-06- 27-08-
+providing food 2008 2010
+and drink;
+temporary
+accommodation,
+Café restaurants,
+momo shop,
+Catering for the
+provision of
+food and
+beverages,
+Catering
+in fast - food
+cafeterias,
+Catering of food
+and drinks, Coffee
+shops, Coffee-
+house and snacks-
+bar momo bar &
+services. Fast food
+and nonstop
+restaurant services.
+Fastfood
+restaurants, Fast-
+food restaurants
+and snack bars.
+CS(COMM) 816/2023 Page 6 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:15
+2. The plaintiff is also the registered proprietor of the domain
+name www.wowmomo.com, registered on 28 July 2013.
+3. In order to vouchsafe its reach and reputation, the plaint has
+provided the annual sales figures of the plaintiff, under the WOW
+MOMO mark from 2008-09 till 2022-23. Even in the year 2022-23,
+the plaintiff’s annual sales figures, from use of the said mark, was to
+the tune of ₹ 220 crores. The plaintiff also claims to have expended
+considerable amounts towards advertisement and promotion of the
+asserted WOW MOMO mark, the amount spent in 2022-23 being in
+the region of ₹ 7.26 crores. Para 25 of the plaint also sets out various
+awards and encomiums earned by the plaintiff which, according to the
+plaint, are an indicator of the quality of the plaintiff’s products and the
+goodwill of its marks.
+4. Defendant 1 is alleged to be an entity misrepresenting itself as
+authorized to offer franchises of the plaintiff to the public, in which
+pursuit it misuses the plaintiff’s registered mark WOWMOMO .
+5. Further investigation revealed similar infringing activities being
+carried out across the websites www.wowmomos.in ,
+www.wowmomofranchise.org, https://womomofranchise.shop/ ,
+https://www.wow-momo.shop/ and
+www.wowmomofoodfranchise.com. Screenshots of some such
+websites have been provided in para 28 of the plaint, thus:
+CS(COMM) 816/2023 Page 7 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:15
+6. The aforesaid websites advertise themselves to be authorised
+CS(COMM) 816/2023 Page 8 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:15
+franchise agents of the plaintiff. Interested persons have been invited
+to fill up forms provided on the website or contact Defendant 1
+through email at the email id franchise@wowmomo.in ,
+support@wowofranchise.com and
+support@wowmomofoodfranchise.com. Once Defendant 1 is so
+contacted, payments are taken from such interested persons, under the
+garb of enlisting them as the plaintiff’s franchisees. The manner in
+which this is done is also shown, screenshot by screenshot, in para 30
+of the plaint, thus:
+CS(COMM) 816/2023 Page 9 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:15
+7. Thus, it is stated that several such unknown defendants are
+holding themselves out as authorized franchise agents of the plaintiff,
+whereas the plaintiff has, in fact, no franchisees.
+8. Among such infringing domain names, alleges the plaint, are
+www.wowmomo.co.in, www.wowomomofood.co.in,
+www.wowmomofoodfranchise.com, www.wowmomofoods.co.in,
+www.wowmomofood.co.in, www.wowmomofranchise.co.in and
+www.wowmomofranchise.in.
+9. Inasmuch as the owners/registrants of the websites/domain
+names which are indulging in such infringing activities are masked,
+the plaintiff has impleaded the said entities under the pseudonymous
+appellation Ashok Kumar/John Doe as Defendant 1.
+10. In order to curb the menace of such unauthorized franchise
+agents of the plaintiff, the present plaint has been instituted before this
+Court.
+11. Let the plaint be registered as a suit.
+CS(COMM) 816/2023 Page 10 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:15
+12. Issue summons in the suit.
+13. Written statement, accompanied by affidavit of admission and
+denial of the documents filed by the plaintiff be filed within 30 days
+with advance copy to learned counsel for the plaintiff who may file
+replication thereto, accompanied by affidavit of admission and denial
+of the documents filed by the defendant within 30 days thereof.
+14. List before the learned Joint Registrar (Judicial) for completion
+of the pleadings, admission and denial of documents and marking of
+exhibits on 8 January 2024.
+I.A. 22525/2023 [under Order XXXIX Rules 1 and 2 of the CPC]
+15. This is an application by the plaintiff under Order XXXIX
+Rules 1 and 2 of the Code of Civil Procedure, 1908 (CPC), seeking
+interlocutory injunctive reliefs.
+16. The facts stated hereinabove make out a prima facie case of
+various unknown entities holding themselves out as franchise agents
+of the plaintiff, whereas the plaintiff disowns any connection with
+such entities. Through such activities, such entities are collecting
+money from the public. This is, therefore, an economic menace, which
+is needed to curbed. Accordingly, the plaintiff is entitled to ex parte
+interlocutory injunctive reliefs.
+17. As such, issue notice, returnable on 20 February 2024.
+18. Notice be served on the defendants by all modes.
+CS(COMM) 816/2023 Page 11 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:15
+19. Reply, if any, be filed within four weeks with advance copy to
+learned Counsel for the plaintiff who may file rejoinder thereto within
+four weeks thereof.
+20. As such, till the next date of hearing, the following interim
+injunctive orders are passed:
+(i) There shall be an order of interim injunction restraining
+anyone from using, advertising, directly or indirectly dealing in
+the trade mark , or the domain names wowmomos.in,
+wowmomo.co.in, wowomomofood.co.in,
+wowmomofoodfranchise.com, wowmomofoods.co.in,
+wowmomofood.co.in, wowmomofranchise.co.in,
+wowmomofranchise.in, wowmomofranchise.org,
+//womomofranchise.shop/ and www.wow-momo.shop/ or any
+other website or domain name which may be identical or
+deceptively similar to the plaintiff’s registered trademark
+and WOW! MOMO.
+(ii) The owners of the websites wowmomos.in,
+wowmomo.co.in, wowomomofood.co.in,
+wowmomofoodfranchise.com, wowmomofoods.co.in,
+wowmomofood.co.in, wowmomofranchise.co.in,
+wowmomofranchise.in, wowmomofranchise.org,
+//womomofranchise.shop/, www.wow-momo.shop/ are directly
+to immediately take down the said websites.
+CS(COMM) 816/2023 Page 12 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:15
+(iii) Defendants 2 to 5 are directed to lock/suspend access to
+the websites/domain names wowmomos.in, wowmomo.co.in,
+wowomomofood.co.in, wowmomofoodfranchise.com,
+wowmomofoods.co.in, wowmomofood.co.in,
+wowmomofranchise.co.in and wowmomofranchise.org.
+(iv) Should the plaintiff come across any other website or
+domain name which contains the mark WOW MOMO, which is
+registered by any of the said Defendants 2 to 5, it is permitted to
+intimate Defendants 2 to 5 in that regard. On being so
+intimated, the concerned defendant shall immediately
+lock/suspend access to the said domain name. The plaintiff is
+directed, immediately thereupon, to file an affidavit before this
+Court to the said effect.
+(v) Defendant 6 is directed to issue a notification to the
+various internet and telecom service providers registered under
+it to block access to the websites wowmomos.in,
+wowmomo.co.in, wowomomofood.co.in,
+wowmomofoodfranchise.com, wow.momofoods.co.in,
+wow.momofood.co.in, wowmomofranchise.co.in,
+wowmomofranchise.in and wowmomofranchise.org.
+I.A. 22526/2023 [under Section 12A of the Commercial Courts
+Act, 2015]
+21. In the facts of the case, the plaintiff is exempted from the
+requirement of pre-institution mediation proceedings, inter alia, as the
+CS(COMM) 816/2023 Page 13 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:15
+infringing defendants are unknown entities. The application stands
+allowed accordingly.
+I.A. 22527/2023 [under Order XI Rule 1(4) of the CPC]
+22. By this application, the plaintiff seeks permission to file
+additional documents.
+23. The plaintiff is permitted to place additional documents on
+record in accordance with Order XI Rule 1(4) of the Code of Civil
+Procedure, 1908 (CPC) as amended by the Commercial Courts Act
+within 30 days from today.
+24. The application stands disposed of accordingly.
+I.A. 22528/2023 [Section 149]
+25. Court fees, if not already deposited, may be deposited within
+three weeks.
+I.A. 22529/2023 [under Section 151 of the CPC]
+26. Subject to the plaintiff filing legible copies of any dim or
+illegible documents on which it may seek to place reliance within four
+weeks from today, exemption is granted for the present.
+27. The application is disposed of.
+I.A. 22530/2023 [seeking permission to place compact disk on
+record]
+CS(COMM) 816/2023 Page 14 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:15
+28. Permission to place compact disk on record is granted. The
+application is allowed accordingly.
+C. HARI SHANKAR, J.
+NOVEMBER 9, 2023
+ar
+Click here to check corrigendum, if any
+CS(COMM) 816/2023 Page 15 of 15
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:15
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 816/2023
+WOW MOMO FOODS PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Shashwat Rakshit, Adv.
+versus
+ASHOK KUMAR/JOHN DOE & ORS.
+..... Defendant
+Through: Mr. Debarishi Dutta, Mr.
+Mrinal Ojha, Ms. Tanya
+Chaudhry, Mr. Anand Raja
+and Mr. Shivam Tiwari,
+Advs.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 08.01.2024
+Learned P.O is on half day leave today.
+Put up the matter on 12.02.2024 for purpose already fixed.
+Reader a/w
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 8, 2024/ss
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:14
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 816/2023
+WOW MOMO FOODS PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Shashwat Rakshit, Adv.
+versus
+ASHOK KUMAR/JOHN DOE & ORS.
+..... Defendant
+Through: Mr. Mrinal Ojha, Ms.
+Debarshi Datta & Ms. Tanya
+Chaudhary, Advs. for D-2.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 12.02.2024
+The defendant no. 1 is John Doe.
+The counsel for the defendant no. 2 has appeared in person.
+She seeks time to file the compliance-affidavit. That be filed in
+accordance with law.
+As per the office noting, the service reports of the defendant
+nos. 3 & 5 are awaited. The defendant no. 4 was served on
+27.12.2023, via speed post and the defendant no. 6 was served on
+19.12.2023, via ordinary means.
+In the given circumstances, the defendant nos. 2, 4 & 6 shall
+file their written statements as per law, whereafter the replications
+be also filed in accordance with law. Once their pleadings are
+completed, the plaintiff and these defendant nos. 2, 4 & 6 shall also
+file the physical copies of their respective documents, if not already
+filed and the joint schedule of the documents.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:14
+In the meantime, issue fresh summons to the defendant nos.
+3 & 5 through all permissible modes, subject to the filing of the PF,
+returnable for 01.05.2024.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 12, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:14
+
+===== ORDER =====
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 816/2023, I.A. 22525/2023 & I.A. 22528/2023
+WOW MOMO FOODS PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Shashwat Rakshit, Adv.
+versus
+ASHOK KUMAR/JOHN DOE & ORS. ..... Defendants
+Through: Mr. Mrinal Ojha, Mr. Debarshi Datta
+and Ms. Tanya Chaudhry, Advs. for
+D-2.
+Mr. Harish Vaidyanathan Shankar,
+CGSC with Mr. Srish Kumar Mishra,
+Mr. Alexander Mathai Paikaday and
+Mr. Krishnan V., Advs.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 20.02.2024
+I.A. 22525/2023 (under Order XXXIX Rule 1 & 2 of the Code of Civil
+Procedure, 1908)
+1. In this suit filed by the plaintiff, defendant No.1 is arrayed as Ashok
+Kumar/John Doe, being unidentified parties who are infringing the
+trademark ‘WOW MOMOS’ of the plaintiff in registering domain names
+using the said trademarks. Defendant Nos.2-5 are domain name Registrars
+who had registered their infringing/impugned domain names. Defendant
+No.6 is the Department of Telecommunications, Government of India.
+2. Counsel for the plaintiff informs that they have filed fresh process for
+service of defendant Nos. 3 and 5. Defendant Nos. 4 and 6 stand served.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:13
+Counsel for defendant No.2 has entered appearance.
+3. This Court passed an injunction order on 09th November, 2023 in the
+following terms:
+“20. As such, till the next date of hearing, the following interim
+injunctive orders are passed:
+(i) There shall be an order of interim injunction restraining
+anyone from using, advertising, directly or indirectly dealing in
+the trade mark or the domain names
+wowmomos.in, wowmomo.co.in, wowomomofood.co.in,
+wowmomofoodfranchise.com, wowmomofoods.co.in,
+wowmomofood.co.in, wowmomofranchise.co.in,
+wowmomofranchise.in, wowmomofranchise.org,
+//womomofranchise.shop/ and www.wow-momo.shop/ or any
+other website or domain name which may be identical or
+deceptively similar to the plaintiff’s registered trademark
+and WOW! MOMO.
+(ii) The owners of the websites wowmomos.in, wowmomo.co.in,
+wowomomofood.co.in, wowmomofoodfranchise.com,
+wowmomofoods.co.in, wowmomofood.co.in,
+wowmomofranchise.co.in, wowmomofranchise.in,
+wowmomofranchise.org, //womomofranchise.shop/, www.wow-
+momo.shop/ are directly to immediately take down the said
+websites.
+(iii) Defendants 2 to 5 are directed to lock/suspend access to
+the websites/domain names wowmomos.in, wowmomo.co.in,
+wowomomofood.co.in, wowmomofoodfranchise.com,
+wowmomofoods.co.in, wowmomofood.co.in,
+wowmomofranchise.co.in and wowmomofranchise.org.
+(iv) Should the plaintiff come across any other website or
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:13
+domain name which contains the mark WOW MOMO, which is
+registered by any of the said Defendants 2 to 5, it is permitted
+to intimate Defendants 2 to 5 in that regard. On being so
+intimated, the concerned defendant shall immediately
+lock/suspend access to the said domain name. The plaintiff is
+directed, immediately thereupon, to file an affidavit before this
+Court to the said effect.
+(v) Defendant 6 is directed to issue a notification to the various
+internet and telecom service providers registered under it to
+block access to the websites wowmomos.in, wowmomo.co.in,
+wowomomofood.co.in, wowmomofoodfranchise.com,
+wow.momofoods.co.in, wow.momofood.co.in,
+wowmomofranchise.co.in, wowmomofranchise.in and
+wowmomofranchise.org.”
+4. Counsel for the plaintiff states that there has been compliance by the
+Domain Name Registrars (defendant Nos.2-5) in relation to the directions
+passed in para 20(iii) by this Court as noted above.
+5. However, counsel for defendant No.2 (Godaddy.com) points out that
+the direction was passed to “lock/suspend access” to the impugned domain
+names/websites whereas ‘lock’ and ‘suspend’ are two different actions
+which can be taken by Domain Name Registrars. To ‘lock’ a domain name
+is to prohibit and deny transfer of the said domain name whereas the
+‘suspend’ access is to deny access to the said domain names/websites. She
+therefore seeks clarification to that extent of order dated 09th November,
+2023, in that the direction may be to “lock and suspend”.
+6. Accordingly, para 20 (iii) of the order dated 09th November, 2023 will
+be read as:
+“Defendant Nos. 2 to 5 are directed to lock and suspend access to the
+websites/domain names wowmomos.in, wowmomo.co.in,
+wowomomofood.co.in, wowmomofoodfranchise.com,
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:13
+wowmomofoods.co.in, wowmomofood.co.in, wowmomofranchise.co.in
+and wowmomofranchise.org.”
+7. Further direction had been passed in 20 (iv) in relation to any domain
+names which the plaintiff comes across, subsequent to the said order being
+passed, which can be communicated to defendant Nos.2 to 5 who shall
+lock/suspend access to the said domain names. Aside from the same
+objection in relation to the term “lock and suspend” made by counsel for
+defendant No.2, she has further stated that they would abide by the orders of
+the Court in this regard, in the event they have reservations regarding the
+request of the plaintiff.
+8. Accordingly, directions in para 20 (iv) of the order dated 09th
+November, 2023 are modified to read as under:
+“Should the plaintiff come across any other website or domain
+name which contains the mark WOW MOMO, registered by
+any of the said defendant Nos.2-5, it is permitted to
+communicate through written communication/email to
+defendant Nos.2-5 in that regard. If any of the defendant Nos.2-
+5 have reservations in this regard they shall revert back to the
+plaintiff who shall be at liberty to file an appropriate
+application before this Court. Otherwise, defendant Nos.2-5
+shall immediately lock and suspend access to the said domain
+name. The plaintiff shall file an affidavit before this Court for
+every subsequent request which is made to defendant Nos.2-5
+in respect of any domain name which contains the mark WOW
+MOMO.”
+9. It is stated by counsel for defendant No.2 that in respect of two
+websites, that the plaintiff has communicated to them, pursuant to the order
+dated 09th November, 2023, are as under:
+wowmomofranchise.org.in
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:13
+wowmomoindiafranchises.in
+10. Defendant No.2 is directed to lock and suspend access to these
+domain names within a period of 1 week.
+11. Counsel for the plaintiff seeks liberty to array National Internet
+Exchange of India (NIXI), as a party, for seeking directions to them to not
+permit any domain names/websites to be opened under the .co.in or .in
+extensions using the mark WOW MOMO.
+12. Liberty is granted.
+13. The order dated 09th November, 2023 is made absolute, read with the
+modifications noted above.
+14. Application is disposed of.
+I.A. 22528/2023 (seeking extension of time for filing court fees)
+1. This application has been filed for enlargement of time for filing court
+fee. Counsel for the plaintiff informed that the court fee has already been
+filed.
+2. Accordingly, the application is disposed as being infructuous.
+CS(COMM) 816/2023
+1. List before Joint Registrar on 01st May, 2024.
+2. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+FEBRUARY 20, 2024/MK/ig
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:13
+
+===== ORDER =====
+
+$~8
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 816/2023
+WOW MOMO FOODS PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Kiratraj Sadana (VC),
+Advocate
+versus
+ASHOK KUMAR/JOHN DOE & ORS.
+..... Defendant
+Through: Mr. Mrinal Ojha, Mr. Debarshi
+Dutta, Ms. Tanya Chaudhry,
+Mr. Arjun Mookerjee,
+Mr. Shivam Tiwari, Advocates
+for D-2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 01.05.2024
+Defendant no. 2 has filed its compliance affidavit and ld.
+counsel appearing for defendant no. 2 submits that no written
+statement is to be filed.
+Defendant nos. 3 & 5 have been served with summons sent
+through courier on 12.04.2024 and 10.04.2024 respectively.
+Defendant no. 4 had filed its written statement though belatedly
+but same has been put under objections on 30.04.2024.
+Ld. Counsel for defendant no. 4 is directed to take steps
+immediately and bring the same on record.
+Defendant no. 6 was served on 19.12.2023, through the
+ordinary mode. No written statement has been filed though
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:13
+maximum permissible period to file the same has expired.
+Consequently, right of defendant no. 6 to file the written
+statement stands closed.
+Put up for completion of pleadings on 13.08.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 1, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:13
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 816/2023
+WOW MOMO FOODS PRIVATE LIMITED ..... Plaintiff
+Through: None
+versus
+ASHOK KUMAR/JOHN DOE & ORS. ..... Defendant
+Through: Mr. Rahul Bajaj (VC), Advocate
+for D-4/ Hosting Concepts B.V.
+Mr. Mrinal Ojha, Mr. Debarshi
+Dutta, Ms. Nikita Rathi,
+Advocates for D-2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 16.05.2024
+I.A. No. 11239/2024 filed by D-4 to condone the delay of 84
+days in filing the written statement.
+Issue notice to the counsel for the plaintiff on filing of PF
+through e-mail only. Reply be filed within two weeks of
+receiving the notice.
+Put up on 13.08.2024, the date already fixed.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 16, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:12
+
+===== ORDER =====
+
+$~8
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 816/2023
+WOW MOMO FOODS PRIVATE LIMITED .....Plaintiff
+Through: Mr. Shaurya Pandey, Ms. Nidhi
+Pathak, Advocates
+versus
+ASHOK KUMAR/JOHN DOE & ORS. .....Defendant
+Through: D-1 is John Doe.
+Mr. Mrinal Ojha, Mr. Debarshi
+Dutta, Mr. Samyak Bilala,
+Advocates for D-2.
+Ms. Aishwarya Kane, Advocate
+for D-4.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 13.08.2024
+I.A. No. 11239/2024 filed by D-4 to condone the delay of 84
+days in filing the written statement.
+1. Issue notice. Notice accepted by ld. Counsel for the
+plaintiff. Ld. Counsel for the plaintiff submits that he has no
+objection if the application is allowed.
+2. For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the plaintiff, application is
+allowed. Delay stands condoned. Written statement is taken on
+record. Replication be filed within the period permissible, as
+worked out from today. IA stands disposed off.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:12
+CS(COMM) 816/2023:
+3. Defendant no. 1 is John Doe. Defendant no. 2 has filed its
+compliance affidavit and no written statement is to be filed.
+4. Defendant nos. 3 & 5 have been served with summons sent
+through courier on 12.04.2024 and 10.04.2024 respectively but
+no written statement has been filed till date. The maximum
+permissible period to file the same has expired. Right to file the
+written statements for defendants no. 3 & 5 thus stands closed.
+4. Right of defendant no. 6 to file the written statement has
+already been closed.
+5. Put up for completion of pleadings on 24.09.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 13, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:12
+
+===== ORDER =====
+
+$~4
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 816/2023
+WOW MOMO FOODS PRIVATE LIMITED .....Plaintiff
+Through: Mr. Shaurya Pandey, Advocate
+versus
+ASHOK KUMAR/JOHN DOE & ORS. .....Defendant
+Through: Mr. Mrinal Ojha, Mr. Debarshi
+Dutta, Ms. Nikita Rathi,
+Mr. Samyak Bilala, Advocates
+for D-2.
+Mr. Yash Raj, Advocate for D-4.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 24.09.2024
+1. Written statement on behalf of defendant no. 4 is on
+record. Replication thereto has been filed vide diary no.
+4052599/2024 but suffers from a delay of 12 days. Ld. Counsel
+for defendant no. 4 submits that he has no objection to the delay
+being condoned on the oral request of ld. Counsel for the
+plaintiff. Consequently, delay in filing the replication is
+condoned. Registry is directed to take the replication on record.
+2. Parties are now directed to file their documents and
+pleadings in physical form alongwith the Joint Document
+Schedule, also in physical form, within six weeks.
+3. Put up for admission / denial of documents on 25.11.2024.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 24, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:11
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 816/2023
+WOW MOMO FOODS PRIVATE LIMITED .....Plaintiff
+Through: Mr. Raghu Vinayak Sinha,
+Advocate
+Versus
+ASHOK KUMAR/JOHN DOE & ORS. .....Defendant
+Through: Mr. Mrinal Ojha, Mr. Debarshi
+Dutta, Mr. Rishabh Agarwal,
+Advocates for D-2.
+Mr. Yash Raj, Advocate for D-4.
+Dr. B. Ramaswamy CGSC,
+Advocate for UOI.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 25.11.2024
+1. The matter has been listed today for carrying out
+admission / denial of documents.
+2. Defendant no. 1 is a John Doe. Rights of defendants no. 3,
+5 & 6 to file written statements had already been closed.
+Defendant no. 2 has not filed any written statement.
+3. Ld. Counsel for the plaintiff admits only one document
+filed by defendant no. 4 which has been identified as Ex. D-1.
+Rest of the documents have been denied by the plaintiff.
+4. On the other hand, ld. counsel for defendant no. 4 admits
+two documents filed by the plaintiff, which have been identified
+as Ex. P-1 to Ex. P-2. Rest of the documents have been denied by
+the defendant.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:10
+5. Admission / denial of documents stands complete. Matter
+is ripe for framing of issues.
+6. Put up before the Hon’ble Court on 02.12.2024, for further
+directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 25, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:10
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 816/2023
+WOW MOMO FOODS PRIVATE LIMITED .....Plaintiff
+Through: Mr. Kiratraj Sadana, Advocate.
+versus
+ASHOK KUMAR/JOHN DOE & ORS. .....Defendants
+Through: Mr. Mrinal Ojha, Mr. Debarshi Sutta
+and Mr. Arjun Mookerjee, Advocates
+for D-2.
+Ms. Aishwarya Kane, Advocate for
+D-4.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 02.12.2024
+1. An accommodation is sought on behalf of the counsel for the plaintiff,
+which is not opposed by counsel for the defendants no.2 and 4.
+2. Renotify on 17th March, 2025.
+AMIT BANSAL, J
+DECEMBER 2, 2024
+Vivek/-
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:10
+
+===== ORDER =====
+
+$~31
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 816/2023
+WOW MOMO FOODS PRIVATE LIMITED .....Plaintiff
+Through: Mr. Kiratraj Sadana, Advocate
+versus
+ASHOK KUMAR/JOHN DOE & ORS. .....Defendants
+Through: Mr. Mrinal Ojha, Mr. Debarshi Dutta,
+Mr. Arjun Mookerjee, Mr. Yogesh
+Singh and Ms. Nikita Rathi,
+Advocates for D-2
+Mr. Yash Raj, Advocate for D-4
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 17.03.2025
+At request of counsel for the plaintiff, renotify on 8th April, 2025.
+AMIT BANSAL, J
+MARCH 17, 2025
+ds
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:09
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 816/2023
+WOW MOMO FOODS PRIVATE LIMITED .....Plaintiff
+Through: Mr. Ankur Sangal, Mr. Ankit Arvind
+& Mr. Shashwat Rakshit, Advocates.
+versus
+ASHOK KUMAR/JOHN DOE & ORS. .....Defendants
+Through: Ms. Mrinal Ojha, Mr. Debarshi Dutta,
+Mr. Shivam Tiwari & Mr. Arjun
+Mookerjee, Advocates for D-2.
+Ms. Aishwarya Kane & Mr. Yash Raj,
+Advocates for D-4.
+Dr. B. Ramaswamy, CGSC for IFSO.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 08.04.2025
+1. It is already 04:50 PM.
+2. No time left.
+3. Re-notify on 17th April, 2025.
+AMIT BANSAL, J
+APRIL 8, 2025
+at
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:09
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 816/2023
+WOW MOMO FOODS PRIVATE LIMITED .....Plaintiff
+Through: Mr. Ankur Sangal, Mr. Ankit Arvind,
+Mr. Shashwat Rakshit and Ms. Nidhi
+Pathak, Advocates.
+versus
+ASHOK KUMAR/JOHN DOE & ORS. .....Defendants
+Through: Mr. Mrinal Ojha, Mr. Debarshi Dutta,
+Mr. Arjun Mookerjee, Mr. Nikhil
+Gupta, Mr. Yogesh Singh and
+Mr.Shivam Tiwari, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 17.04.2025
+1. List for hearing on 14th August, 2025.
+AMIT BANSAL, J
+APRIL 17, 2025
+kd
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:08
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 816/2023
+WOW MOMO FOODS PRIVATE LIMITED .....Plaintiff
+Through: Mr. Ankur Sangal, Ms. Sucheta Roy
+and Ms. Amrit Sharma, Advs.
+versus
+ASHOK KUMAR/JOHN DOE & ORS. .....Defendants
+Through: Mr. Mrinal Ojha, Mr. Debarshi Dutta,
+Mr. Arjun Mookerjee and Mr. Shivam
+Tiwari, Advs. for D-2
+Ms. Aishwarya Kane, Adv. for D-4
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 14.08.2025
+1. Learned counsel for defendant no. 4 states that defendant no. 4 has filed
+its written statement. She refers to paragraph nos. 6 and 7 of her written
+statement.
+1.1. She states that relevant domain name in respect whereof directions
+were issued to defendant no. 4 in the injunction order dated 09.11.2023 has
+been deleted in the registry of defendant no. 4 and has been released for re-
+registering in the market.
+1.2. She states that in view of the submissions at paragraph nos. 6 and 7 of
+the written statement, defendant no. 4 be deleted from the array of parties.
+2. Learned counsel for defendant no. 4 states that in the event there are
+any further directions passed by this Court, defendant no. 4 undertakes to
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:07
+comply with the said directions.
+3. In view of the aforesaid submissions and the stand of the written
+statement, the plaintiff has no objection to the deletion of the defendant no. 4.
+4. This Court accepts the oral prayer of defendant no .4.
+5. Accordingly, defendant no. 4 is deleted from array of parties. The
+plaintiff is directed to file an amended memo of parties within two (2) weeks.
+6. Learned counsel for the plaintiff seeks an adjournment to file an
+appropriate application for seeking disposal of the suit qua remaining
+defendants.
+7. At request list on 27.01.2026.
+MANMEET PRITAM SINGH ARORA, J
+AUGUST 14, 2025/hp/MG
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:07
+
+===== ORDER =====
+
+$~216
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 816/2023
+WOW MOMO FOODS PRIVATE LIMITED
+.....Plaintiff
+Through: Mr. Ankur Sangal, Adv.
+versus
+ASHOK KUMAR/JOHN DOE & ORS.
+.....Defendant
+Through: Mr. Yogesh Singh, Adv. (VC)
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 18.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+At request, let this matter be sent back to the Hon’ble Court for
+further directions.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 18, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:06

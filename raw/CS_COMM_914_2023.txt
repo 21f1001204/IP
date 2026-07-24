@@ -1,0 +1,1006 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_914_2023
+case_status: PENDING
+n_orders: 20
+
+$~35
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 914/2023
+KONINKLIJKE PHILIPS N. V. & ORS. ..... Plaintiffs
+Through: Mr. Peeyoosh Kalra, Mr. C.A.
+Brijesh, Ms. Simranjot Kaur,
+Advocates
+versus
+KARMA MINDTECH & ORS. ..... Defendants
+Through: Mr. Kunal Khanna, Mr. Kirtan Patel,
+Mr. Swastik Bisarya, Ms. Vridhi
+Pasicha, Advocates. For defendant no.
+2
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 13.02.2024
+I.A. 3436 (seeking rejection of plaint)
+1. The present application has been filed under Order VII Rule 11 of
+Code of Civil Procedure, 1908, seeking rejection of the plaint.
+2. Counsel for the Applicant (Defendant No. 2- Karan Hareshkumar
+Patel) after making substantial arguments, at the stage when the Court was
+about to dictate the order, states that he would like to withdraw the present
+application.
+3. Application is dismissed as withdrawn.
+SANJEEV NARULA, J
+FEBRUARY 13, 2024/ab
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:57
+
+===== ORDER =====
+
+$~10
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 914/2023
+KONINKLIJKE PHILIPS N. V. & ORS. ..... Plaintiff
+Through: Ms. Simranjot Kaur, Advocate
+versus
+KARMA MINDTECH & ORS. ..... Defendant
+Through: Mr. Kunal Khanna, Mr. Kirtan
+Patel, Mr. Swastik Bisarya,
+Advocates for D-2.
+Mr. Ranjeet Kr. Singh (VC),
+Mr. Neeraj Gupta, Advocates for
+D-3.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 16.02.2024
+CS(COMM) 914/2023 & I.A. 25710/2023 (u/O XXXIX Rules
+1 & 2 CPC).
+All three defendants have been served on 16.01.2024.
+Appearance has been put in on behalf of defendant nos. 2 & 3.
+Let the written statement be filed as per rules with an advance
+copy of the same to the opposite side. Replication thereto be filed
+as per rules thereafter.
+Put up for completion of pleadings on 29.04.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 16, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:57
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 914/2023
+KONINKLIJKE PHILIPS N. V. & ORS. ..... Plaintiff
+Through: Ms. Simranjot Kaur (VC),
+Advocate
+versus
+KARMA MINDTECH & ORS. ..... Defendant
+Through: Ms. Vridhi Pasricha Mr. Kunal
+Khanna (VC), Advocates for D-2
+Mr. Neeraj K Gupta and Harmish
+Shah (VC), Advocates for D-3.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 29.04.2024
+CS(COMM) 914/2023 & I.A. No. 25710/2023 (u/O XXXIX
+Rules 1 & 2 CPC).
+The defendants have been served on 16.01.2024. None
+has appeared on behalf of defendant no. 1.
+Ld. Counsel for defendant no. 2 submits that the written
+statement shall be filed, as per rules.
+Ld. Counsel for defendant no. 3 submits that an affidavit
+has been filed on behalf of defendant no. 3 and at this stage no
+written statement is required to be filed on behalf of defendant
+no. 3. The affidavit is on record. Copy of the affidavit is also
+with the ld. Counsel for the plaintiff.
+Matter is already listed before the Hon‟ble Court for
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:56
+16.05.2024.
+Put up before the Hon‟ble Court on the date already fixed
+i.e. 16.05.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 29, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:56
+
+===== ORDER =====
+
+$~41
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 914/2023
+KONINKLIJKE PHILIPS N. V. & ORS. ..... Plaintiffs
+Through: Mr. Peeyoosh Kalra, Advocate.
+versus
+KARMA MINDTECH & ORS. ..... Defendants
+Through: Mr. Neeraj K. Gupta, Mr. Akshaya
+Agarwal and Mr. Rajeet Sen Singh,
+Advocates for D-3.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 02.05.2024
+I.A. 9743/2024(seeking discovery by interrogatories and discovery of
+Defendants’ documents)
+1. Issue notice. Mr. Neeraj K. Gupta, counsel for Defendant No. 3,
+accepts notice.
+2. Reply to the application, if any, be filed within four weeks from
+today. Rejoinder thereto, if any, be filed within two weeks thereafter.
+3. Issue notice to the remaining Defendants, upon filing of process fee,
+returnable on the next date of hearing. On service, such Defendants shall file
+a reply within a period of 30 days from the date of service.
+4. List on 25th July, 2024.
+CS(COMM) 914/2023
+5. Counsel for Defendant No. 3 states that on account of scanning error,
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:56
+one page of their affidavit dated 09th April, 2024 is missing. He prays that he
+may be permitted to file the complete copy of the affidavit. Let the same be
+done before the next date of hearing and a copy thereof be also supplied to
+counsel for Plaintiff.
+6. List on 25th July, 2024.
+7. The next date of hearing fixed, i.e., 16th May, 2024 stands cancelled.
+SANJEEV NARULA, J
+MAY 2, 2024
+d.negi
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:56
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 914/2023
+KONINKLIJKE PHILIPS N. V. & ORS. ..... Plaintiffs
+Through: Mr. Krishna Gambhir, Advocate.
+versus
+KARMA MINDTECH & ORS. ..... Defendants
+Through: Mr. Neeraj K Gupta, Mr. Akshaya
+Agarwal, Mr. Ranjeet Singh & Mr.
+Shivang Srivastava, Advocates.
+(Through VC)
+Mr. Kunal Khanna, Advocate.
+(Through VC)
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. AJAY GULATI
+O R D E R
+% 24.05.2024
+I.A. No. 30202/2024 filed by defendant no. 2 for condonation of delay of
+89 days in filing written statement.
+Learned counsel for the plaintiff accepts notice, and submits that he
+has no objection to the delay being condoned subject to imposition of a
+reasonable cost. Learned counsel for the defendants highlights that the delay
+in filing the written statement is on account of the fact that all the technical
+gadgets of defendant no. 2 which contain material information regarding the
+suit, are in the custody of the police and consequently, written statement
+could not be filed in time.
+I have considered the submissions. On a specific query by the Court,
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:55
+learned counsel for the applicant confirms that the technical gadgets of
+defendant no. 2 still continue to be in the custody of the police. If that be so,
+defendant no. 2 could not have possibly filed the written statement at all
+since all the material information concerning the suit is said to be in those
+gadgets but yet the written statement has been filed on the 119th day (from
+the date of service of complete paper book). This Court is not inclined to
+believe the assertion of the applicant that all material details pertaining to
+the suit and concerning defendant no. 2/applicant were only available in
+digital form. However, since the written statement has been filed within the
+maximum permissible period, I deem it appropriate to condone the delay
+subject however, to a cost of Rs. 5,000/-, to be paid to the plaintiff within
+three weeks failing which written statement shall be deemed to have been
+taken off the record.
+Replication, however be, filed within the permissible as worked out
+from today.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 24, 2024/Ni
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:55
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 914/2023
+KONINKLIJKE PHILIPS N. V. & ORS. .....Plaintiff
+Through: Ms. Simranjot Kaur, Advocate
+versus
+KARMA MINDTECH & ORS. .....Defendant
+Through: Mr. Kunal Khanna, Mr. Madhav
+Anand, Advocates for D-2.
+Mr. Neeraj K Gupta,
+Mr. Akshaya Agarwal,
+Mr. Ranjeet Singh (VC),
+Advocates for D-3
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 10.07.2024
+I.A. No. 32736/2024 filed by the plaintiff for substituting the
+authorized signatory Mr. Mayank Karaiya in place of Ms.
+Megha Banerjee.
+1. Ld. Counsels for defendant nos. 2 & 3 submit that there is
+no objection to the application being allowed.
+2. It needs a highlight that defendant no. 1 has been served on
+16.01.2024 but none has put in appearance on behalf of
+defendant no. 1.
+3. Ld. Counsel for defendant no. 2 submits that defendant no.
+1 was a partnership firm but is not in existence any more.
+Defendant no. 2 was the erstwhile partner of defendant no. 1.
+Consequently, the application is allowed.
+4. IA is disposed off.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:55
+I.A. No. 32737/2023 filed by the plaintiff to condone the delay
+of 13 days in filing the replication to written statement of
+defendant no. 2.
+5. Issue notice.
+6. Notice accepted by ld. Counsel for defendant no. 2.
+7. Ld. Counsel for defendant no. submits that he has no
+objection if the application is allowed subject to imposition of a
+reasonable cost.
+8. For the reasons stated in the application, application is
+allowed subject to cost of Rs.3000/- to be paid to the defendant
+before the next date of hearing failing which replication shall be
+deemed to have been taken off the record. Delay stands
+condoned. Replication is taken on record.
+9. IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 10, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:55
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 914/2023, I.A. 25710/2023, I.A. 25715/2023, I.A.
+9743/2024
+KONINKLIJKE PHILIPS N. V. & ORS. .....Plaintiffs
+Through: Mr. Krisna Gambhir and Ms.
+Simranjot Kaur, Advs.
+versus
+KARMA MINDTECH & ORS. .....Defendants
+Through: Mr. Kunal Khanna, Mr. Madhav
+Anand and Mr. Prahav Prason, Advs.
+for D-2
+Mr. Neeraj K Gupta, Mr. Akshaya
+Agarwal and Mr. Ranjeet Singh,
+Advs. for D-3
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 25.07.2024
+1. The Hon’ble Judge is on leave today.
+2. List on 16.12.2024.
+(By Order)
+COURT MASTER
+JULY 25, 2024/rr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:54
+
+===== ORDER =====
+
+$~40
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 914/2023 with I.A. 44076/2024
+KONINKLIJKE PHILIPS N. V. & ORS. .....Plaintiffs
+Through: Mr. Peeyoosh Kalra, Mr. CA Brijesh,
+Mr. Krisna Gambhir, Ms. Simranjot
+Kaur Advocates.
+versus
+KARMA MINDTECH & ORS. .....Defendants
+Through: Mr Kunal Khanna, Advocate for D-2.
+Mr Neeraj k Gupta, Mr Akshaya
+Agarwal, Mr Ranjeet Singh,
+Advocates for D-3.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 05.11.2024
+I.A. 44076/2024 (filed by plaintiffs for direction)
+1. This application has been filed by the plaintiff seeking direction for
+production of the items seized during local commission executed on 29th
+December, 2023 at the premises of the defendant no.3.
+2. Issue notice.
+3. Notice is accepted on behalf of the counsels appearing for defendants
+no.2 and 3, who do not object to the production of the items seized during
+the local commission.
+4. Accordingly, without prejudice to the rights and contentions of the
+parties, the defendant no.3 shall produce the box of CDs that were seized
+during the execution of the local commission as referred to in Paragraph 9 of
+CS(COMM)914/2023 Page1of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:53
+the Local Commissioner’s report.
+5. The said box of CDs shall be produced before the Director (IT) in this
+Court on 27th November, 2024 at 11:00 AM. The Director (IT) shall open
+the box in presence of representative of plaintiff and defendants no.3 and
+permit the plaintiff’s representative to examine the contents of the CDs in
+order to trace the digital footprints of the case. If need be, plaintiffs would
+be permitted to make copies of the contents of the CDs.
+6. Liberty is given to the Director (IT) to pass any other consequential
+direction that may be necessary in this regard.
+AMIT BANSAL, J
+NOVEMBER 5, 2024
+PB
+CS(COMM)914/2023 Page2of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:53
+
+===== ORDER =====
+
+$~25
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 914/2023 with I.A. 25710/2023, I.A. 25715/2023, I.A.
+9743/2024, I.A. 30202/2024, I.A. 44076/2024
+KONINKLIJKE PHILIPS N. V. & ORS. .....Plaintiffs
+Through: Mr. Peeyoosh Kalra, Mr. CA Brijesh,
+Mr. Krisna Gambhir, Advocates.
+versus
+KARMA MINDTECH & ORS. .....Defendants
+Through: Mr. Kunal Khanna, Advocate for D-2.
+Mr. Neeraj K. Gupta and Akshay
+Agarwal, Advocates for D-3.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 16.12.2024
+I.A. 30202/2024 (under Order VIII Rule 1 of the CPC)
+1. For the reasons stated in the application, the delay of 89 days in filing
+Written Statement is condoned and the Written Statement is permitted to be
+taken on record.
+2. Application stands disposed of accordingly.
+I.A. 25710/2023 (under Order XXXIX Rules 1 and 2 CPC)
+3. With the consent of the parties, the interim order dated 20th
+December, 2023 is confirmed till the final adjudication of the suit.
+4. Application stands disposed of.
+I.A. 9743/2024 (under Order XI Rule 1 and 12 of the CPC)
+5. This application has been filed under Order XI Rule 1 and 12 of the
+Code for Civil Procedure, 1908 as applicable to Commercial Suits seeking
+CS(COMM)914/2023 Page1of3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:53
+discovery by interrogatories and discovery of the defendants’ documents.
+6. The present suit has been filed by the plaintiff seeking permanent
+injunction against infringement of the plaintiffs’ copyrights, trademarks and
+trade secrets by the defendants, along with other ancillary reliefs.
+7. The plaintiffs claim copyright in respect of a software ‘IntelliSpace
+Portal’ (‘ISP’), which offers advanced visualization and analysis tools and
+follow-up tools for medical imaging purposes.
+8. The plaintiffs are also the exclusive owners of the trademarks
+‘PHILLIPS’ and ‘INTELLISPACE’.
+9. It is the case of the plaintiffs that the defendants, in collusion and
+connivance with each other, engaged in the business of procuring and
+importing second-hand imaging machines in which pirated versions of the
+plaintiffs’ ‘ISP’ are being installed.
+10. Vide Order dated 20th December, 2023, the defendants were restrained
+from using, offering for sale on making available the ‘INTELLISPACE
+Portal’ Software or the connected applications from being run on any
+hardware or electronic/medical/diagnostic devices, to any person.
+11. Notice in this application was issued on 2nd May, 2024. No reply
+thereof has been filed on behalf of the defendants till date.
+12. I have heard the counsel for the parties.
+13. The list of interrogatories is given in paragraph 11 of the application
+from (a.) to (l.). The interrogatory at (l.) has already been dealt with in the
+order passed by this Court on 5th November, 2024. Therefore, counsel for
+the plaintiffs do not press for the same.
+14. In my considered view, the aforesaid interrogatories are relevant and
+necessary for the proper and expeditious disposal of the suit. They relate to
+CS(COMM)914/2023 Page2of3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:53
+the matter which is in controversy between the parties.
+15. Accordingly, the application is allowed.
+16. The defendants shall answer the interrogatories given in paragraph 11
+(a.) to (k.) of the application by way of the prescribed affidavit within four
+(4) weeks from today.
+17. The defendants are permitted to file any information/document which
+is considered to be confidential in nature in a sealed cover.
+CS(COMM) 914/2023
+15. List before Joint Registrar for marking of exhibits on 11th February,
+2025.
+16. List before Court for framing of issues on 28th April, 2025.
+AMIT BANSAL, J
+DECEMBER 16, 2024
+PB
+CS(COMM)914/2023 Page3of3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:53
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 914/2023
+KONINKLIJKE PHILIPS N. V. & ORS. .....Plaintiff
+Through: Ms. Simranjot Kaur (VC),
+Advocate
+versus
+KARMA MINDTECH & ORS. .....Defendant
+Through: Mr. Yashveer Singh (VC),
+Advocate for D-2.
+Mr. Ranjeet Kumar Singh (VC),
+Advocate for D-3.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 11.02.2025
+1. The matter has been listed today for carrying out
+admission / denial of documents. However, documents in
+physical form have not been filed by either side.
+2. Parties are now directed to file their documents in physical
+form alongwith Joint document schedule, also in physical form,
+within six weeks.
+3. Put up for admission / denial of documents on 09.04.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 11, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:52
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 914/2023
+KONINKLIJKE PHILIPS N. V. & ORS.
+.....Plaintiff
+Through: Ms. Simranjot Kaur, Advocate
+versus
+KARMA MINDTECH & ORS.
+.....Defendant
+Through: Mr. Kunal Khanna, Advocate for
+D-2.
+Mr. Neeraj K Gupta, Mr. Ranjeet
+Kumar Singh (VC), Advocates
+for D-3
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 09.04.2025
+1. The matter has been listed today for carrying out
+admission / denial of documents.
+2. Defendant no. 1 has ceased to exist which has been
+recorded in the order dated 10.07.2024. No documents have
+been filed on behalf of defendant no. 2 alongwith the written
+statement. Defendant no. 3 has not filed any written statement
+but has filed an affidavit. Consequently, documents of the
+plaintiff are deemed to have been admitted by defendant no. 3.
+3. Ld. Counsel for defendant no. 2 admits seven documents
+filed by the plaintiff, which have been identified as Ex. P-1 to Ex.
+P-7. Rest of the documents have been denied by the defendant.
+4. Admission / denial of documents stands complete. Matter
+is ripe for framing of issues.
+5. Matter is already listed before the Hon’ble Court for
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:52
+28.04.2025. Be placed before the Hon’ble Court on the date
+already fixed i.e. 28.04.2025, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 9, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:52
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 914/2023 and I.A. 25715/2023 & I.A. 44076/2024
+KONINKLIJKE PHILIPS N. V. & ORS. .....Plaintiffs
+Through: Mr. Peeyoosh Kalra & Ms. Simranjot
+Kaur, Advocates.
+versus
+KARMA MINDTECH & ORS. .....Defendants
+Through: Mr. Kunal Khanna, Mr. Madhav
+Anand, Mr. Kritin Bhasin, Mr.
+Yashveer Singh & Mr. Udit Sharma,
+Advocates.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 28.04.2025
+1. The matter is listed for framing of issues.
+2. Based on the pleadings of the parties, the following issues are framed
+in the suit:
+i. Whether this Court has the territorial jurisdiction to entertain the
+present suit? OPD
+ii. Whether the defendants’ use/sale of a pirated/tampered version of the
+plaintiffs’ ‘IntelliSpace Portal’ software amounts to copyright
+infringement of the plaintiffs’ software? OPP
+iii. Whether the defendants’ use of the trade-marks "PHILIPS" and
+"INTELLISPACE" in relation to computer
+software/hardware/medical/diagnostic instruments constitutes
+CS(COMM)914/2023 Page1of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:51
+infringement of the Plaintiffs' registered trade-marks? OPP
+iv. Whether defendant no.2, being an ex-employee of plaintiff no.3, has
+misused plaintiffs’ confidential information/trade secrets, and
+circumvented the technological measures implemented by plaintiffs to
+protect their ‘IntelliSpace Portal’ software and confidential
+information? OPP
+v. Whether the plaintiffs are entitled to any damages? OPP
+vi. Whether the plaintiffs are entitled to any relief and costs? OPP
+vii. Relief
+3. No other issue is pressed for or arises for consideration.
+4. Parties shall file their respective list of witnesses within four (4)
+weeks from today.
+5. The plaintiffs shall file evidence of their witnesses by way of
+affidavits within six weeks from today.
+6. List before the Joint Registrar on 15th July, 2025 for fixing the dates
+of trial.
+AMIT BANSAL, J
+APRIL 28, 2025
+at
+CS(COMM)914/2023 Page2of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:51
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 914/2023
+KONINKLIJKE PHILIPS N. V. & ORS.
+.....Plaintiff
+Through: Ms. Simranjot Kaur (VC),
+Advocate
+Versus
+KARMA MINDTECH & ORS.
+.....Defendant
+Through: Ms. Kritin Bhasin (VC),
+Advocate for D-1 & 2.
+Mr. Akshaya Agarwal (VC),
+Advocate for D-3.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 15.07.2025
+1. Matter has been listed today for fixing the dates of trial.
+However, none of the parties i.e. plaintiff, defendant nos. 2 and 3
+have filed their respective list of witnesses. Let the needful now
+be done within a further period of four weeks failing which cost
+shall be imposed on the defaulting side. After filing list of
+witnesses, affidavit/s in evidence of the plaintiff witnesses be
+filed as per the timeline already indicated by the Hon’ble Court
+in its order dated 28.04.2025.
+2. Ld. Counsel for defendant no. 2 has highlighted that they
+are not getting any instructions from defendant no. 2 and
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:50
+consequently, they might move an application for seeking their
+discharge. Submissions is noted.
+3. Put up again for fixing dates of trial, on 24.09.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 15, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:50
+
+===== ORDER =====
+
+$~50
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 914/2023
+KONINKLIJKE PHILIPS N. V. & ORS. .....Plaintiffs
+Through: Mr. Peeyoosh Kalra, Mr. C.A.
+Brigesh, Ms. Simranjot Kaur & Mr.
+Krisna Gambhir, Advocates.
+versus
+KARMA MINDTECH& ORS. .....Defendants
+Through: Mr. Kunal Khanna, Advocate for
+Defendant No.2.
+Mr. Neeraj K Gupta, Advocate for
+Defendant No.3 (Through V.C.).
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 29.07.2025
+CRL.M.A. 21803/2025
+1. This is an Application on behalf of Defendants under Section 379 read
+with Section 215 of the Bharatiya Nagarik Suraksha Sanhita, 2023 (“BNSS”)
+for offences under Sections 227, 229, 236, 237 and 246 of the Bharatiya
+Nyaya Sanhita, 2023 (“BNS”) for initiation of criminal proceedings against
+Defendant No.2.
+2. Both the Parties shall file their respective Written Submissions along
+with the case laws relied upon therein within a period of five days from the
+date.
+3. List for further directions on 11.08.2025.
+TEJAS KARIA, J
+JULY 29, 2025/ ‘A’
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:50
+
+===== ORDER =====
+
+$~47
+* IN THEHIGH COURTOF DELHIAT NEW DELHI
++ CS(COMM) 914/2023
+KONINKLIJKE PHILIPS N. V. & ORS. .....Plaintiffs
+Through: Appearance not given.
+versus
+KARMA MINDTECH & ORS. .....Defendants
+Through: Mr. Kunal Khanna, Advocate for D2.
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 11.08.2025
+CRL.M.A. 21803/2025
+List on 12.08.2025 in the Supplementary List.
+TEJAS KARIA, J
+AUGUST 11, 2025/sms
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:49
+
+===== ORDER =====
+
+$~43
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 914/2023
+KONINKLIJKE PHILIPS N. V. & ORS. .....Plaintiffs
+Through: Mr. Peeyoosh Kalra, Mr. C.A. Brijesh
+and Ms. Simranjat Kaur, Advocates.
+versus
+KARMA MINDTECH & ORS. .....Defendants
+Through: Mr. Kunal Khanna, Mr. Madhav
+Anand, Mr. Krtin Bhasin, Mr.
+Yashveer Singh and Mr. Udit Sharma,
+Advocates for D2.
+Mr. Neeraj Gupta, Mr. Akshay
+Agarwal and Mr. Ranjeet Kumar
+Singh, Advocates for D3.
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 12.08.2025
+CRL.M.A. 21803/2025
+1. Arguments heard.
+2. Order reserved.
+TEJAS KARIA, J
+AUGUST 12, 2025/sms
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:48
+
+===== ORDER =====
+
+$~231
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 914/2023
+KONINKLIJKE PHILIPS N. V. & ORS.
+.....Plaintiff
+Through: Mr. Simranjot Kaur, Adv. (VC)
+versus
+KARMA MINDTECH & ORS.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the defendant when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:48
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 914/2023
+KONINKLIJKE PHILIPS N. V. & ORS.
+.....Plaintiff
+Through: Mr. Ishith Arora, Advocate for
+P-1 to P-3
+versus
+KARMA MINDTECH & ORS.
+.....Defendant
+Through: Mr. Kunal Khanna, Mr. Madhav
+Anand (VC), Advocates for D-1
+& D-2
+Mr. Neeraj K Gupta (VC),
+Mr. Akshaya Agarwal,
+Advocates for D-3
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 24.09.2025
+1. Matter has been listed today for fixing the dates of trial.
+List of witnesses has not been filed by the parties. Evidence by
+way of affidavit of the plaintiff witness/es has also not been filed.
+2. Issues were framed on 28.04.2025 by the Hon’ble Court
+and parties were directed to file their list of witnesses within four
+weeks. Affidavit/s in evidence of the plaintiff witness/es were to
+be filed within six weeks. On the next date which was
+15.07.2025, since no list of witnesses had been filed on behalf of
+plaintiff, defendant no. 2 and defendant no. 3 (defendant no. 1
+has ceased to exist as recorded on 10.07.2025), directions were
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:47
+given to file the same within four weeks failing which cost was to
+be imposed.
+3. Ld. Counsel for the plaintiff submits that list of witnesses
+has still not been filed for the reason that plaintiff no. 2 is based
+in Israel which is involved in an ongoing conflict with Palestine.
+However, plaintiff no. 1 is a company based in Netherlands
+whereas plaintiff no. 3 is a company based in India. This Court
+is unable to appreciate the submission put-forth on behalf of the
+plaintiff that the list of witnesses cannot be filed simply because
+plaintiff no. 2 is based in Israel. Consequently, final opportunity
+is granted to file list of witnesses within six weeks failing which
+right to lead evidence shall stand closed. Incase the list of
+witnesses is filed within six weeks, the affidavit/s in evidence of
+the plaintiff witness/es be filed within a further period of six
+weeks. The same be also filed in physical form with advance
+copy of the same to ld. Counsel for defendant nos. 2 and 3.
+5. Ld. Counsel for defendant no. 2 submits that no evidence
+is to be led on behalf of defendant no. 2 and consequently, list of
+witnesses has not been filed.
+6. Ld. Counsel for defendant no. 3 submits that they shall
+also not be leading evidence and infact, shall be moving an
+application for their deletion based on the Local Commissioner’s
+report and the Delhi High Court IT Registrar’s findings.
+7. Put up for further proceedings on 15.01.2026.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 24, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:47
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 914/2023
+KONINKLIJKE PHILIPS N. V. & ORS.
+.....Plaintiff
+Through: Ms. Simranjot Kaur (VC),
+Advocate
+versus
+KARMA MINDTECH & ORS.
+.....Defendant
+Through: Mr. Kunal Khanna, Mr. Param
+Goel (VC), Advocates for D-2.
+Mr. Neeraj Gupta, Mr. Ranjeet
+Kumar Singh (VC), Advocates
+for D-3
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 06.01.2026
+I.A. No. 143/2026 filed on behalf of defendant no. 3 for its
+deletion from the array of parties.
+1. Issue notice. Notice accepted by ld. Counsel for the
+plaintiff who presses for an opportunity to file a response. Let
+the reply be filed within four weeks, with an advance copy of the
+same to the opposite side. Rejoinder thereto, if any, be filed
+thereafter within two weeks of receiving an advance copy of the
+reply.
+2. Put up for further proceedings on 15.01.2026, the date
+already fixed.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 6, 2026/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:47
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 914/2023
+KONINKLIJKE PHILIPS N. V. & ORS.
+.....Plaintiff
+Through: Ms. Simranjot Kaur (VC),
+Advocate
+Versus
+KARMA MINDTECH & ORS.
+.....Defendant
+Through: Mr. Kunal Khanna, Mr. Udit
+Sharma (VC), Advocates for D-2
+Mr. Neeraj Kumar Gupta (VC)
+Mr. Ranjeet Kr Singh, Advocates
+for D-3
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 15.01.2026
+I.A. No. 143/2026 filed on behalf of defendant no. 3 for its
+deletion from the array of parties.
+1. Ld. Counsel for the plaintiff submits that reply to the
+aforesaid application shall be filed as per the timeline already
+indicated on 06.01.2026. Put up for completion of pleadings /
+arguments.
+CS(COMM) 914/2023
+2. List of witnesses has been filed on behalf of the plaintiffs.
+Affidavit/s in evidence however have not been filed by the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:46
+plaintiffs despite reasonable time having been afforded. Another
+opportunity is granted to the plaintiff to file the affidavit/s in
+evidence of the witnesses within four weeks subject however to
+cost of Rs.5000/- to be deposited with Bharat Ke Veer Fund,
+online portal, within two weeks. Failure to adhere to this
+timeline for filing affidavit/s or deposit of cost will entail
+imposition of further cost of Rs.20,000/-.
+3. No evidence is to be led on behalf of defendant nos. 2 & 3,
+as already recorded in the last order.
+4. Put up arguments in IA No. 143/2026 for on 30.04.2026.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 15, 2026/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:46

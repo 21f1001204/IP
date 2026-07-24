@@ -1,0 +1,839 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_901_2023
+case_status: DISPOSED
+n_orders: 9
+
+$~37
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 901/2023, I.As. 25533/2023, 25534/2023, 25535/2023,
+25536/2023, 25537/2023 & 25538/2023
+NEXXBASE MARKETING PVT. LTD. ..... Plaintiff
+Through: Mr. Rajshekhar Rao, Sr. Adv., Ms.
+Anuradha Salhotra, Mr. Zeeshan Khan,
+Advs. (M. 9560386043)
+versus
+PARMINDER SINGH ALIAS P. SINGH), ..... Defendant
+Through: None.
+CORAM:
+JUSTICE PRATHIBAM. SINGH
+O R D E R
+% 19.12.2023
+1. This hearing has been done through hybrid mode.
+2. The present suit has been filed by the Plaintiff - NEXXBASE
+MARKETING PVT. LTD. seeking enforcement of its rights on the marks
+‘NOISE’, ‘NOISE COLORFIT’and ‘NOISE’formative marks.
+3. The Plaintiff is seeking an injunction against the Defendant - MR.
+PARMINDER SINGH (ALIAS P. SINGH) from using the Plaintiff’s mark
+‘NOISE’or any other mark similar to the Plaintiffs ‘NOISE’Marks.
+4. Let intimation of the filing of the suit be given by the ld. Counsel for the
+Plaintiff to M/s Shiv Law House at the following address:
+Address: 29/109, Vardhaman Tower, G-Block, Community
+Centre, Vikas Puri, New Delhi-1100018
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:35
+Contact Details: 011-2854909, Mob: 9213033504,
+9868089051
+Email: shivlawhouse@gmail.com
+5. List on 20th December, 2023.
+PRATHIBA M. SINGH, J.
+DECEMBER 19, 2023
+Rahul/bh
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:35
+
+===== ORDER =====
+
+$~45
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 901/2023, I.As. 25533/2023, 25534/2023, 25535/2023,
+25536/2023, 25537/2023 & 25538/2023
+NEXXBASE MARKETING PVT. LTD. ..... Plaintiff
+Through: Mr. Raj Sekhar Rao Sr. Adv., Ms
+Anuradha Salhotra, Mr. Zeeshan
+Khan and Mr. Aman Venugopal.,
+Advs. (M. 9811068018)
+versus
+PARMINDER SINGH ALIAS P. SINGH, ..... Defendant
+Through: None.
+CORAM:
+JUSTICE PRATHIBAM. SINGH
+O R D E R
+% 20.12.2023
+1. This hearing has been done through hybrid mode.
+I.A. 25538/2023 (for exemption)
+2. This is an application filed by the Plaintiff seeking exemption from filing
+originals/certified/cleared/typed or translated copies of documents, proper
+margins, electronic documents, etc. Original documents shall be produced/filed
+at the time of Admission/Denial, if sought, strictly as per the provisions of the
+Commercial Courts, Commercial Division and Commercial Appellate Division
+of High Courts Act, 2015 (hereinafter, ‘Commercial Courts Act’) and the DHC
+(Original Side) Rules, 2018.
+3. Exemption is allowed, subject to all just exceptions. Accordingly,
+application is disposed of.
+CS(COMM)901/2023 Page1of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:34
+I.A. 25536/2023 (for exemption)
+4. This is an application filed by the Plaintiff seeking leave to file translated
+copies of documents which are not in English language. The Plaintiff, if it
+wishes to file translated documents at a later stage, shall do so strictly as per the
+provisions of the Commercial Courts Act and the DHC (Original Side) Rules,
+2018.Application is disposed of.
+I.A. 25534/2023 (for additional documents)
+5. This is an application seeking leave to file additional documents under
+the Commercial Courts Act, 2015. The Plaintiff, if it wishes to file additional
+documents at a later stage, shall do so strictly as per the provisions of the
+Commercial CourtsAct and the DHC (Original Side) Rules, 2018.
+6. Application is disposed of.
+I.A. 25537/2023 ( for original documents)
+7. This is an application seeking exemption from filing original documents.
+Recording the Plaintiff’s undertaking that the inspection of original documents
+shall be given, if demanded, or that the original documents shall be
+produced/filed at the time of Admission/Denial, if sought, strictly as per the
+provisions of the Commercial Courts Act and the DHC (Original Side) Rules,
+2018. Application is disposed of.
+I.A. 25535/2023 (u/S 12A)
+8. This is an application filed by the Plaintiff seeking exemption instituting
+pre-litigation mediation under Section 12Aof the Commercial CourtsAct.
+9. Considering the facts and circumstances of the case, which shows that
+the Defendant is a repeated infringer, the Court is satisfied that in terms of the
+CS(COMM)901/2023 Page2of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:34
+judgment of the Hon’ble Supreme Court in Yamini Manohar v. T.K.D Keerthi,
+(2023 LiveLaw (SC) 906), that the present suit contemplates urgent interim
+relief.
+10. Accordingly, the exemption is allowed and application is disposed of.
+CS(COMM) 901/2023
+11. Let the plaint be registered as a suit.
+12. Issue summons to the Defendant through all modes upon filing of
+Process Fee.
+13. The summons to the Defendant shall indicate that the written statement
+to the plaint shall be positively filed within 30 days from date of receipt of
+summons. Along with the written statement, the Defendant shall also file an
+affidavit of admission/denial of the documents of the Plaintiff, without which
+the written statement shall not be taken on record.
+14. Liberty is given to the Plaintiff to file the replication within 15 days of
+the receipt of the written statement. Along with the replication, if any, filed by
+the Plaintiff, an affidavit of admission/denial of documents of the Defendant, be
+filed by the Plaintiff, without which the replication shall not be taken on record.
+If any of the parties wish to seek inspection of any documents, the same shall
+be sought and given within the timelines.
+15. List before the Joint Registrar for marking of exhibits on 13th February,
+2024. It is made clear that any party unjustifiably denying documents would be
+liable to be burdened with costs.
+16. List before Court on 17th May, 2024.
+CS(COMM)901/2023 Page3of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:34
+I.A. 25533/2023 (u/O XXXIX Rules 1 & 2 CPC)
+17. Issue notice in the application.
+18. The Plaintiff-NEXXBASE MARKETING PVT. LTD. has filed the
+present suit against the Defendant described as Mr. P. Singh/MR.
+PARMINDER SINGH with three different addresses as shown in the memo of
+parties. The case of the Plaintiff is that it adopted the mark ‘NOISE’in 2010 for
+manufacturing and selling wireless phones and smart watches.
+19. The said mark has been registered by the Plaintiff in Class 25, 35, 14, 9,
+41, 42, 44, 45 in different device forms as also in variants. The details of the
+same are set out in paragraph 5 in the plaint. The Plaintiff is also manufacturing
+and selling various other products such as smartphone covers, smartphone
+accessories, wearable digital electronic devices, smart watches, wired and
+wireless earphones, headsets and earbuds, smart eyewear, fitness bands,
+Bluetooth devices and speakers etc., under their brand ‘NOISE’/
+‘NOISECOLORFIT’.
+20. The sales of the plaintiff are stated to be more than Rs.1,400/- crores in
+the year 2022-2023. The advertising expense of the Plaintiff is stated to be
+more than Rs.284 crores in the same financial year. The Plaintiff has been using
+the mark ‘NOISE’ on a standalone basis as also along with other prefixes and
+suffix such as ‘NOISEFIT’, ‘NOISE COLORFIT’and other formative marks.
+21. According to the Plaintiff, it is one of the fast selling consumer goods in
+the electronics sector and has obtained various awards as well. Several
+celebrities such as Nora Fatehi, Rohit Sharma, Taapsee Pannu, Rishabh Pant,
+Virat Kohli etc., have also endorsed the Plaintiff’s products. Plaintiffs
+CS(COMM)901/2023 Page4of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:34
+goods/services bearing the ‘NOISE’ marks are available and displayed on a
+number of websites including the Plaintiffs website www.gonoise.com.
+Plaintiff’s products are stated to be available on various third party e-commerce
+platforms and physical retail stores such as - Amazon, Myntra, Flipkart, Vijay
+Sales, Tata Cliq, Croma, Reliance Digital, Snapdeal,AJIO, and Nykaa, etc.
+22. The knowledge of the Defendant was acquired by the Plaintiff when the
+Defendant’s trademark application for the mark ‘NOISE’was advertised in the
+Trade Marks Journal for mobile phone and mobile accessories. Though, the
+Defendant’s mark was filed with a user claim of 2011, according to ld. Sr.
+Counsel appearing for the Plaintiff, no evidence of use has been placed in the
+opposition proceedings which was filed by the Defendants against the
+Plaintiff’s mark bearing no. 2792743 in class 9 dated 19th September, 2014.
+23. Considering the Defendant’s multiple applications for the mark ‘NOISE’
+as reflected in the Register of Trade Marks, there is a serious apprehension for
+the Plaintiff that the Defendant may, at some point, misuse the brand, traffic the
+brand or launch some products which may offend the Plaintiff’s statutory and
+common law rights. In order to ensure that the Defendant is fully put to notice
+of the rights of the Plaintiff, legal notice has also been addressed on 18th April,
+2022 to relinquish any claims to the said mark. However, in reply dated 12th
+May, 2022, the requisitions of the Plaintiff were not complied with.
+24. In this background, the Plaintiff also conducted enquiry and has found
+that the addresses given in the trade mark applications of the Defendant are all
+fictitious in nature. The Plaintiff has no assessment as to who is the actual
+Applicant for the said mark. Mr. Rao, ld. Sr. Counsel also points out that in the
+CS(COMM)901/2023 Page5of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:34
+name of this very Defendant, there are more than 200 applications, some of
+which are relating to several well-known trademarks, thus, there is a serious
+apprehension that the Defendant may misuse the mark ‘NOISE’.
+25. When the matter was listed yesterday, considering the background
+between the Plaintiff and the Defendant as also the proceedings pending before
+the Trade Marks Registry and the notices exchanged, ld. Counsel for the
+Plaintiff was directed to issue an intimation to the law firm which had replied to
+the legal notice. The affidavit of service has been placed on record that the said
+service was effected on 19th December, 2023 at around 11.52.am.
+26. However, today, there is no appearance on behalf of the Defendant. Ld.
+Counsel for the Plaintiff, further submits that in the affidavit of service, it is
+also stated that when the set of papers were sought to be delivered in the law
+firm office, the same was refused in the following terms:-
+“Additionally, we also attempted to deliver a complete
+set of the suit papers by hand to the Defendant’s
+counsel at their office address at: 29/109, Vardhaman
+Tower G-Block Community Centre, Vikas Puri, New
+Delhi-110018 at around 04:00 pm on December 19,
+2023. However, the office of the Defendant’s counsel
+refused to accept service of the suit papers.”
+27. The only evidence of use placed is a packaging and extract from the
+Flipkart website where the product is stated to be currently unavailable along
+with some invoices.
+CS(COMM)901/2023 Page6of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:34
+CS(COMM)901/2023 Page7of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:34
+28. The Court has perused the documents which are also on record filed in
+the opposition proceedings. It is clear from a perusal of the same that there
+would be a serious apprehension that the Defendant could launch the products
+under the mark ‘‘NOISE, NOISE COLORFIT’etc.
+29. Considering the rights of the Plaintiff in the said marks and the extensive
+goodwill that has been acquired owing to the sales turnover which has been
+placed on record, the present case is a fit case for grant of an injunction. The
+Defendants’use of a similar mark for similar products and electronic goods not
+only raises concerns about potential confusion but also suggests an attempt to
+free ride on the Plaintiff’s established reputation.
+30. Under such circumstances, the Court is convinced that the Plaintiff has
+made out a prima facie case for grant of an ex parte ad interim injunction.
+Further, the balance of convenience is also clearly in favour of the Plaintiff and
+CS(COMM)901/2023 Page8of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:34
+irreparable injury shall be to the Plaintiff, in case products with same or
+deceptively similar mark as that of the Plaintiff are allowed to continue or be
+launched in the market. Therefore, the Plaintiffs have made out a case for the
+grant of an ex-parte ad-interim injunction against the Defendants.
+31. Accordingly, the Defendant or anyone acting their its behalf shall stand
+restrained from manufacturing, selling and offering for sale any electronic,
+electrical products or any accessories, mobile phone, covers and related
+products under the marks ‘NOISE’, ‘NOISE COLORFIT’or any other variants
+consisting of the Plaintiff’s mark ‘NOISE’.
+32. The service shall also be affected on the Defendant’s address as at the
+email addresses of the law firm.
+33. Compliance of order XXXIX Rule 3 of CPC within one week.
+34. Reply to the application be filed within four weeks after service of
+pleadings and documents.
+35. List before the Joint Registrar on 13th February, 2024.
+36. List before the Court on 17th May, 2024.
+PRATHIBAM. SINGH, J.
+DECEMBER 20, 2023
+mr/bh
+CS(COMM)901/2023 Page9of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:34
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 901/2023
+NEXXBASE MARKETING PVT. LTD.
+..... Plaintiff
+Through: Mr. Aman Venugopal, Advocate
+versus
+PARMINDER SINGH ALIAS P. SINGH,
+..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 13.02.2024
+CS(COMM) 901/2023 & I.A. No. 25533/2023 (u/O XXXIX
+Rules 1 & 2 CPC):
+Defendant has been served with the summons on 20.01.2024
+through courier (Blue Dart). Plaintiff has also complied with
+requirement of Order XXXIX Rule 3 CPC.
+There is no appearance on behalf of the defendant. Let the
+written statement be filed as per rules with an advance copy of the
+same to the opposite side. Replication thereto be filed as per rules
+thereafter.
+Put up for completion of pleadings on 15.04.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 13, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:34
+
+===== ORDER =====
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 901/2023
+NEXXBASE MARKETING PVT. LTD.
+..... Plaintiff
+Through: Mr. Aman Venugopal (VC),
+Advocate
+versus
+PARMINDER SINGH ALIAS P. SINGH),
+..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 15.04.2024
+Despite being served on 20.01.2024, defendant has neither
+put in appearance nor filed any pleadings. However, the
+maximum permissible period to file the same has still not
+expired.
+Matter is already listed before the Hon’ble Court for
+17.05.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 17.05.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 15, 2024/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:33
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 901/2023
+NEXXBASE MARKETING PVT. LTD. ..... Plaintiff
+Through: Mr. Zeeshan Khan and Mr. Aman
+Venugopal, Advocates.
+versus
+PARMINDER SINGH ALIAS P. SINGH), ..... Defendant
+Through: None.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 17.05.2024
+I.A. 25533/2023 (u/Order XXXIX Rules 1 & 2 r/w Section 151 of CPC,
+1908)
+1. An ad-interim ex-parte injunction was granted in favour of the Plaintiff
+and against the Defendant by way of order dated 20th December, 2023,
+which is still continuing. In view of the fact that there is no contest to the
+present proceedings, the aforenoted injunction is made absolute and shall
+continue during the pendency of the present suit.
+2. The application is disposed of.
+CS(COMM) 901/2023
+3. As noted by the Joint Registrar in order dated 13th February, 2024, the
+Defendant has been served with summons on 20th January, 2024. However,
+there has been no appearance or pleadings filed on their behalf. The overall
+condonable limit of 120 days for filing written statement is expiring on 19th
+May, 2024.
+4. Renotify on 26th July, 2024.
+SANJEEV NARULA, J
+MAY 17, 2024/as
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:32
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 901/2023
+NEXXBASE MARKETING PVT. LTD. .....Plaintiff
+Through: Mr. Zeeshan Khan, Adv.
+versus
+PARMINDER SINGH ALIAS P. SINGH) .....Defendant
+Through: none
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 26.07.2024
+1. The Hon’ble Judge is on leave today.
+2. List on 30.08.2024.
+(By Order)
+COURT MASTER
+JULY 26, 2024/So
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:32
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 901/2023
+NEXXBASE MARKETING PVT. LTD. .....Plaintiff
+Through: Mr. Zeeshan Khan, Adv.
+versus
+PARMINDER SINGH (ALIAS P. SINGH) .....Defendant
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 30.08.2024
+1. The matter could not be taken up due to Special Bench matters at
+03:30 PM.
+2. Renotify on 04.10.2024.
+SAURABH BANERJEE, J
+AUGUST 30, 2024/rr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:31
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 901/2023
+NEXXBASE MARKETING PVT. LTD. .....Plaintiff
+Through: Mr Zeeshan Khan and Mr Aman
+Venugopal, Advocates
+versus
+PARMINDER SINGH (ALIAS P. SINGH) .....Defendant
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 04.10.2024
+1. In the order passed by the Predecessor Bench on 17th May, 2024, it
+was noted that the defendant has been served with summons on 20th January,
+2024. However, there has been no appearance on behalf of the defendant. It
+was further noted that the maximum permissible condonable limit for filing
+the written statement expired on 19th May, 2024.
+2. Even after the said date, the defendant has not entered appearance, nor
+has any written statement been filed.
+3. Accordingly, the right of the defendant to file written statement stands
+closed. Further, the defendant is proceeded against ex parte.
+4. List for further proceedings on 2nd December, 2024.
+AMIT BANSAL, J
+OCTOBER 4, 2024/PB
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:31
+
+===== ORDER =====
+
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+% Date of decision: 29th October, 2024
++ CS(COMM) 901/2023
+NEXXBASE MARKETING PVT. LTD. .....Plaintiff
+Through: Mr. Zeeshan Khan and Mr. Aman
+Venugopal, Advocates.
+versus
+PARMINDER SINGH (ALIAS P. SINGH) .....Defendant
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+AMIT BANSAL, J. (Oral)
+1. The present suit has been filed seeking relief of permanent injunction
+restraining the defendant from infringing the trademark of the plaintiff,
+passing off their goods as that of the plaintiff and other ancillary reliefs.
+PLEADINGSINTHEPLAINT
+2. The Plaintiff, Nexxbase Marketing Pvt. Ltd. is a company
+incorporated in 2009 under the laws of India.
+3. The plaintiff has been engaged in the business of manufacturing and
+selling smart phone covers, smart phone accessories, wearable digital
+electronic devices, smart watches, wired and wireless earphones, headsets
+and earbuds, smart eyewear, fitness bands, Bluetooth devices etc. under their
+home brand “NOISE/NOISE COLORFIT”.
+4. The plaintiff’s reputation in the market can be seen from the sales
+figures of its products in the country, the details of which are given in
+CS(COMM)901/2023 Page1of9
+paragraph 7 of the plaint. The success of the plaintiff’s products is further
+evidenced by the awards it has won, including the Forbes India Leadership
+award in 2023 and BusinessWorld India’s Top D2C Brand award in 2023.
+According to the recent ranking of International Data Corporation's
+worldwide Quarterly Wearable Device Tracker, the Plaintiff has been
+ranked as the no.1 smartwatch brand in India in 2020, no.3 in Asia, 9th
+Globally and no.2 in the Truly wireless brand category. The products sold
+by the plaintiff under its ‘NOISE’ marks have developed a substantial
+reputation and valuable goodwill amongst the members of the trade and the
+public.
+5. The Plaintiff is the registered proprietor of the following trademarks
+in India:
+S. No. Trademark Number Class Date
+1. NOISE 2127533 25 8th April, 2011
+2. GONOISE.COM 3274898 35 3rd June, 2016
+3. NOISE 3274899 14 3rd June, 2016
+4. NOISE 4056592 9 14th January, 2019
+5. NOISEFIT 5007726 41 17th June, 2021
+6. NOISEFIT 5007727 42 17th June, 2021
+7. NOISEFIT 5007728 44 17th June, 2021
+8. NOISEFIT 5007729 45 17th June, 2021
+9. NOISELAB 5415566 42 19th April, 2022
+The Certificates for use in Legal Proceedings are filed as documents no. 2 to
+9 of the additional documents filed along with the plaint. All the aforesaid
+registrations remain valid and subsisting.
+CS(COMM)901/2023 Page2of9
+6. The Defendant filed a notice of opposition against the Plaintiff’s trade
+mark application for the mark ‘NOISE’ bearing no.2792743 in class 9
+claiming use since 1st January, 2011 for mobile phones and accessories,
+which is currently pending adjudication before the Trademarks Registry.
+However, the plaintiff submits that there is no use of the impugned ‘NOISE’
+marks by the defendant.
+7. The Defendant has also filed numerous trademark applications for the
+‘NOISE’ and ‘NOISE’ formative marks which are identical and/or
+deceptively similar to the plaintiff’s ‘NOISE’ marks, detailed in paragraph
+21 of the Plaint. The same are set out below:
+S. Trademark Registration/ Class Date of Current
+No. Application registration/ status
+no. application
+Registered
+22nd
+(rectification
+1. NOISE 3760809 28 February,
+filed by the
+2018
+plaintiff)
+2nd January, Abandoned
+2. NOISE 4044084 9
+2019
+13th March, Opposed by
+3. NOISE PLAY 3776100 9
+2018 the plaintiff
+NOISE 1st June, Opposed by
+4. 4194495 9
+COLORFIT 2019 the plaintiff
+28th June, Opposed by
+5. NOISE 3296409 14
+2016 the plaintiff
+CS(COMM)901/2023 Page3of9
+8. The defendant has also filed other oppositions against the trademark
+applications of the plaintiff for other noise formative marks, the details of
+which are given in paragraph 22 of the plaint and are being set out below:
+S. Trademark Application Class Date of Current
+No. no. application status
+Opposed by
+20th July,
+1. Noise X1 Air 5051267 9 the
+2021
+Defendant
+4th Opposed by
+2. Noise Shots 3934528 9 September, the
+2018 Defendant
+15th April, Opposed by
+3. NoiseFit 4148177 9
+the
+2019
+Defendant
+Noise 8th August, Opposed by
+4. 4259430 9
+the
+TuneSport 2019
+Defendant
+Opposed by
+17th June,
+5. NOISEFIT 5007725 35 the
+2021
+Defendant
+Opposed by
+17th June,
+6. NOISEFIT 5007724 14 the
+2021
+Defendant
+9. The defendant has also initiated rectification proceedings before the
+Trademarks Registry against the plaintiff’s registration no.4056592 which is
+currently pending adjudication.
+CS(COMM)901/2023 Page4of9
+PROCEEDINGSINTHESUIT
+10. On 20th December 2023, this Court granted an ex-parte ad-interim
+injunction against the defendant and the defendant was restrained from
+manufacturing, selling or offering for sale any products under the mark
+‘NOISE’, ‘NOISE COLORFIT’ or any other variants consisting of the
+plaintiff’s mark ‘NOISE’.
+11. On 13th February, 2024, the learned Joint Registrar noted that the
+defendant was duly served. Despite this, none had appeared on behalf of the
+defendant.
+12. The ex-parte ad interim injunction passed on 20th December, 2023
+was made absolute vide order dated 17th May, 2024.
+13. Via order dated 4th October, 2024 the right of the defendant to file
+written statement was closed since the maximum permissible period to file
+the written statement was over. Further, the defendant was proceeded
+against ex-parte.
+14. The plaintiff now seeks a decree in terms of Order VIII Rule 10 of the
+Code of Civil Procedure, 1908 (CPC).
+ANALYSISANDFINDINGS
+15. I have heard the submissions of Mr. Zeeshan Khan, learned counsel
+for the plaintiff and also perused the material on record.
+16. In Satya Infrastructure (supra), a Co-ordinate Bench of this Court
+held as follows:-
+“4. The next question which arises is whether this Court should
+consider the application for interim relief and direct the plaintiffs
+to lead ex parte evidence. The counsel for the plaintiffs states that
+the plaintiffs are willing to give up the reliefs of delivery, of
+renditionof accounts andof recoveryof damages,if thesuit for the
+relief of injunctionaloneweretobeheard today.
+CS(COMM)901/2023 Page5of9
+5. I am of the opinion that no purpose will be served in such cases
+by directing the plaintiffs to lead ex parte evidence in the form of
+affidavit by way of examination-in chief and which invariably is a
+repetition of the contents of the plaint. The plaint otherwise, as per
+the amended CPC, besides being verified, is also supported by
+affidavits of the plaintiffs. I fail to fathom any reason for according
+any additional sanctity to the affidavit by way of examination-in-
+chief than to the affidavit in support of the plaint or to any exhibit
+marks being put on the documents which have been filed by the
+plaintiffs and are already on record. I have therefore heard the
+counsel for theplaintiffsonmerits quatherelief of injunction.”
+17. The plaint has been duly verified and is also supported by the affidavit
+of the plaintiff. In view of the fact that no written statement has been filed
+on behalf of the defendant, all the averments made in the plaint have to be
+taken to be admitted. Further, since no affidavit of admission/denial has
+been filed on behalf of the defendant in respect of the documents filed with
+the plaint, in terms of Rule 3 of the Delhi High Court (Original Side) Rules
+2018, the same are deemed to have been admitted. Therefore, in my opinion
+this suit does not merit trial and the suit is capable of being decreed in terms
+of Order VIII Rule 10 of CPC.
+18. From the averments made in the plaint and the evidence on record, the
+plaintiff has been able to prove that the plaintiff is the registered proprietor
+of the trademarks “NOISE”, “NOISE COLORFIT” and their formative
+marks.
+19. The defendant is using marks which are virtually identical, and bears
+phonetic, structural and visual similarities to that of the plaintiff’s impugned
+mark, “NOISE”. Hence, the defendant has replicated the contents, colour
+scheme, and the ‘NOISE’ trademarks of the plaintiff.
+20. Based on the discussion above, a clear case of infringement of
+CS(COMM)901/2023 Page6of9
+trademark is made out. The defendant has taken unfair advantage of the
+reputation and goodwill of the plaintiff’s trademark and has also deceived
+the unwary consumers of their association with the plaintiff’s by dishonestly
+adopting the plaintiff’s registered marks without any plausible explanation.
+Therefore, the plaintiff has established a case of passing off as well.
+21. At this stage, it may be relevant to note that the defendant did not
+appear before the Court, despite service of summons on 20th January, 2024.
+Further, no communication on behalf of the defendant has been placed on
+record in respect of the allegations of the plaintiff in this suit. Hence, the
+right to file written statement of the defendant was closed on 4th October,
+2024.
+22. Since the defendant has failed to take any requisite steps to contest the
+present suit, despite having suffered an ad interim injunction order, it is
+evident that the defendant has no defence to put forth on merits.
+RELIEF
+23. In view of the foregoing analysis, the suit is decreed in terms of prayer
+clauses 47(i), 47(ii), 47(iii), 47(iv) and 47(v) of the plaint. The said clauses
+read as follows:
+“47. In these circumstances and in the larger interest of justice, it is most
+humbly prayed that this Hon'ble Court may be pleased to grant the
+followingreliefs:
+i. Pass a decree of permanent injunction against the Defendant,
+his partners, authorized representatives, successors,
+franchisees, licensees, distributors, assignees, agents, and
+anyone acting for and/ or on its behalf from selling, offering for
+sale, marketing, advertising, manufacturing, and directly or
+indirectly dealing in any goods/services bearing the Impugned
+NOISE Marks and/or any other mark similar to the Plaintiffs
+NOISE Marks as a trademark/part of a trademark, trade
+name/part of a trade name, corporate name/part of a corporate
+CS(COMM)901/2023 Page7of9
+name, domain name/part of a domain name and/or in any other
+manner whatsoever, which would amount to infringement of the
+Plaintiffs registeredtrademark;
+ii. Pass a decree of permanent injunction against the Defendant,
+his partners, authorized representatives, successors,
+franchisees, licensees, distributors, assignees, agents, and
+anyone acting for and/ or on its behalf from selling, offering for
+sale, marketing, advertising, manufacturing, and directly or
+indirectly dealing in any goods/services bearing the Impugned
+NOISE Marks and/or any other mark similar to the Plaintiffs
+NOISE Marks as a trademark/part of a trademark, trade
+name/part of a trade name, corporate name/part of a corporate
+name, domain name/part of a domain name and/or in any other
+manner whatsoever, which would amount to passing off of the
+Plaintiffs trademark/products;
+iii. Pass a decree of permanent injunction against the
+Defendant, his partners, authorized representatives, successors,
+franchisees, licensees, distributors, assignees, agents, and
+anyone acting for and/ or on its behalf from filing any
+application for registration of a mark similar to the Plaintiffs
+NOISEMarks as elaboratedinparagraphNo.5ofthePlaint;
+iv. The Defendant, his partners, authorized representatives,
+successors, franchisees, licensees, distributors, assignees,
+agents, and anyone acting for and/ or on his behalf be ordered
+by a decree of mandatory injunction to withdraw/cancel any/all
+the trademark application(s)/ registration(s), and/ or Copyright
+application filed by it for the Impugned Noise Mark and/or any
+other mark which is similar to the Plaintiffs NOISE Marks,
+including but not limited to Defendant's trade mark
+application/registration numbers 3760809, 4044084, 3776100,
+4194495 and 3296409 and/or any other trademark which is
+identical/deceptively similar to the Plaintiffs prior registered
+NOISEMarks;
+v. The Defendant be directed by a decree of mandatory
+injunction to deliver to the Plaintiff's attorneys or its
+representatives for destruction, any and/or all products, labels,
+stickers, moulds, signs, stationery, business cards, prints,
+packages, plates, dyes, wrappers, receptacles, materials, and
+advertisements, if any, in his possession or under his control,
+bearing the Impugned NOISE Marks and/or any other
+trademark that is identical or deceptively similar to or bearing
+CS(COMM)901/2023 Page8of9
+thePlaintiffs NOISEMarks”
+24. Insofar as the relief of damages as sought in prayer clause 47(vi) is
+concerned, reference may be made to the judgment in Hindustan Lever Ltd.
+v. Satish Kumar, 2012 SCC OnLine Del 1378. The relevant observations
+are set out below:
+“23. One of the reasons for granting relief of punitive damages
+is that despite of service of summons/notice, the defendant had
+chosen not to appear before the court. It shows that the
+defendant is aware of the illegal activities otherwise, he ought to
+have attended the proceedings and give justification for the said
+illegal acts. Since, the defendant has maintained silence,
+therefore, the guilt of the defendant speaks for itself and the
+court, under these circumstances, feels that in order to avoid
+future infringement, relief of punitive damages is to be granted
+infavour of theplaintiff.”
+25. In light of the foregoing analysis, the Court concludes that the
+defendant’s conduct not only warrants, but also necessitates the imposition
+of both costs and aggravated damages. Thus, in addition to decree passed in
+the terms already mentioned above, taking into account the entire facts and
+circumstances presented in this case, the Court also awards damages and
+costs amounting to INR 5,00,000/- in favour of the plaintiff and against the
+defendant.
+26. Let the decree sheet be drawn up.
+27. All pending applications stand disposed of.
+AMIT BANSAL, J
+OCTOBER 29, 2024
+CS(COMM)901/2023 Page9of9

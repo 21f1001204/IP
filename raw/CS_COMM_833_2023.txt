@@ -1,0 +1,1154 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_833_2023
+case_status: PENDING
+n_orders: 18
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+Date of decision: 21st November, 2023
++ CS(COMM) 833/2023, I.As. 23077/2023, 23078/2023 &
+23079/2023
+UNIVERSAL CITY STUDIOS LLC. & ORS. ..... Plaintiffs
+Through: Mr. Saikrishna Rajagopal, Ms.
+Suhasini Raina, Ms. R. Ramya, Ms.
+Mehr Sidhu and Mr. Raghav Goyal,
+Advocates (M-9845057887))
+versus
+FZTVSERIES.MOBI & ORS ..... Defendants
+Through: None.
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+Prathiba M. Singh, J. (Oral)
+1. This hearing has been done through hybrid mode.
+I.A. 23078/2023 (for exemption)
+2. This is an application filed by the Plaintiffs seeking exemption from
+filing certified/translated copies of documents with proper margins, etc.
+Original documents shall be produced/filed at the time of Admission/Denial,
+if sought, strictly as per the provisions of the Commercial Courts Act, 2015
+and the DHC (Original Side) Rules, 2018.
+3. Exemption is allowed, subject to all just exceptions. Accordingly, the
+application is disposed of.
+I.A. 23079/2023 (u/S 80 CPC)
+4. This is an application filed by the Plaintiffs, seeking exemption from
+serving notice to Defendant No. 55- Department of Telecommunications
+(DoT) and Defendant No. 56- Ministry of Electronics and Information
+CS(COMM) 833/2023 Page 1 of 30
+Technology (MEITY) under Section 80 of the CPC.
+5. Exemption is allowed. However, Mr. Harish V. Shankar, ld. CGSC
+has been requested to accept notice.
+6. Accordingly, application is disposed of.
+CS(COMM) 833/2023
+7. Let the plaint be registered as a suit.
+8. Issue summons to the Defendants through all modes upon filing of
+Process Fee.
+9. The summons to the Defendants shall indicate that the written
+statement to the plaint shall be positively filed within 30 days from date of
+receipt of summons. Along with the written statement, the Defendants shall
+also file an affidavit of admission/denial of the documents of the Plaintiffs,
+without which the written statement shall not be taken on record.
+10. Liberty is given to the Plaintiffs to file the replication within 15 days
+of the receipt of the written statement. Along with the replication, if any,
+filed by the Plaintiffs, an affidavit of admission/denial of documents of the
+Defendants, be filed by the Plaintiffs, without which the replication shall not
+be taken on record. If any of the parties wish to seek inspection of any
+documents, the same shall be sought and given within the timelines.
+11. List before the Joint Registrar for marking of exhibits on 11th January,
+2024. It is made clear that any party unjustifiably denying documents would
+be liable to be burdened with costs.
+12. List before Court on 21st March, 2024.
+I.A. 23077/2023(u/O XXXIX Rules 1 & 2 CPC)
+13. Issue notice.
+14. In a continued effort to curb dissemination of pirated content and its
+CS(COMM) 833/2023 Page 2 of 30
+availability on internet, the Plaintiffs who are well established Hollywood
+Studios have approached this Court seeking blocking and removal of their
+copyrighted content, from the internet, accessed through rogue websites.
+15. The Plaintiffs in the present matter before this Court are engaged in
+the production and distribution of a large volume of original creative content
+including cinematograph films, TV series, motion pictures, etc. (hereinafter
+‘content’). The list of Plaintiffs in the present petition is set out in the
+following table:
+Plaintiff No. Name of the Plaintiff
+1. Universal City Studios LLC.
+2. Warner Bros. Entertainment Inc.
+3. Columbia Pictures Industries, Inc.
+4. Netflix Studios, LLC
+5. Paramount Pictures Corporation
+6. Disney Enterprises, Inc.
+16. The suit is filed against a number of rogue websites who are
+unlawfully disseminating and communicating a large quantum of
+copyrighted content of the Plaintiffs. For a ready reference of the names of
+the Defendant websites, the list of Defendant websites as given in the memo
+of parties of this suit is attached to the present order as Annexure A.
+17. The Plaintiffs claim that the content created, produced and distributed
+by, or on behalf of the Plaintiffs’ studios, can be accessed and viewed on a
+variety of devices including Televisions, Personal Computers, Laptops,
+Tablets, Mobile Phones, etc. The said gadgets also permit authorised
+streaming and downloading of this content. The Plaintiffs’ studios own
+CS(COMM) 833/2023 Page 3 of 30
+Copyright in the entire content which is protectable as cinematograph films
+and also own rights in various underlying works – which are recognised
+under the Copyright Act, 1957 (hereinafter, ‘the Act’). The Plaintiffs also
+claim to have devoted enormous resources in the creation, production and
+distribution of the content, as also communication of the content so
+developed to the public. It is also stated that considerable effort and
+resources are used for even marketing and advertising of the content
+developed by the Plaintiffs.
+18. Technology has posed a major challenge for entities like the Plaintiffs
+as there is a proliferation of a large number of platforms including websites
+from where unauthorised, unlicensed and pirated content of the Plaintiffs
+can be downloaded, accessed and viewed by customers and viewers. The
+process of production of copyrighted content is a continuous one and almost
+on a daily basis new content is being added into the bouquet of content of
+the Plaintiffs. Thus, the content consisting of films, TV series, shows, etc. is
+itself dynamic in nature and the reproduction, hosting, uploading, streaming,
+downloading, broadcasting, telecasting or making available of this content in
+an unauthorized manner is, apart from constituting infringement of
+Copyright also resulting in enormous monetary loss to the Plaintiffs.
+19. The present suit has been filed by the Plaintiffs against various
+websites which are permitting the viewing, streaming, accessing and
+downloading of such content without any license or authorisation from the
+Plaintiffs. The various websites which are impleaded as Defendant Nos. 1
+to 45 have different avatars but continue to make available the unauthorised
+content of the Plaintiffs and also other copyright holders. Such websites
+primarily contain content which is being taken in an unauthorised manner,
+CS(COMM) 833/2023 Page 4 of 30
+from various platforms including that of the Plaintiffs. Some of the websites
+are newer versions of rogue websites which have been injuncted in other
+litigation. Some of the glaring features of these rogue websites are as
+follows:
+i) No details are available as to the persons or entities who have
+registered the domain names and the websites have subscribed to
+features like privacy protect, to hide/mask their identity;
+ii) There is no clarity from a perusal of the websites as to who is the
+person or entity who is making available the content, which is
+being hosted, streamed or viewed on these websites;
+iii) There are no contact details and addresses which are available in
+most occasions, except e-mails addresses. Some of the websites
+are also providing advertising for services such as Virtual Private
+Networks (VPNs) and thus, appear to be generating revenue for
+themselves;
+iv) These rogue websites are also providing different quality and
+format options for downloading Copyrighted content of the
+Plaintiffs, including High Definition (HD option);
+v) The content hosted or linked on the said websites are also
+downloadable on mobile phones;
+vi) The websites also have utilized content from OTT platforms and
+various regional as also foreign language cinematograph films;
+vii) It also appears that the websites encourage users to join the
+platforms which support sharing of voluminous content such as
+Telegram, etc. in order to be able to communicate and transmit
+unauthorised content;
+CS(COMM) 833/2023 Page 5 of 30
+viii) Some websites give different options to the user and also provide
+the genre of the content;
+ix) The FZ series of domain names like fzmovies.net,
+fztvseries.mobi, fzstudios.app are making available the pirated
+content on a real time basis and the said domain names and
+website operators are also using other domain names such as
+Mobiletvshows.net;
+x) Some instances of promotion of contents and advertising within
+the sites are reproduced herein below:
+CS(COMM) 833/2023 Page 6 of 30
+CS(COMM) 833/2023 Page 7 of 30
+xi) In some instances, these rogue websites are also promoting their
+mobile applications and promoting the downloading of the ‘.apk’
+files for the same. An example of this is set out below:
+20. The ld. Counsel for the Plaintiffs submits that the Plaintiffs have
+issued legal notices to all the Defendant websites, however only few of them
+reverted to the notices.
+21. Some of the websites such as raretoonsindia.pro,
+raretoonsindia.com.co, and similar extensions thereof are showing children’s
+content. A reply was received from the one series of domain names i.e.,
+raretoonsindia.pro, raretoonsindia.watch raretoonsindia.com.co,
+raretoonsindia.tv from the email id- raretoonsindia@proton.me on 3rd
+November, 2023 to the effect that all content is deleted. The said reply is
+extracted herein below:
+“Thanks For Informing Us! All Requested Content is
+Deleted!”
+CS(COMM) 833/2023 Page 8 of 30
+22. However, immediately thereafter, instead of the four domain names
+which were issued a notice, a new domain name being www.raretoons.me
+was made available online and the corresponding website had surfaced
+having the identical pirated content to that of the earlier four domain names.
+23. It is clear from a perusal of the screenshots that have been placed on
+record that the rogue websites have a way of surfacing every time when
+notices are issued or blocking orders are issued. This Court has from time-
+to-time evolved jurisprudence on protecting copyrighted content. One of the
+first decisions which took stringent measures against such websites was the
+decision authored by Justice Manmohan in UTV Software Communication
+Ltd. and Ors v. 1337x.to and Ors, (2019) 78 PTC 375 (Del). In the said
+decision, the Court took note of the dynamic nature in which duplication of
+websites can happen, especially because mirror websites can spring up
+within a matter of a few minutes.
+24. Thereafter, several orders have also been passed by this Court in
+respect of rogue websites such as such as in CS(COMM) 157/2022 titled
+Star India Pvt. Ltd v. Live Flixhub.Net, CS(COMM) 471/2019 titled Star
+India Pvt. Ltd. Vs. Moviemad.biz & Ors, and CS(COMM) 195/2019 titled
+Star India Pvt. Ltd. Vs. Extramovies.host & Ors. These orders have clearly
+established without any doubt that the ease with which domain names can be
+registered and privacy protection on the registration of domains allows the
+owners and the operators of these websites to hide and camouflage
+themselves behind the said registrations. The said operators are also not
+being subject to any monetary damages or compensation due to the privacy
+protect feature made available by DNRs. The same in effect gives them an
+immunity to continue to engage in privacy of this nature.
+CS(COMM) 833/2023 Page 9 of 30
+25. Recently, vide judgement date 9th August, 2023 in Universal City
+Studios LLC. & Ors. v. Dotmovies.baby & Ors., 2023:DHC:5842 this Court
+has also taken stringent measures to protect Copyright owners from
+infringement of their content by rogue websites by issuing a Dynamic+
+Injunction. The relevant extract of the said decision in Universal City
+Studios LLC. & Ors. (supra) is extracted below:
+“11. The Court had put a question to the ld.
+Counsel for the Plaintiffs as to how the dynamic
+generation of content can be protected in a suit where
+even future works of the Plaintiffs’ can be covered.
+Mr. Saikrishna, ld. Counsel has taken the Court
+through the decision of this Court in UTV Software
+Communication Ltd. and Ors v. 1337x.to and Ors,
+(2019) 78 PTC 375 (Del) where this aspect is
+considered by the Court as under:
+“16. He pointed out that there were at least
+122 other movies of the plaintiffs on
+www4.fmovies.to. Learned Amicus Curiae
+stated that the plaintiffs had not fully checked
+their own movies on the said website, let alone
+third-party content. He contended that the
+least due diligence expected of the plaintiffs
+was to provide evidence of at least all of their
+own movies, if not of third parties (though
+expected) that were illegally available on the
+impugned websites.
+17. He submitted that the “three-step
+verification test” evolved by the Bombay High
+Court in Eros International Media v. BSNL,
+Suit No. 751 of 2016, which consisted of
+verification by an independent entity,
+extensive documents being placed on record
+and an affidavit on oath, was not satisfied in
+the present case. He contended that the
+evidence of the nature envisaged by courts
+CS(COMM) 833/2023 Page 10 of 30
+was lacking in the present case. The relevant
+portion of the orders in Eros International
+Media (supra) relied upon by Mr. Hemant
+Singh are reproduced hereinbelow:-
+a) Order dated 22nd July, 2016
+“2. I am making it clear that I will not
+grant an injunction or order to block
+URLs that point to websites unless it is
+demonstrated that the entirety of the
+website contains, and contains only,
+illicit material. Without that being
+attested to and established on Affidavit,
+I will not consider an order that results
+in the blocking of an entire website.
+b) Order dated 26th July, 2016
+“14. Thus, what I have before me now
+is a three-step verification. First, a
+verification and an assessment by
+Aiplex (Plaintiff). This is accompanied
+by their letter in writing. There is then
+a second level of verification that is said
+to have been done by the deponent of
+the Affidavit along with the Plaintiffs'
+Advocates; and finally all of this
+material is placed on Affidavit and is
+now on oath. I think this is sufficient
+material on which to base an order.”
+xxx xxx xxx
+87. This Court is also of the opinion that it
+has the power to order ISPs and the DoT as
+well as MEITY to take measures to stop
+current infringements as well as if justified
+by the circumstances prevent future ones.
+xxx xxx xxx
+107. Keeping in view the aforesaid findings, a
+decree of permanent injunction is passed
+restraining the defendant-websites (as
+CS(COMM) 833/2023 Page 11 of 30
+mentioned in the chart in paragraph no. 4(i)
+of this judgment) their owners, partners,
+proprietors, officers, servants, employees, and
+all others in capacity of principal or agent
+acting for and on their behalf, or anyone
+claiming through, by or under it, from, in any
+manner hosting, streaming, reproducing,
+distributing, making available to the public
+and/or communicating to the public, or
+facilitating the same, on their websites,
+through the internet in any manner
+whatsoever, any cinematograph
+work/content/programme/show in relation to
+which plaintiffs have copyright. A decree is
+also passed directing the ISPs to block access
+to the said defendant-websites. DoT and
+MEITY are directed to issue a notification
+calling upon the various internet and telecom
+service providers registered under it to block
+access to the said defendant-websites. The
+plaintiffs are permitted to implead the
+mirror/redirect/alphanumeric websites under
+Order I Rule 10 CPC in the event they
+merely provide new means of accessing the
+same primary infringing websites that have
+been injuncted. The plaintiffs are also held
+entitled to actual costs of litigation. The costs
+shall amongst others include the lawyer's fees
+as well as the amount spent on Court-fees.
+The plaintiffs are given liberty to file on
+record the exact cost incurred by them in
+adjudication of the present suits. Registry is
+directed to prepare decree sheets accordingly.
+xxx xxx xxx
+13. Piracy and unauthorized reproduction of
+copyrighted content is a serious issue the world over.
+In view of the easy and affordable access to the
+CS(COMM) 833/2023 Page 12 of 30
+internet across the globe, copyright owners are forced
+to take action in different jurisdictions, that are
+material to their revenue in order to seek injunctions
+against rogue websites, which offer content in an
+unauthorised manner. Courts across the world have
+been providing various remedies in order to protect the
+rights of copyright owners. For instance, in The
+Football Association Premier League v. British
+Telecommunications PLC and Ors., [2017] EWHC
+480 (Ch), the High Court of Justice, Chancery
+Division, U.K., vide judgement dated 13th March, 2017,
+had passed orders directing ISPs to block access to the
+websites distributing, transmitting and streaming
+unauthorised content of the Barclays Premier League
+matches. In the said decision, the Court considered
+various issues such as proportionality and safeguards
+including the avoidance of barriers to legitimate trade
+before passing the orders of blocking.
+14. In addition to the decision in The Football
+Association Premier League (supra), in several
+decisions, various torrent websites such as ‘The Pirate
+Bay’, ‘KAT’, ‘Fenopy’ and ‘H33T’ which were
+rampantly indulging in copyrights infringement were
+directed to be blocked though a series of judgements.
+The said series of judgements include Dramatico
+Entertainment Ltd v British Sky Broadcasting Ltd
+[2012] EWHC 268 (Ch) and EMI Records Ltd v
+British Sky Broadcasting Ltd [2013] EWHC 379
+(Ch). Further, the High Court of Ireland has in
+judgement dated 11th October, 2010 in EMI Records
+[Ireland] Ltd & Ors v. UPC Communications Ireland
+Ltd, [2010] IEHC 377 highlighted the nature of the
+problem being faced by the creative industry as also
+the economic issues that arise due to rogue websites.
+The relevant extracts of the said judgement are set out
+below:
+“The Nature of the Problem
+8. I am satisfied that the business of the
+CS(COMM) 833/2023 Page 13 of 30
+recording companies is being devastated by
+internet piracy. This not only undermines
+their business but ruins the ability of a
+generation of creative people in Ireland, and
+elsewhere, to establish a viable living. It is
+destructive of an important native industry.
+While the evidence focussed on the recording
+industry, the retail sector must also be
+affected by this wholesale theft.
+Furthermore, the evidence presented
+convinces me that a substantial portion of
+the generation now in their teenage years
+and twenties are actively dissuaded by illegal
+alternatives from legitimately purchasing
+music.
+xxx xxx xxx
+Economic Issues
+xxx xxx xxx
+19. More widely, however, internet piracy is
+an economic and a moral problem. Were
+men to walk into a cinema and in the dark,
+set up a small tripod for a machine to
+digitally record the latest movie blockbuster,
+to use the appropriate colloquial
+terminology, most right thinking people
+would be appalled. To entertain themselves
+and their families at home, they would have
+to wait three or four months to buy the DVD
+on its release and spend about €15 to have
+the film and whatever extras were added on
+to make it attractive. It is hardly credible
+that cinema owners would not be aware of
+this problem taking place. If they did
+nothing, and allowed people to proceed with
+illegally capturing the film, the first step
+would have been taken with their
+CS(COMM) 833/2023 Page 14 of 30
+acquiescence in the undermining of
+Copyright. Attendance at the film would
+plummet, because a group of friends would
+be drawn into deciding that a cheaper
+alternative for say five or ten of them,
+instead of having to spend between €50 and
+€100 on cinema admission, would be to buy
+a pirated copy of the film and watch it in the
+comfort of their home on the now almost
+ubiquitous flat screen television of large size
+that graces our home life. If nothing were
+done about the men, their camera and their
+tripod, their digital reproduction equipment
+and their sales, on the release of the DVD of
+the film, legal purchases would be minimal.
+Similarly, in the week of commencing writing
+this, the National Youth Orchestra of Ireland
+presented a stirring new composition,
+‘Summer Overture’ by Shaun Davey, in the
+National Concert Hall. . Nowadays it is
+possible to attend a concert and to have CDs
+of it legally for sale fifteen minutes after
+conclusion. A person could covertly capture
+the music on a small digital recorder. If that
+individual went out to a van in which he had
+a great deal of digital copying equipment,
+reproduced it without permission and sold
+the CDs to those leaving the concert, it
+would rightly be regarded as flagrant abuse
+of Copyright. I cannot see how an illegal
+recording on site and the subsequent public
+or internet offering for free, with no return
+to the composer or performer for their
+creativity, is anything other than a scandal.
+I have no doubt that any responsible cinema
+owner, or concert hall owner would stop
+internet piracy, if made aware of it. I am
+further satisfied that a reasonable person in
+CS(COMM) 833/2023 Page 15 of 30
+that position would be vigilant to prevent it
+in a cinema or in a concert venue. A failure
+to address those problems, by those who can
+address the abuse, is not excusable. It
+constitutes the abuse of the economic
+interests of the creative community. This
+kind of theft is shameful. Many who see that
+activity on the street would shun the
+commerce of exploiting the rights of artists
+for no return. Peer pressure would prevent
+much of it. But the internet allows a
+dispensation from shame, as internet thieves
+figure that no one will know what is being
+done behind the closed doors of internet
+access. Essentially, that coupled with the
+failure of internet service providers to act
+like a responsible cinema or concert venue
+owner would act, is why the problem is so
+extreme
+20. There is no difference between the
+public situations I have described and the
+piracy of music tracks over the internet. It
+has the same consequence. The conduit for
+that illegal activity is, however, not the street
+or the pavement outside a cinema; it is the
+internet service providers. It is clear that
+they have an economic and moral obligation
+to address the problem. I do not accept any
+of the evidence from UPC, referred to later
+in this judgment, as to why this has not been
+done. Instead, the effect on the market place
+of illegal downloads, through the internet, is
+to increase the profit levels of internet
+service providers. Relevant correspondence
+from within UPC is profoundly disturbing as
+to the reality of their approach.
+21. The evidence establishes that this
+problem is a massive one. This is an
+CS(COMM) 833/2023 Page 16 of 30
+instance where the multiplication on a huge
+scale of small problems has changed the
+nature of the issue into a huge pilfering of
+the resources of creative artists. For each
+individual person, the number of downloads
+cannot be regarded as being on a
+commercial scale. It is the multiplication of
+the problem through millions of individuals
+feeling free to use the internet to pirate the
+Copyright of creative artists and recording
+companies that has created the undermining
+of that right on a foundational scale.”
+15. Even in India, regularly orders are being
+passed by Courts, against websites which consist of
+unauthorized and illegal content, in an effort to combat
+the scourge of internet/network piracy. Recently, the
+Bombay High Court in Applause Entertainment Pvt.
+Ltd. v. Meta Platforms Inc., 2023 SCC OnLine Bom
+1034, has directed the blocking of all social media
+accounts which were being used for communicating
+substantial parts of a web series hosted on an OTT
+platform. In the said decision, while apprehending
+that continuation of such unauthorised dissemination
+using different names and identities, the Court issued
+an ex-parte ad-interim dynamic injunction, restraining
+even the adoption of different identities to perpetuate
+such unauthorised dissemination. The only effective
+measure at this stage, which domestic courts are
+therefore granting is blocking of these websites and
+extension of the injunction to mirror websites even if
+they are with alphanumeric variations.
+16. The dynamism of the injunction, by itself, in
+one country or another may not, however be sufficient
+to protect copyright owners. There is an imminent
+need to evolve a global consensus in this regard
+inasmuch as despite ISPs blocking these websites, the
+said websites can be accessed through VPN servers,
+CS(COMM) 833/2023 Page 17 of 30
+and other methods to which the long arm of the law
+cannot extend etc.
+17. Any injunction granted by a Court of
+law ought to be effective in nature. The injunction
+ought to also not merely extend to content which is past
+content created prior to the filing of the suit but also to
+content which may be generated on a day-to-day basis
+by the Plaintiffs. In a usual case for copyright
+infringement, the Court firstly identifies the work,
+determines the Copyright of the Plaintiff in the said
+work, and thereafter grants an injunction. However,
+owing to the nature of the illegalities that rogue
+websites induldge in, there is a need to pass
+injunctions which are also dynamic qua the Plaintiffs
+as well, as it is seen that upon any film or series being
+released, they may be immediately uploaded on the
+rogue websites, causing severe and instant monetary
+loss. Copyright in future works comes into existence
+immediately upon the work being created, and
+Plaintiffs may not be able to approach the Court for
+each and every film or series that is produced in the
+future, to secure an injunction against piracy.”
+26. Having noticed the need for passing effective injunction orders and
+observing globally well-settled jurisprudence that such websites primarily
+consist of pirated content, which deserve to be injuncted, the Court had
+passed a Dynamic+ injunction in the above-mentioned case in the following
+terms:
+“19. As innovation in technology continues,
+remedies to be granted also ought to be calibrated by
+Courts. This is not to say that in every case, an
+injunction qua future works can be granted. Such
+grant of an injunction would depend on the fact
+situation that arises and is placed before the Court.
+20. In the facts and circumstances as set out
+above, an ex parte ad interim injunction is granted
+CS(COMM) 833/2023 Page 18 of 30
+restraining the Defendants, who are all rogue websites,
+from in any manner streaming, reproducing,
+distributing, making available to the public and/or
+communicating to the public any copyrighted content
+of the Plaintiffs including future works of the Plaintiffs,
+in which ownership of copyright is undisputed, through
+their websites identified in the suit or any
+mirror/redirect websites or alphanumeric variations
+thereof including those websites which are associated
+with the Defendants’ websites either based on the
+name, branding, identity or even source of content. To
+keep pace with the dynamic nature of the
+infringement that is undertaken by hydra-headed
+websites, this Court has deemed it appropriate to issue
+this ‘Dynamic+ injunction’ to protect copyrighted
+works as soon as they are created, to ensure that no
+irreparable loss is caused to the authors and owners
+of copyrighted works, as there is an imminent
+possibility of works being uploaded on rogue websites
+or their newer versions immediately upon the
+films/shows/series etc. The Plaintiffs are permitted to
+implead any mirror/redirect/alphanumberic variations
+of the websites identified in the suit as Defendants Nos.
+1 to 16 including those websites which are associated
+with the Defendants Nos. 1 to 16, either based on the
+name, branding, identity or even source of content, by
+filing an application for impleadment under Order I
+Rule 10 CPC in the event such websites merely provide
+new means of accessing the same primary infringing
+websites that have been injuncted. The Plaintiffs are at
+liberty to also file an appropriate application seeking
+protection qua their copyrighted works, including
+future works, if the need so arises. Upon filing such
+applications before the Registrar along with an
+affidavit with sufficient supporting evidence seeking
+extension of the injunction to such websites, to protect
+the content of the Plaintiffs, including future works, the
+injunction shall become operational against the said
+CS(COMM) 833/2023 Page 19 of 30
+websites and qua such works. If there is any work in
+respect of which there is any dispute as to ownership of
+copyright, an application may be moved by the affected
+party before the Court, to seek clarification.
+21. Insofar as Defendant Nos.17 to 25 are
+concerned, the said ISPs shall give effect to this
+injunction by blocking the said websites. MeitY and
+DoT shall issue blocking orders against the websites
+within a period of one week from the release of the
+order.
+22. The Domain Name Registrars (DNRs) of the
+rogue websites’ domain names, upon being intimated
+by the Plaintiffs shall lock and suspend the said
+domain names. In addition, any details relating to the
+registrants of the said domain names including KYC,
+credit card, mobile number, etc. be also provided to the
+Plaintiffs.”
+27. Mr. Saikrishna, ld. Counsel for the Plaintiffs, submits that post the
+passing of the order of dynamic+ injunction in Universal City Studios LLC.
+& Ors. (supra), several of such rogue websites are being blocked on an
+international level and not just within the territory of India, which is
+therefore having a positive impact to curb piracy on the internet. Ld.
+Counsel further submits that the decisions of the Delhi High Court on
+curbing of piracy are having vast implications as DNRs are locking and
+suspending the domain names, rendering them inaccessible. As per ld.
+Counsel, this is leading viewers to avail access to legitimate platforms as
+was evident in the recent World Cup Cricket finals 2023 when one of the
+OTT platforms had a logging in of more than 5.3 crores, thus multiplying
+the viewership for such platforms and curbing viewing of pirated content.
+CS(COMM) 833/2023 Page 20 of 30
+28. In the present case, a situation has arisen where several documents
+have been placed on record by the Plaintiffs clearly demonstrating a brazen
+effort towards continued piracy on the internet. While the internet provides
+unimpeded access, one of its challenges is the unrestricted access to such
+rogue websites. However, as soon as these websites come to the attention of
+any court of law or law enforcement authority, their free access deserves to
+be blocked. The rogue websites are offering illegal viewing almost on a real-
+time basis to Plaintiffs’ content such as Stranger Things, Wonder Woman,
+Aquaman, Batman, Spider Man: No Way Home, Top Gun: Maverick, The
+Jungle Book, etc.
+29. In the present case, this Court is convinced that a dynamic+ injunction
+as was granted in Universal City Studios LLC. & Ors. (supra) deserves to
+be granted, failing which, the pirated content will continue to be viewed,
+replicated and communicated to the public, causing immense loss to the
+economic as also moral rights of the Plaintiffs. In the said process, various
+illegalities which are being committed would also get encouraged if no
+injunction is granted. Moreover, as is clear from a viewing one of the
+infringing websites, coolmoviez.cloud, the clear position that emerges is that
+serious illegalities are also sought to be committed by these websites and
+unlawful activities are also being encouraged as is clear from the following
+screenshots:
+CS(COMM) 833/2023 Page 21 of 30
+30. Under these circumstances, the Plaintiffs have established a prima
+facie case for grant of an injunction. Balance of convenience is also in
+favour of the Plaintiffs in view of unauthorised and illegal use of
+Copyrighted contents by such rogue websites leading to significant
+monetary losses to the Plaintiffs. Irreparable harm and injury is likely to be
+caused if the injunction as sought is not granted. Accordingly, Defendant
+Nos. 1 to 45 arrayed as Annexure A, which are all rogue websites shall stand
+restrained from streaming, reproducing, distributing, making available to the
+public and/or communicating to the public, in any manner, any copyrighted
+content of the Plaintiffs including future works of the Plaintiffs.
+31. In the facts and circumstances as set out above, an ex parte ad interim
+CS(COMM) 833/2023 Page 22 of 30
+injunction is granted restraining the Defendants, who are all rogue websites,
+from in any manner streaming, reproducing, distributing, making available
+to the public and/or communicating to the public any copyrighted content of
+the Plaintiffs including future works of the Plaintiffs, in which ownership of
+copyright is undisputed, through their websites identified in the present suit
+or any mirror/redirect websites or alphanumeric websites, or any variations
+thereof including those websites which are associated with the Defendants’
+websites either based on the name, branding, identity of its operator, or
+discovered to provide additional means of accessing the Defendant’s
+website, and other domains/ domain along with their sub-domains and sub-
+directories, owners, website operators/ entities or even sources of content.
+32. Insofar as Defendant Nos. 46-54 are concerned, the said ISPs shall
+give effect to this injunction by blocking the said websites. Defendant No.
+55 and 56 - Department of Telecommunications (DOT) and Ministry of
+Electronics and Information Technology (MeitY) respectively shall issue
+blocking orders against the websites within a period of one week from the
+release of the order.
+33. The Domain Name Registrars (DNRs) of the rogue websites’ domain
+names, upon being intimated by the Plaintiffs shall lock and suspend the said
+domain names. In addition, any details relating to the registrants of the said
+domain names including KYC, credit card, mobile number, etc. be also
+provided to the Plaintiffs.
+34. Compliance of Order XXXIX Rule 3 CPC be effected within one
+week. Compliance and service is permitted through e-mail owing to the fact
+that the exact contact details or addresses of these parties are not known.
+35. Reply to the application be filed within four weeks from the service of
+CS(COMM) 833/2023 Page 23 of 30
+the present order along with the paper book.
+36. List before the Court on 21st March, 2024.
+PRATHIBA M. SINGH
+JUDGE
+NOVEMBER 21, 2023
+Rahul/bh/am
+CS(COMM) 833/2023 Page 24 of 30
+ANNEXURE A
+List of Defendants as per Memo of Parties
+S. No. Domain Name URL IP Address
+Defendant No.1
+1. fztvseries.mobi https://fztvseries.mobi 104.21.68.98
+172.67.193.226
+Defendant No.2
+2. Mobiletvshows.net https://mobiletvshows.net 104.21.52.64
+172.67.196.53
+Defendant No.3
+stagatv.com https://www.stagatv.com 104.21.61.65
+172.67.206.242
+Defendant No.4
+Vexmovies.uno https://vexmovies.uno 104.21.90.188
+172.67.159.200
+Defendant No.5
+3. coolmoviez.cloud https://www.coolmoviez.cloud 104.21.51.140
+4. coolmoviez.com.de https://www.coolmoviez.com.de 104.21.51.238
+5. coolmoviez.com.co http://www.coolmoviez.com.co 104.21.32.98
+Defendant No.6
+6. aniwave.to https://aniwave.to 172.64.129.32
+7. aniwave.bz https://aniwave.bz 172.67.166.73
+8. aniwave.ws https://aniwave.ws 172.67.181.176
+9. aniwave.tv https://aniwave.tv 172.67.145.20
+Defendant No.7
+CS(COMM) 833/2023 Page 25 of 30
+10. animehana.in https://www.animehana.in 142.251.167.121
+Defendant No.8
+animesenpai4u.com https://www.animesenpai4u.com 142.251.167.121
+Defendant No.9
+gogoanime.is https://gogoanime.is 104.21.21.203
+172.67.200.81
+Defendant No.10
+11. 123animes.mobi https://w7.123animes.mobi 104.21.72.172
+172.67.187.37
+Defendant No.11
+12. anix.to https://anix.to 104.21.73.108
+Defendant No.12
+13. freemovies2021.com https://freemovies2021.com 104.21.17.73
+172.67.223.59
+Defendant No.13
+14. freemovieswatch.tv https://freemovieswatch.tv 104.21.0.234
+172.67.128.98
+15. freemovieswatch.net https://freemovieswatch.net 104.21.59.229
+172.67.184.212
+Defendant No.14
+16. medeberiyaa.com https://medeberiyaa.com 104.21.12.120
+172.67.132.36
+17. medeberiyas.com https://medeberiyaa.com 104.21.2.140
+172.67.129.73
+Defendant No.15
+18. kinogo.biz https://kinogo.biz 91.215.43.170
+CS(COMM) 833/2023 Page 26 of 30
+Defendant No.16
+19. ridomovies.pw https://ridomovies.pw 104.21.82.243
+172.67.209.138
+Defendant No.17
+20. 1moviestv.com https://1moviestv.com 104.21.1.218
+172.67.128.23
+Defendant No. 18
+21. moviehax.me https://moviehax.me 104.21.7.228
+172.67.188.17
+Defendant No. 19
+22. ripcrabbyanime.in https://ripcrabbyanime.in 104.21.28.121
+172.67.146.30
+Defendant No. 20
+23. moviehunt.us https://moviehunt.us 104.21.67.48
+172.67.213.207
+Defendant No. 21
+24. mlwbd.rent https://mlwbd.rent 104.21.21.92
+25. mlwbd.digital https://mlwbd.digital 104.21.92.125
+26. mlwbd.love https://mlwbd.love 104.21.91.26
+27. mlwbd.me https://mlwbd.me 104.21.16.122
+172.67.212.122
+28. mlwbdofficial.com https://mlwbdofficial.com 104.21.14.160
+29. mlwbd.photos https://mlwbd.photos 104.21.3.5
+Defendant No. 22
+30. mov.onl https://www.mov.onl 104.21.47.254
+172.67.175.35
+Defendant No. 23
+31. nyafilmer.gg https://nyafilmer.gg 104.21.46.105
+172.67.137.197
+Defendant No. 24
+32. o2tvseries2.com https://o2tvseries2.com 104.21.56.93
+172.67.183.186
+CS(COMM) 833/2023 Page 27 of 30
+Defendant No. 25
+33. projectfreetv.one https://projectfreetv.one 104.21.34.90
+172.67.157.157
+Defendant No. 26
+34. raretoons.me https://raretoons.me 104.21.44.129
+35. raretoonsindia.in.net https:// raretoonsindia.in.net 104.21.18.110
+172.67.181.156
+Defendant No. 27
+36. uflix.cc https://uflix.cc 104.21.54.193
+172.67.141.88
+Defendant No. 28
+37. watchmoviesb.top https://waatchmoviess.top 104.21.96.131
+38. waatchmovies.top https://waatchmovies.top 104.21.37.124
+172.67.208.28
+39. watchmoviiess.top http://watchmoviiess.top 104.21.74.145
+172.67.159.95
+Defendant No. 29
+40. yifymovies.xyz https://yifymovies.xyz 104.21.86.195
+172.67.136.88
+Defendant No. 30
+41. kickassanime.am https://kickassanime.am 104.21.34.85
+172.67.202.1
+42. kaas.am http://kaas.am 104.21.20.172
+172.67.193.61
+Defendant No. 31
+43. Kickass.onl https://kickass.onl 104.31.16.123
+104.31.16.6
+44. Kickass.help https://ww1.kickass.help 104.21.10.178
+172.67.146.41
+CS(COMM) 833/2023 Page 28 of 30
+Defendant No. 32
+45. hindimoviesonline.to https://hindimoviesonline.to 104.21.75.41
+172.67.212.36
+Defendant No. 33
+46. hindimovies.to https://www.hindimovies.to 104.21.73.241
+172.67.193.117
+Defendant No. 34
+47. freedrivemovie.lol https://freedrivemovie.lol 104.21.83.191
+172.67.180.221
+Defendant No. 35
+48. freeseries.watch https://freeseries.watch 104.21.15.122
+172.67.162.153
+Defendant No. 36
+49. hdmp4mania2.com https://hdmp4mania2.com 66.154.14.82
+50. hdmp4mania1.net https://hdmp4mania1.net 163.172.110.116
+Defendant No. 37
+51. genvideos.org https://genvideos.org 104.31.16.8
+104.31.16.121
+Defendant No. 38
+52. hdflixtor.com https://hdflixtor.com 104.21.34.104
+172.67.159.25
+Defendant No. 39
+53. 24-hd.com https://www.24-hd.com 104.26.10.67
+104.26.11.67
+172.67.75.193
+Defendant No. 40
+54. 123serieshd.ru https://123serieshd.ru 104.21.9.120
+172.67.189.63
+Defendant No. 41
+55. anihdplay.com https://anihdplay.com 104.26.10.123
+104.26.11.123
+172.67.70.109
+CS(COMM) 833/2023 Page 29 of 30
+Defendant No. 42
+56. Nocensor.cloud https://nocensor.cloud 104.21.89.184
+172.67.164.68
+57. Nocensor.click http://nocensor.click 104.21.80.190
+172.67.153.74
+Defendant No. 43
+58. Showbox-movies.net https://www2.showbox- 104.21.18.230
+movies.net 172.67.183.223
+Defendant No. 44
+59. Moviestowatch.tv https://moviestowatch.tv 104.21.28.91
+172.67.145.52
+60. Moviestowatch.cc https://moviestowatch.cc 104.21.80.168
+172.67.151.200
+Defendant No. 45
+61. Torrentbay.net https://torrentbay.net 104.21.68.88
+172.67.192.127
+**********************************************
+CS(COMM) 833/2023 Page 30 of 30
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 833/2023
+UNIVERSAL CITY STUDIOS LLC. & ORS.
+..... Plaintiff
+Through: Ms. Mehr Sidhu,
+Ms. R.Ramya, Advocates
+versus
+FZTVSERIES.MOBI & ORS
+..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 11.01.2024
+Ld. Counsel submits that all the defendants have been
+served on email with summons and that affidavit in this regard
+shall be filed within a week.
+As per the Registry report defendant no. 47, 50, 55 & 56
+have been served on 03.01.2024. Defendant no. 52 has not been
+served since it has left the given address about five years back.
+Service report regarding rest of the defendants is still awaited.
+Ld. Counsel for the plaintiff submits that plaintiff is in the
+process of sending summons through speed post and courier as it
+has received the same from Registry yesterday itself.
+Put up for completion of pleadings on 11.03.2024.
+AJAY GULATI - I (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 11, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:35
+
+===== ORDER =====
+
+$~28
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 833/2023
+UNIVERSAL CITY STUDIOS LLC. & ORS. ..... Plaintiff
+Through: Ms. Mehr Sidhu, Mr. Sanidhya
+Maheshwari, Ms. R.Ramya,
+Advocates
+versus
+FZTVSERIES.MOBI & ORS ..... Defendant
+Through: D-57 is John Doe.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 16.01.2024
+I.A. No. 1117/2024 on behalf of the plaintiffs under Order I
+Rule 10 CPC seeking impleadment of mirrors, redirects, or
+alphanumeric variations as additional defendant no. 58 in the
+memo of parties.
+Heard.
+Vide this order, I shall dispose off the present application
+filed by the plaintiff under Order 1 Rule 10 CPC for impleadment
+of a fresh defendant. Learned counsel for the plaintiff has
+submitted that the Hon’ble Court was pleased to grant an ex-parte
+ad-interim injunction in this suit against the defendants vide
+order dated 21.11.2023 for infringement of copyrights of the
+plaintiff with further directions that as and when plaintiff files an
+application under Order 1 Rule 10 CPC for impleadment as
+defendants of such other websites, plaintiff shall file an affidavit
+confirming that the websites to be impleaded are mirror/ redirect/
+alphanumeric websites, with sufficient supporting evidence.
+Hon’ble Court had further directed that the application for
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:35
+impleadment shall be listed before the Joint Registrar, who on
+being satisfied with the material placed on record, shall issue
+directions to the ISPs to disable access in India to such
+mirror/redirect/alphanumeric websites.
+It has been submitted that after passing of the order dated
+21.11.2023, another website, as disclosed in the present
+application, has also started violation of the plaintiff’s copyrights.
+This website is a mirror / redirect / alphanumeric variation of the
+websites which were blocked pursuant to the order dated
+21.11.2023 and is also a necessary party to this suit. It has been
+further stated that details of the proposed defendant have been
+disclosed in Schedule-A annexed with application who is liable
+to be impleaded as defendant no. 58. It has also been submitted
+that ex-parte injunction dated 21.11.2023 is also liable to be
+extended against the proposed defendant, in view of the material
+placed on record alongwith the present IA.
+I have considered the submissions and perused the record.
+The law to deal with such applications and extension of ex-parte
+ad-interim injunction to the proposed defendant has already been
+laid down in UTV Software Communication Ltd. & Ors. vs.
+1337X.TO & Ors., wherein it has been observed, in paragraph
+107, to the effect :
+“107. Keeping in view the aforesaid findings, a
+decree of permanent injunction is passed
+restraining the defendant-websites (as
+mentioned in the chart in paragraph no. 4(i)
+of this judgment) their owners, partners,
+proprietors, officers, servants, employees, and
+all others in capacity of principal or agent
+acting for and on their behalf, or anyone
+claiming through, by or under it, from, in any
+manner hosting, streaming, reproducing,
+distributing, making available to the public
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:35
+and/or communicating to the public, or
+facilitating the same, on their websites,
+through the internet in any manner
+whatsoever, any cinematograph work/content/
+programme/show in relation to which
+plaintiffs have copyright. A decree is also
+passed directing the ISPs to block access to
+the said defendant-websites. DoT and MEITY
+are directed to issue a notification calling
+upon the various internet and telecom service
+providers registered under it to block access
+to the said defendant-websites. The plaintiffs
+are permitted to implead the
+mirror/redirect/alphanumeric websites under
+Order I Rule 10 CPC in the event they merely
+provide new means of accessing the same
+primary infringing websites that have been
+injuncted. The plaintiffs are also held entitled
+to actual costs of litigation. The costs shall
+amongst others include the lawyer's fees as
+well as the amount spent on Court-fees. The
+plaintiffs are given liberty to file on record the
+exact cost incurred by them in adjudication of
+the present suits. Registry is directed to
+prepare decree sheets accordingly.”
+Plaintiff has also filed alongwith an affidavit of
+investigator with sufficient material to prove that proposed
+defendant/website is a mirror/redirect/ alphanumeric website
+which is also involved in violation of copyrights of the plaintiff.
+In view of the submissions, material put forth by the plaintiff,
+and directions passed by the Hon’ble Court in the order dated
+21.11.2023, the website mentioned in the prayer clause of the
+application and Schedule-A is impleaded as defendants no. 58.
+Since the newly added defendant is also stated to be
+involved in violation of copyrights of the plaintiff, accordingly
+ex-parte ad-interim Injunction dated 21.11.2023 is also extended
+against the newly impleaded defendant no. 58.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:35
+Amended memo of parties is taken on record.
+I.A. stands disposed off.
+Let defendant no. 58 be summoned on filing of PF and
+through all permissible modes including e-mail, returnable on the
+next date of hearing.
+Registry is directed to do the needful.
+Copy of order be given dasti.
+Matter is already listed before the Hon’ble Court for
+11.03.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 11.03.2024, for further directions.
+AJAY GULATI - I (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 16, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:35
+
+===== ORDER =====
+
+$~10
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 833/2023
+UNIVERSAL CITY STUDIOS LLC. & ORS...... Plaintiff
+Through: Mr. Sanidhya Maheshwari,
+Ms. Mehr Sidhu,
+Ms. R.Ramya, Advocates
+versus
+FZTVSERIES.MOBI & ORS ..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 11.03.2024
+On the last date of hearing, inadvertently, it was recorded
+that the matter has been listed before the Hon’ble Court on
+11.03.2024. However, the matter was to be listed before the Joint
+Registrar.
+Defendant nos. 1 to 56 have been served through email on
+16.01.2024, as per the affidavit of service. Defendant nos. 1 to
+45 are websites. Defendant nos. 46 to 54 are ISPs. Defendant
+no. 55 and 56 are Govt. Of India entities. Defendant no. 57 is a
+Johndoe.
+On 16.01.2024, defendant no. 58 was als
+
+[TRUNCATED — rights are established in the opening orders above]

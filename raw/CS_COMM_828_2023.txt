@@ -1,0 +1,646 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_828_2023
+case_status: PENDING
+n_orders: 15
+
+$~37
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 828/2023, CAV 592/2023, I.As. 22887/2023,
+22888/2023, 22889/2023, 22890/2023 & 22891/2023
+M/S GUFIC BIOSCIENCES LIMITED ..... Plaintiff
+Through: Ms. Sarita Mehta, Adv. (M.
+9810613095)
+versus
+M/S APEX LABORATORIES PVT. LTD ..... Defendant
+Through: Mr Rajeshwari H, Mr. Deepanshu
+Nagar, Advs. (M. 8826968200)
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 20.11.2023
+1. This hearing has been done through hybrid mode.
+2. In view of the order passed in CS(COMM) 559/2023 titled M/S Gufic
+Biosciences Limited v. M/S Saarvasri Herbs Private Limited And Ors., list
+this matter before another Bench on 29th November, 2023 subject to orders
+of Hon’ble the Judge-in-Charge (Original Side).
+PRATHIBA M. SINGH, J.
+NOVEMBER 20, 2023/dk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:59
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 828/2023, CAV 592/2023, I.A. 22887/2023, I.A.
+22888/2023, I.A. 22889/2023, I.A. 22890/2023 & I.A.
+22891/2023
+M/S GUFIC BIOSCIENCES LIMITED ..... Plaintiff
+Through: Mr. Dushyant Mahant and Ms.
+Sarita Mehta, Advs.
+versus
+M/S APEX LABORATORIES PVT. LTD ..... Defendant
+Through: Ms. Rajeshwari H, Ms. Nupur
+and Ms. Saakshi, Advs.
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 29.11.2023
+1. Owing to paucity of time, it is not possible to take up this matter
+today.
+2. Accordingly, re-notify on 12 December 2023.
+C.HARI SHANKAR, J
+NOVEMBER 29, 2023
+ar
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:58
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 828/2023, CAV 592/2023, I.A. 22887/2023, I.A.
+22888/2023, I.A. 22889/2023, I.A. 22890/2023 & I.A.
+22891/2023
+M/S GUFIC BIOSCIENCES LIMITED ..... Plaintiff
+Through: Ms. Sarita Mehta, Adv.
+versus
+M/S APEX LABORATORIES PVT. LTD ..... Defendant
+Through:
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 12.12.2023
+1. This is a very fresh matter which was before the Coordinate
+Bench and has been transferred to this Bench.
+2. Re-notify on 15 December 2023 for preliminary hearing.
+C.HARI SHANKAR, J
+DECEMBER 12, 2023
+ar
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:58
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 828/2023 & CAV 592/2023, I.A. 22887/2023, I.A.
+22888/2023, I.A. 22889/2023, I.A. 22890/2023, I.A.
+22891/2023
+M/S GUFIC BIOSCIENCES LIMITED ..... Plaintiff
+Through: Ms. Sarita Mehta and Mr.
+Abhishek Chandra Mishra, Advs.
+versus
+M/S APEX LABORATORIES PVT. LTD ..... Defendant
+Through: Ms. Rajeshwari, Mr.
+Deepanshu and Ms. Saakshi Khandelwal,
+Advs.
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 15.12.2023
+1. The Hon’ble Judge is not holding the Court today.
+2. Re-notify on 21 December 2023.
+BY ORDER
+COURT MASTER
+DECEMBER 15, 2023
+dsn
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:57
+
+===== ORDER =====
+
+$~4
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 828/2023
+M/S GUFIC BIOSCIENCES LIMITED ..... Plaintiff
+Through: Mr. Abhishek Chandra Mishra,
+Adv.
+versus
+M/S APEX LABORATORIES PVT. LTD ..... Defendant
+Through: Ms. Rajeshwari H., Ms. Garima
+Joshi, Mr. Deepanshu Nagar and Ms.
+Saakshi Khandelwal, Advs.
+CORAM:
+HON'BLE MR. JUSTICE C. HARI SHANKAR
+O R D E R
+% 21.12.2023
+CS(COMM) 828/2023
+1. The plaintiff alleges that the defendant is, using the mark
+SALLAKI in respect of Ayurvedic preparation, infringing the
+plaintiff’s registered trade mark.
+2. Among the defences that Ms. Rajeshwari, learned Counsel for
+the defendant urges, is Section 30(2)(a) of the Trade Marks Act, as she
+submits that SALLAKI is the name of the plant from which the
+preparation under question is derived.
+3. Let the plaint be registered as a suit. Issue summons in the suit.
+Summons are accepted on behalf of the defendant by Ms. Garima
+Joshi.
+CS(COMM)828/2023 Page1of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:56
+4. Written statement, accompanied by affidavit of admission and
+denial of the documents filed by the plaintiff be filed within 30 days
+with advance copy to learned Counsel for the plaintiff who may file
+replication thereto, accompanied by affidavit of admission and denial
+of the documents filed by the defendant within 30 days thereof.
+5. List before the learned Joint Registrar (Judicial) for completion
+of the pleadings, admission and denial of documents and marking of
+exhibits on 14 February 2024, whereafter the matter would be placed
+before the Court for case management hearing and further
+proceedings.
+CAV 592/2023
+6. Since caveator has entered appearance through learned Counsel,
+caveat stands discharged.
+I.A. 22887/2023(Order XXXIX Rules 1 and 2 of the CPC)
+7. As the defendant has been using the impugned mark since 2019,
+I deem it appropriate that an opportunity to file a response be granted
+to the defendant before this application, which seeks interlocutory
+injunctive reliefs, is taken up for hearing.
+8. As such, issue notice, returnable before the Court on 31 January
+2024. Notice is accepted on behalf of the defendant by Ms. Garima
+Joshi.
+CS(COMM)828/2023 Page2of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:56
+9. Let a reply be filed within three weeks with advance copy to
+learned Counsel for the plaintiff, who may file rejoinder thereto, if
+any, within one week thereof.
+10. It is made clear that no extension of time for filing reply or
+rejoinder shall be granted and the application shall be taken for
+hearing and disposal on the next date of hearing.
+I.A. 22888/2023 (Order XI Rule 1(4) of the CPC)
+11. This application seeks permission to file additional documents.
+The plaintiff is permitted to place additional documents on record in
+accordance with Order XI Rule 1(4) of the CPC as amended by the
+Commercial Courts Act within four weeks from today.
+12. The application stands disposed of accordingly.
+I.A. 22889/2023 (Exemption)
+13. Subject to the plaintiff filing legible copies of any dim or
+illegible documents within 30 days, exemption is granted for the
+present.
+14. The application is disposed of.
+I.A. 22890/2023 (Section 12A of the Commercial Courts Act, 2015)
+15. Issue notice, returnable before the Court on 31 January 2024.
+Notice is accepted on behalf of the defendant by Ms. Garima Joshi.
+CS(COMM)828/2023 Page3of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:56
+16. Let a reply be filed within three weeks with advance copy to
+learned Counsel for the plaintiff, who may file rejoinder thereto, if
+any, within one week thereof.
+I.A. 22891/2023 (Section 149 of the Court Fees Act)
+17. Four weeks’ further time is granted to the plaintiff to make up
+deficiency in court fee, if any.
+18. The application is disposed of accordingly.
+C.HARI SHANKAR, J
+DECEMBER 21, 2023
+rb
+Click here to check corrigendum, if any
+CS(COMM)828/2023 Page4of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:56
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 828/2023
+M/S GUFIC BIOSCIENCES LIMITED
+..... Plaintiff
+Through: Ms. Varsha Jhavar, Adv.
+versus
+M/S APEX LABORATORIES PVT. LTD
+..... Defendant
+Through: Mr. Deepanshu Nagar, Adv.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 14.02.2024
+The defendant was served on 21.12.2023. The written
+statement is yet to be filed. That be filed as per law, whereafter the
+replication be also filed in accordance with law.
+After the completion of the pleadings, the parties shall also
+file the physical copies of their respective documents, if not already
+filed and the joint schedule of the documents.
+List the matter for admission-denial and marking of exhibits
+on 10.05.2024.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 14, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:56
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 828/2023
+M/S GUFIC BIOSCIENCES LIMITED ..... Plaintiff
+Through: Mr. G. Nataraj, Ms. Varsha Jhavar
+and Ms. Yojana Sonkusare, Advs.
+versus
+M/S APEX LABORATORIES PVT. LTD ..... Defendant
+Through: Ms. Rajeshwari Hariharan &
+Mr. Deepanshu Nagar, Advs.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 16.02.2024
+I.A. 3779/2024 (under Section 124 Trade Marks Act, 1999)
+1. This application has been filed by the defendant seeking permission
+to file a rectification petition against the plaintiff’s registered mark
+“SALLAKI” having registration No.385295 under class 5.
+2. Counsel for the defendant states that they claimed to have raised
+defence under section 124 (1) (a) alleging that the plaintiff’s trademark is
+invalid and therefore seeks permission to initiate proceedings for
+rectification in this regard.
+3. Counsel for the plaintiff accepts notice and shall file reply to the
+application within a week from today with copy to the counsel for the
+defendant.
+4. List on 26th February, 2024, the date already fixed.
+5. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+FEBRUARY 16, 2024/sm
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:55
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 828/2023
+M/S GUFIC BIOSCIENCES LIMITED
+..... Plaintiff
+Through: Ms. Varsha Jhavar, Adv.
+versus
+M/S APEX LABORATORIES PVT. LTD
+..... Defendant
+Through: Mr. Deepanshu Nagar, Adv.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 21.02.2024
+List the matter for the purpose fixed on the date fixed i.e.
+10.05.2024.
+IA No. 4057/2024 (by defendant u/s 5 of Limitation Act r/w
+Section 151 CPC for condonation of delay of 23 days in filing
+the written statement)
+Issue notice. Accepted.
+The plaintiff may file the reply within four weeks,
+whereafter the rejoinder be filed in the next four weeks.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 21, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:55
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 828/2023
+M/S GUFIC BIOSCIENCES LIMITED .... Plaintiff
+Through: Mr. G.Nataraj, Ms. Yojana
+Sonkusare, Ms. Sindhuja Rao,
+Advocates
+versus
+M/S APEX LABORATORIES PVT. LTD ..... Defendant
+Through: Mr. Deepanshu Nagar, Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 10.05.2024
+IA No. 4057/2024 (by defendant u/s 5 of Limitation Act r/w
+Section 151 CPC for condonation of delay of 23 days in filing
+the written statement).
+Ld. Counsel for the plaintiff submits that reply to the IA
+has been filed but has been put under objections on account of
+delay. An application has been moved to seek condonation of
+delay in filing the reply.
+A copy of the reply however has been supplied to ld.
+Counsel for the defendant who wishes to file a rejoinder which
+may be filed within two weeks, without waiting for the reply to
+actually come on record.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 20.05.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 10, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:54
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 828/2023
+M/S GUFIC BIOSCIENCES LIMITED ..... Plaintiff
+Through: Mr. Nataraj & Ms. Yojana Sonkusare,
+Advocates.
+versus
+M/S APEX LABORATORIES PVT. LTD ..... Defendant
+Through: Mr. Deepanshu Nagar, Advocate.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. AJAY GULATI
+O R D E R
+% 24.05.2024
+Learned counsel for the defendant accepts notice and submits that
+there is no objection to the prayer for condonation of delay in filing reply.
+Consequently the delay stands closed. Plaintiff’s reply to I.A. No.
+4057/2024 is taken on record. Defendant may now file its rejoinder in I.A.
+No. 4057/2024 within two weeks. Since, the matter is listed before the
+Hon’ble Court on 5th July, 2024, put up before the Hon’ble Court on the date
+fixed, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 24, 2024/Ni
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:54
+
+===== ORDER =====
+
+Not Available (Error: Could not read PDF)
+
+===== ORDER =====
+
+Not Available (Error: Could not read PDF)
+
+===== ORDER =====
+
+$~21 to 23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ C.O. (COMM.IPD-TM) 37/2024 & I.A. 4573/2024
+EMAMI LIMITED .....Petitioner
+Through: Mr. Abhimanyu Bhandari, Sr. Adv.
+with Ms. Roohe Hina Dua and Mr.
+Vinayak Thakur, Advs.
+M: 8130315533
+versus
+M/S GUFIC BIOSCIENCE LIMITED & ANR. .....Respondents
+Through: Mr. Abhishek Chandra Mishra, Adv.
+with Ms. Sarita Mehta, Adv.
+M: 9810613095
+Ms. Nidhi Raman, CGSC with Mr.
+Zubin Singh, Adv.
+M: 9958614305
+22
++ CS(COMM) 559/2023 & I.A. 15313/2023
+M/S GUFIC BIOSCIENCES LIMITED .....Plaintiff
+Through: Mr. Abhishek Chandra Mishra, Adv.
+with Ms. Sarita Mehta, Adv.
+M: 9810613095
+versus
+M/S SAARVASRI HERBS PRIVATE LIMITED
+AND ORS. .....Defendants
+Through: Mr. Abhimanyu Bhandari, Sr. Adv.
+with Ms. Roohe Hina Dua and Mr.
+Vinayak Thakur, Advs.
+M: 8130315533
+23
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:52
++ CS(COMM) 828/2023, I.A. 22887/2023, I.A. 22890/2023, I.A.
+3779/2024, I.A. 4057/2024, I.A. 29664/2024, I.A. 29689/2024 & I.A.
+30211/2024
+M/S GUFIC BIOSCIENCES LIMITED .....Plaintiff
+Through: Mr. Rahul Bhujbal, Adv.
+M: 8527855815
+versus
+M/S APEX LABORATORIES PVT. LTD. .....Defendant
+Through: Ms. Rajeswari, Mr. R. Satish Kumar
+and Mr. Deepanshu Nagar, Advs.
+M: 8826968200
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 17.12.2024
+1. Parties point out that pleadings in I.A. 15313/2023 in CS(COMM)
+559/2023 and I.A. 22887/2023 in CS(COMM) 828/2023, are complete.
+2. Accordingly, list for hearing of the aforesaid applications, re-notify on
+24th April, 2025.
+MINI PUSHKARNA, J
+DECEMBER 17, 2024/kr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:52
+
+===== ORDER =====
+
+$~7 to 9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+7
+C.O. (COMM.IPD-TM) 37/2024, I.A. 4573/2024-Stay
+EMAMI LIMITED .....Petitioner
+Through: Mr. Vinayak Thakur, Adv.
+versus
+M/S GUFIC BIOSCIENCE LIMITED & ANR. .....Respondents
+Through: Ms. Sarita Mehta, Adv. for R-1.
+Mr. Arnav Mittal, Adv. for R-2.
+8
+CS(COMM) 559/2023, I.A. 15313/2023-Stay
+M/S GUFIC BIOSCIENCES LIMITED .....Plaintiff
+Through: Ms. Sarita Mehta, Adv.
+versus
+M/S SAARVASRI HERBS PRIVATE LIMITED AND ORS.
+.....Defendants
+Through: Mr. Vinayak Thakur, Adv. for D4.
+9
++ CS(COMM) 828/2023, I.A. 22887/2023-Stay, I.A. 22890/2023-To
+exempt the plaintiff from complying with the provisions of Section
+12A of Commercial Courts Act, I.A. 3779/2024-Section 124 of TM
+Act., I.A. 4057/2024-Delay 23 days in filing of written statement by
+D-2., I.A. 29664/2024-O 6 R 17 to amend the written statement and
+take on record the “statement of truth”., I.A. 29689/2024-O 8 R 10,
+I.A. 30211/2024-Delay 11 days in filing reply by plaintiff to
+I.A.4057/24.
+M/S GUFIC BIOSCIENCES LIMITED .....Plaintiff
+Through: Ms. Sarita Mehta, Adv.
+versus
+M/S APEX LABORATORIES PVT. LTD .....Defendant
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:51
+Through: Ms. Rajeswari H., Mr. R. Satish
+Kumar and Mr. Swapnil Gaur,
+Advs.
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 24.04.2025
+1. Learned counsel for the parties submit that Hon’ble Division Bench
+of this Court is still seized of LPA 121/2023 titled as Satish Kumar Jain
+vs. Anubhav Jain & Anr.
+2. Renotify on 25.08.2025.
+SAURABH BANERJEE, J.
+APRIL 24, 2025/R
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:51
+
+===== ORDER =====
+
+$~201
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 828/2023
+M/S GUFIC BIOSCIENCES LIMITED
+.....Plaintiff
+Through: None
+versus
+M/S APEX LABORATORIES PVT. LTD
+.....Defendant
+Through: Mr. Ansh Sharma, Adv.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the plaintiff when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:51

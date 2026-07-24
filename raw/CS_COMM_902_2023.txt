@@ -1,0 +1,1072 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_902_2023
+case_status: PENDING
+n_orders: 18
+
+$~38
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 902/2023, I.As. 25565/2023, 25566/2023, 25567/2023,
+25568/2023, 25569/2023 & 25570/2023
+BALANCED BODY INC ..... Plaintiff
+Through: Mr. PravinAnand, Mr. DhruvAnand,
+Ms. Udita Patro and Ms. Nimrat Singh,
+Advs. (M. 9313399860)
+versus
+YASMINS BODY IMAGE PRIVATE LIMITED &
+ANR. ..... Defendants
+Through: Mr. Rahul Dhawan, Mr. Anant Bhushan,
+Ms. Vaishali Singh & Mr. Vardaan
+Bhatia, Advocate for D-1 (Appearance
+not given)
+CORAM:
+JUSTICE PRATHIBAM. SINGH
+O R D E R
+% 19.12.2023
+1. This hearing has been done through hybrid mode.
+I.A. 25567/2023 (for additional documents)
+2. This is an application filed by the Plaintiff seeking leave to file additional
+documents under the Commercial Courts, Commercial Division and
+Commercial Appellate Division of High Courts Act, 2015 (hereinafter,
+‘Commercial Courts Act’). The Plaintiff, if it wishes to file additional
+documents at a later stage, shall do so strictly as per the provisions of the
+Commercial CourtsAct, 2015 and the DHC (Original Side) Rules, 2018.
+3. The application is disposed of.
+CS(COMM)902/2023 Page1of8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:50
+I.A. 25568/2023 (for exemption)
+4. This is an application filed by the Plaintiff seeking exemption from filing
+originals/certified/cleared/typed or translated copies of documents, proper
+margins, electronic documents, etc. Original documents shall be produced/filed
+at the time of Admission/Denial, if sought, strictly as per the provisions of the
+Commercial CourtsAct and the DHC (Original Side) Rules, 2018.
+5. Exemption is allowed, subject to all just exceptions. Accordingly,
+application is disposed of.
+I.A. 25569/2023 (for court fee)
+6. This is an application seeking extension of time for filing the court fee.
+The Court fee has been deposited. Accordingly, the present application is
+disposed of as infructuous.
+I.A. 25570/2023 (u/S 12A)
+7. This is an application filed by the Plaintiff seeking exemption instituting
+pre-litigation mediation under Section 12A of the Commercial Courts Act,
+2015.
+8. Considering the facts and circumstances of the case, the Court is satisfied
+in terms of the judgment of the Hon’ble Supreme Court in Yamini Manohar v.
+T.K.D Keerthi, (2023 LiveLaw (SC) 906), that the present suit contemplates
+urgent interim relief.
+9. Accordingly, the exemption is allowed and application is disposed of.
+CS(COMM) 902/2023
+10. Let the plaint be registered as a suit.
+CS(COMM)902/2023 Page2of8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:50
+11. Issue summons to the Defendants through all modes upon filing of
+Process Fee.
+12. Ld. counsel for Defendant No.1 accepts summons.
+13. The summons to the Defendants shall indicate that the written statement
+to the plaint shall be positively filed within 30 days from date of receipt of
+summons. Along with the written statement, the Defendants shall also file an
+affidavit of admission/denial of the documents of the Plaintiff, without which
+the written statement shall not be taken on record.
+14. Liberty is given to the Plaintiff to file a replication within 15 days of the
+receipt of the written statement(s). Along with the replication, if any, filed by
+the Plaintiff, an affidavit of admission/denial of documents of the Defendants,
+be filed by the Plaintiff, without which the replication shall not be taken on
+record. If any of the parties wish to seek inspection of any documents, the
+same shall be sought and given within the timelines.
+15. List before the Joint Registrar for marking of exhibits on 25th January,
+2024. It is made clear that any party unjustifiably denying documents would be
+liable to be burdened with costs.
+16. List before Court on 14th February, 2024.
+I.A.25565/2023 (u/O XXXIX Rule 1 and 2 CPC) & I.A. 25566/2023 (for
+discovery)
+17. Issue notice to the Defendants.
+18. Ld. counsel for Defendant No.1 accepts notice.
+19. The present suit has been filed by the Plaintiff - Balanced Body Inc.
+which is a U.S. based company seeking an injunction against Defendant No. 1-
+CS(COMM)902/2023 Page3of8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:50
+Yasmin’s Body Image Pvt. Ltd. operating as Yasmin Karachiwala’s Body
+Image from infringing the Plaintiff’s patent Nos. IN 362185 titled ‘Reformer
+Exercise Apparatus’and 384508 titled ‘Arm Cord Support Risers’.
+20. The case of the Plaintiff is that the Plaintiff’s founder is Mr. Ken
+Endelman, a German physical trainer who developed innovative modernized
+Pilates equipment using a combination of various materials which are durable
+and specially selected for the said purpose. It is stated that the Plaintiff’s Pilates
+equipment are all handmade. It is also stated that Mr. Endelman has been
+involved in innovations in gym equipment and has obtained more than 28 U.S.
+patents. The two patents which are the subject matter of the present suit are
+gym equipment called ‘REFORMER’. The bibliographic details of the two
+patents are set out below:
+“11. Indian Patent No. IN 362185 (hereinafter, referred
+to as IN’185) is directed towards a “REFORMER
+EXERCISE APPARATUS”. Its bibliographic details are
+provided below:
+a) Indian Patent No.: 362185 (IN’185)
+b) Title: ‘REFORMER EXERCISE APPARTUS’
+c) Patentee: Balanced Body, Inc.
+d) Indian Application No. 9953/CHENP/2013
+e) Priority date and International filing date: 13th
+July, 2011
+f) International Application No.
+PCT/US2011/043803
+g) India filing date: 12th December, 2013
+h) Date of publication u/s 11A: 12th September,
+2014
+i) Date of grant: 19th March, 2021
+CS(COMM)902/2023 Page4of8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:50
+j) No. of claims: 18 (Independent claim 1: Claim
+Dependent claims: Claims 2 to 8)
+k) Claims being asserted: All claims, in particular
+Claim 1.
+18. Indian Patent No. IN 384508 (hereinafter referred
+to as IN’508) is directed towards "ARM CORD SUPPORT
+RISERS". Its bibliographic details are provided below:
+l) Indian Patent No.: 384508 (IN'508)
+m) Title: ‘ARM CORD SUPPORT RISERS’
+n) Patentee: Balanced Body, Inc.
+o) Indian Application No.: 2710/CHENP/2015
+(Divisional of parent patent application
+9953/CHENP/2013)
+p) Priority date and International filing date: 13th
+July, 2011
+q) International Application No.:
+PCT/US2011/043803
+r) India filing date: 12th May, 2015
+s) Date of publication u/S 11A: 16th June, 2017
+t) Date of grant: 16th December, 2021
+u) No. of claims: 18 (Independent claims: 1, 6 and
+14)
+v) Claims being asserted: All claims, in particular
+Claims l and 14.”
+21. The Court has been shown a video to demonstrate the manner in which
+the said equipment is used and ld. Counsel for the Plaintiff submits that the
+Defendant No.1 is running gyms across the country in several places including
+Maharashtra, Delhi, Gurugram, etc. The Defendant No.1 operates under the
+name ‘YKBI’with a specific logo form i.e.,
+CS(COMM)902/2023 Page5of8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:50
+22. An investigation revealed that the Defendant No.1’s gym had installed
+the infringing ‘REFORMER’ machines which were not procured from the
+Plaintiff, and were bearing the name ‘YKBI’ with its logo on it. Through the
+same Investigator’s enquiry report, it was also revealed that the Defendant No.1
+is also had equipment that were procured from the Plaintiff, bearing the name
+and mark of the Plaintiff’s products. The photographs of the said equipment as
+lying in the Defendant No.1’s gym is extracted below:
+CS(COMM)902/2023 Page6of8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:50
+23. It is further submitted that the ‘REFORMER’ gym equipment present in
+the Defendant No.1’s gyms are clearly mapping on the Plaintiff’s granted
+patents and are knock offs of the Plaintiff’s gym equipment.
+24. Ld. counsel for the Defendant No.1 has appeared on advance service and
+submits under instructions that the Defendant No.1 has only procured one
+machine which is installed in one of the gyms of the Defendant No.1 in
+Mumbai. He further submits that his client is willing to file an affidavit
+disclosing the details of the entity/persons from whom the said equipment have
+been purchased.
+25. The Court has perused the claims of the two patent specifications as also
+the accompanying drawings. The gym equipment which have been
+demonstrated appear to be quite innovative and the Defendant No.1 would
+CS(COMM)902/2023 Page7of8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:50
+therefore be obliged to disclose as to from where the said machines have been
+procured by them as the Plaintiff’s case is that the equipment which was lying
+in the Defendant No.1’s gym in Mumbai is not the original Plaintiff’s supplied
+product.
+26. It is submitted by the Plaintiff that, there are four infringing machines at
+the Defendant No.1’s premises in Mumbai.
+27. Accordingly, it is directed that Defendant No.1 shall file an affidavit by
+10th January, 2024 disclosing the details of the manufacturer/seller of the
+‘REFORMER’ gym equipment which is claimed to be infringing, as also the
+number of equipment in the gyms.
+28. The documents of purchase etc. shall also be attached with the said
+affidavit in order to enable the Plaintiff to take further steps in the matter.
+29. Insofar as the Defendant No.2 is concerned, the case of the Plaintiff is
+that she is a gym instructor who was trained on the Plaintiff’s machine.
+Summons be issued to Defendant No.2.
+30. Reply to injunction application be filed in four weeks. Rejoinder in four
+weeks. List before the Court on 14th February, 2024.
+PRATHIBA M. SINGH, J.
+DECEMBER 19, 2023
+Rahul/bh
+CS(COMM)902/2023 Page8of8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:50
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 902/2023
+BALANCNED BODY INC ..... Plaintiff
+Through: Ms. Sampurnaa Sanyal, Adv. (VC).
+versus
+YASMINS BODY IMAGE PRIVATE LIMITED & ANR.
+..... Defendants
+Through: Mr. Anant Bhushan, Ms. Vaishali
+Singh & Ms. Krishna P., Advs. for
+D-1.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 25.01.2024
+Appearance has been put in on behalf of defendant no. 1 before the
+Hon’ble Court on 19.12.2023. However, the written statement is yet to be
+filed. Let the same be filed as per rules.
+Defendant no. 2 has been served through e-mail on 22.01.2024, as per
+the affidavit of service filed by the plaintiff. There is no appearance on
+behalf of defendant no. 2.
+Learned counsel for defendant no. 1 submits that affidavit of
+disclosure as directed by the Hon’ble Court in its last order, has been filed.
+The same is on record.
+Put up before the Hon’ble Court for the date already fixed, for further
+directions, on 14.02.2024.
+Dr. AJAY GULATI (DJHS)
+JOINT REGISTRAR (JUDL.)
+JANUARY 25, 2024/
+MR
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:49
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 902/2023, I.A. 25565/2023, I.A. 25566/2023
+BALANCED BODY INC ..... Plaintiff
+Through: Mr. Pravin Anand, Ms. Sampurnaa
+Sanyal, Mr. Dhruv Anand, Ms. Udita
+Patro, Ms. Nimrat Singh, Mr.
+Dhannanjay Khanna, Advocates.
+versus
+YASMINS BODY IMAGE PRIVATE LIMITED & ANR.
+..... Defendants
+Through: Appearance not given.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 14.02.2024
+1. Mr. Anant Bhushan, counsel for Defendant, states that in terms of
+order dated 19th December, 2023 (“Order”), an affidavit dated 05th January,
+2024 has been filed. However, Mr. Pravin Anand, counsel for Plaintiff, does
+not meet the requirements stipulated in Paragraph 27 of the Order, which has
+been reproduced below:
+“Accordingly, it is directed that Defendant No.1 shall file an affidavit by
+10th January, 2024 disclosing the details of the manufacturer/seller of the
+'REFORMER' gym equipment which is claimed to be infringing, as also
+the number of equipment in the gyms.”
+2. Mr. Anand states that he shall communicate with Mr. Bhushan and
+discuss the inaccuracies in the affidavit, so that the Defendant may furnish a
+complete and accurate affidavit before the next date of hearing.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:47
+3. Counsel for Defendant seems amenable to Mr. Anand’s suggestion.
+Sensing that there is a possibility of settlement, and with the consent of both
+counsel, parties are referred to Delhi High Court Conciliation and Mediation
+Centre.
+4. List the matter before Mediation Centre on 19th February, 2024 at
+4:30 P.M.
+5. List before the Joint Registrar on 18th March, 2024. Once pleadings in
+the suit and the applications are complete, the matter be listed before the
+Court.
+SANJEEV NARULA, J
+FEBRUARY 14, 2024
+ab
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:47
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 902/2023
+BALANCNED BODY INC .... Plaintiff
+Through: Mr. Dhananjay Khanna,
+Advocate
+versus
+YASMINS BODY IMAGE PRIVATE LIMITED & ANR.
+..... Defendant
+Through: Ms. Vaishali Singh, Advocate for
+D-1 & 2
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 16.02.2024
+I.A. No. 3784/2024 on behalf of defendant no. 1 for its
+deletion.
+Ld. Counsel for the defendant no. 1 submits that since the
+matter has been referred for mediation and the next date of
+mediation is 19.02.2024, the IA may be kept pending for
+awaiting the mediation report.
+Put up for awaiting medication report on 18.03.2024, the
+date already fixed.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 16, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:47
+
+===== ORDER =====
+
+$~47
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 902/2023
+BALANCED BODY INC ..... Plaintiff
+Through: Mr. Pravin Anand, Mr. Dhruv Anand,
+Ms. Udita Patro and Ms. Sampurna
+Sanyal, Advocates.
+versus
+YASMINS BODY IMAGE PRIVATE LIMITED & ANR.
+..... Defendants
+Through: None.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 11.03.2024
+I.A. 5640/2024(u/S 151 of CPC seeking effective compliance of order dated
+19th December, 2023)
+1. Mr. Pravin Anand, counsel for Plaintiff, refers to order dated 19th
+December, 2023, wherein Defendant No. 1 was directed to file an affidavit
+disclosing the details of the manufacturer/seller of the impugned
+“REFORMER” gym equipment along with the number of machines in the
+gyms. He submits that the affidavit filed on 06th January, 2024 in
+compliance of the said order falls short of the required disclosure. To
+substantiate this, Mr. Anand refers to the invoices annexed with the affidavit
+of disclosure which indicate that a total number of 25 machines were
+imported. However, in paragraph No. 5 of the affidavit, Defendant No. 1 has
+disclosed the location of only four of such machines/ equipment.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:46
+2. Mr. Anand states that although Defendant No. 1 is presently
+participating in mediation, however, for successful resolution, it is only
+necessary that the said Defendant must be forthcoming in revealing requisite
+information to Plaintiff, and their conduct is not indicative of their intent to
+resolve the matter.
+3. In the prima facie opinion of the Court, Defendant No. 1 must
+effectively comply with directions of the Court. However, since there is no
+representation on their behalf despite service of an advance copy, the Court
+considers it appropriate to direct that service through court process, by all
+permissible modes, upon filing of process fee, returnable on 22nd April,
+2024.
+SANJEEV NARULA, J
+MARCH 11, 2024
+d.negi
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:46
+
+===== ORDER =====
+
+$~8
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 902/2023
+BALANCNED BODY INC ..... Plaintiff
+Through: Mr. Dhruv Anand,
+Ms. Sampurnaa Sanyal,
+Mr. Dhananjay Khanna,
+Advocates
+Versus
+YASMINS BODY IMAGE PRIVATE LIMITED & ANR.
+..... Defendant
+Through: Ms. Vaishali Singh, Advocate for
+D-1 & 2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 18.03.2024
+I.A No. 3784/2024 filed by defendant no. 1 under Order I
+Rule 10 r/w Section 151 CPC for deletion of name of
+defendant no. 1 from the array of parties.
+At the request of ld. Counsel for the defendant no. 1, this
+IA is kept pending since the matter is pending before the
+Mediation Centre.
+CS(COMM) 902/2023
+Ld. Counsel for the plaintiff submits that the next date
+before the ld. Mediator is 21.03.2024.
+At request, matter is adjourned.
+Matter is already listed before the Hon’ble Court for
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:45
+22.04.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 22.04.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 18, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:45
+
+===== ORDER =====
+
+$~34
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 902/2023, I.A. 25565-25566/2023, I.A. 3784/2024,
+I.A. 5640/2024
+BALANCNED BODY INC ..... Plaintiff
+Through: Ms. Nimrat Singh, Advocate.
+versus
+YASMINS BODY IMAGE PRIVATE LIMITED & ANR.
+..... Defendants
+Through: Ms. Vaishali Singh, Advocate for D-
+1, 2.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 22.04.2024
+1. Counsel for parties jointly seek an adjournment as the parties are still
+participating in mediation proceedings.
+2. List on 5th August, 2024.
+SANJEEV NARULA, J
+APRIL 22, 2024
+nk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:45
+
+===== ORDER =====
+
+$~36
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 902/2023, I.A. 25565/2023-Stay, I.A. 25566/2023,
+I.A. 3784/2024-O-1,R-10, I.A. 5640/2024 & I.A.35394/2024-O-
+7,R-11
+BALANCNED BODY INC .....Plaintiff
+Through: Ms. Sampurna Sanyal, Advocate.
+versus
+YASMINS BODY IMAGE PRIVATE
+LIMITED & ANR. .....Defendants
+Through: Ms. Neeha Nagpal, Mr. Malak M.
+Bhatt and Ms. Shreya Shree Singh,
+Advocates for D-1.
+Mr. Anant Bhushan, Advocate for
+D-2.
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 05.08.2024
+CS(COMM) 902/2023 & I.A. 25565/2023-Stay
+1. Learned counsel for the parties submits that the mediation talks
+inter se the parties before the Delhi High Court Mediation and
+Conciliation Centre has since failed as the parties were unable to arrive at
+any settlement.
+2. Defendant no.1 despite appearance on or from the first date of
+listing before this Court on 19.12.2023 have not filed the written
+statement. Accordingly, the right to file the written statement on behalf of
+defendant no.1 is closed.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:44
+3. Similarly, though the defendant no.2 has been represented before
+this Court since and from 16.02.2024, it has chosen not to file the written
+statement. Accordingly, right to file the written statement of defendant
+no.2 is also closed.
+4. List before he learned Joint Registrar for further proceedings on
+11.11.2024.
+I.A. 3784/2024 (O-1,R-10 for deletion of name of D-1)
+5. By virtue of the present application, defendant no.1 seeks for
+deletion of its name from the array of parties.
+6. Issue notice to the non-applicant/ plaintiff.
+7. Learned counsel appearing for the plaintiff accepts notice. She
+seeks and is granted four weeks for filing the reply. Rejoinder thereto, if
+any, be filed within two weeks thereafter.
+I.A.35394/2024 (O-7,R-11)
+8. By virtue of the present application filed under Order VII Rule 11
+read with Section 151 of the Code of Civil Procedure, defendant no.1
+seeks rejection of the present suit instituted by the plaintiff against it.
+9. Issue notice to the non-applicant/ plaintiff.
+10. Learned counsel for the plaintiff accepts notice. He seeks and is
+granted four weeks for filing the reply to this application. Rejoinder
+thereto, if any, be filed within two weeks thereafter.
+11. Accordingly, renotify on 11.11.2024
+I.A. 5640/2024 (seeking effective compliance of order dt. 19.12.2023)
+12. Learned counsel appearing for the defendant no.1 seeks, and is
+granted four weeks for filing the affidavit in compliance to the order dated
+19.12.2023.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:44
+13. List on 11.11.2024.
+SAURABH BANERJEE, J
+AUGUST 5, 2024
+mk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:44
+
+===== ORDER =====
+
+$~1-SB
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 902/2023
+BALANCNED BODY INC .....Plaintiff
+Through: Mr. Dhruv Anand, Ms. Udita Patro
+and Ms. Sampurnaa Sanyal,
+Advocates
+versus
+YASMINS BODY IMAGE PRIVATE LIMITED & ANR
+.....Defendants
+Through: Ms. Shreya S. Singh, Advocate
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 21.10.2024
+Review Petition No. 394/2024 and I.A. 42799/2024-for delay.
+1. By virtue of the present review petition under Order XLVII Rule 1
+and Section 114 of the Code of Civil Procedure, 1908, the defendant no.1
+seeks review of the order dated 05.08.2024.
+2. After some arguments, learned counsel for the defendant no.1
+candidly seeks permission to withdraw the present review petition.
+3. Permission as sought, is granted.
+4. Accordingly, the present review petition alongwith pending
+application, is dismissed as withdrawn.
+.
+SAURABH BANERJEE, J
+OCTOBER 21, 2024/akr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:44
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 902/2023
+BALANCNED BODY INC .....Plaintiff
+Through: Ms. Sampurnaa Sanyal,
+Advocate
+versus
+YASMINS BODY IMAGE PRIVATE LIMITED & ANR.
+.....Defendant
+Through: Ms. Neeha Nagpal, Ms. Shreya
+Shree Singh, Advocate for D-1
+Ms. Vaishali Singh (VC),
+Advocate for D-2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 11.11.2024
+I.A. No. 25565/2023 (for Stay).
+1. No reply has been filed on behalf of the defendants
+despite sufficient opportunity at hand. Consequently, respective
+rights of defendants to file a reply stand closed.
+I.A. No. 5640/2024 (seeking effective compliance of order dt.
+19.12.2023).
+2. Ld. Counsel for defendant no. 1 submits that compliance
+affidavit has been filed. A copy of the same has been received by
+the plaintiff. Nothing more is required to be done in the present
+IA.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:43
+IA No. 3784/2024 u/o 1 Rule 10 CPC by defendant no. 1 and
+IA No. 35394/2024 u/o 7 Rule 11 CPC, also by defendant no.
+1.
+3. Ld. Counsel for the plaintiff submits that vide order dated
+05.08.2024, four weeks were granted to file replies to the above
+listed IA’s. However, there has been a delay on account of a fresh
+affidavit of disclosure filed by defendant no. 1 which contains
+certain facts which necessitated amending of the reply which had
+been prepared to these IAs. Ld. Counsel further submits that
+replies are in the process of being filed and the same shall be
+filed as per rules. Advance copy of the same be supplied to ld.
+Counsel for defendant no. 1.
+I.A. No. 25566/2023 (for discoveries).
+4. Ld. Counsels for defendants no. 1 & 2 is permitted four
+weeks to file a reply. However, it is made clear that since notice
+in the present IA was issued on 19.12.2023 and the same was
+accepted before the Hon’ble Court on behalf of defendant no. 1,
+no further opportunity shall be granted to file a reply to defendant
+no. 1. It needs a highlight that defendant no. 2, as per the plaint,
+was a business associate of defendant no. 1.
+5. Put up for completion of pleadings in IA’s No. 3784/2024
+and 35394/2024 on 23.01.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 11, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:43
+
+===== ORDER =====
+
+$~4
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 902/2023
+BALANCNED BODY INC .....Plaintiff
+Through: Ms. Sampurnaa Sanyal (VC),
+Advocate
+versus
+YASMINS BODY IMAGE PRIVATE LIMITED & ANR.
+.....Defendant
+Through: Ms. Neeha Nagpal, Ms. Shreya
+Shree Singh (VC), Advocates for
+D-1.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 23.01.2025
+I.A. No. 1885/2025 on behalf of the plaintiff seeking
+condonation of delay in filing its replies to I.A. nos. 3784/2024
+and 35394/2024 filed by defendant no. 1.
+1. Issue notice. Notice accepted by ld. Counsel for defendant
+no. 1. Ld. Counsel for the defendant submits that she has no
+objection if the application is allowed.
+2. For the reasons stated in the application, application is
+allowed. Delay stands condoned. Replies to IA No. 3784/2024
+and IA No. 35394/2024 are taken on record. IA stands disposed
+off.
+I.A. No. 25565/2023 (for Stay).
+3. No reply has been filed on behalf of the defendants
+despite sufficient opportunity at hand. Consequently, respective
+rights of defendants to file a reply stand closed.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:42
+I.A. No. 5640/2024 (seeking effective compliance of order
+dt.19.12.2023).
+4. Ld. Counsel for defendant no. 1 submits that compliance
+affidavit has been filed. A copy of the same has been received by
+the plaintiff. Nothing more is required to be done in the present
+IA.
+IA No. 3784/2024 u/o 1 Rule 10 CPC by defendant no. 1.
+5. Reply on behalf of the plaintiff has been taken on record
+today. Rejoinder, if any, be filed as per the timeline already
+granted.
+IA No. 35394/2024 u/o 7 Rule 11 CPC, by defendant no. 1.
+6. Reply on behalf of the plaintiff has been taken on record
+today. Rejoinder, if any, be filed as per the timeline already
+granted.
+I.A. No. 25566/2023 (for discoveries).
+7. Ld. Counsel for defendant no. 1 is granted two weeks to
+bring the reply on record which is pending scrutiny.
+8. Put up for completion of pleadings on 04.04.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 23, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:42
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 902/2023
+BALANCNED BODY INC .....Plaintiff
+Through: Ms. Sampurnaa Sanyal, Advocate
+(through VC)
+versus
+YASMINS BODY IMAGE PRIVATE LIMITED & ANR.
+.....Defendants
+Through: Ms. Shreya Shree Singh, Advocate for
+D-1 (through VC)
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. AJAY GULATI
+O R D E R
+% 04.04.2025
+Regular Stenographer is on leave today.
+I.A. No. 8763/2025 for condonation of delay of 30 days in filing a reply to
+the I.A. no. 25566/ 2023 on behalf of the defendant no.1.
+1. Ld. Counsel for the plaintiff accepts notice and submits that appropriate
+orders may be passed. For the reasons mentioned in the application, delay is
+condoned. Reply of defendant no. 1 to I.A.No. 25566/2023 is taken on record.
+IA stands disposed off.
+I.A. No. 25565/2023 (for Stay).
+2. Right of the defendants to file a reply has already been closed.
+Consequently, this IA be placed before the Hon’ble Court.
+I.A. No. 5640/2024 (seeking effective compliance of orderdt.19.12.2023).
+3. Compliance affidavit has already been filed on behalf of defendant no. 1.
+Nothing more is required to be done in the present IA. This IA be also placed
+before the Hon’ble Court.
+I.A. No. 3784/2024 u/o I Rule 10 CPC by defendant no. 1
+4. Rejoinder filed on behalf of defendant no. 1 is under objection, possibly
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:40
+on account of delay. Ld. Counsel for the plaintiff has no objection to the
+condonation of delay on the oral request of ld. counsel for defendant no. 1.
+Consequently, Registry is directed to take on record the rejoinder unless there
+is any other objection apart from delay.
+5. Put up again for arguments on the next date.
+I.A. No. 35394/2024 u/o VII Rule 11 CPC by defendant no. 1.
+6. Rejoinder filed on behalf of defendant no. 1 is under objection on
+account of delay. Ld. Counsel for the plaintiff has no objection to the
+condonation of delay on the oral request of ld. counsel for defendant no. 1.
+Consequently, Registry is directed to take on record the rejoinder unless there
+is any other objection apart from delay.
+7. Put up again for arguments on the next date.
+I.A. No. 25566/2023 (for discoveries)
+8. Reply on behalf of defendant no. 1 has been taken on record today.
+Rejoinder, if any, be filed as per the timeline already indicated by the Hon’ble
+Court.
+CS(COMM) 902/2023
+9. Rights of both the defendants to file a written statement has already been
+closed by the Hon’ble Court. Since rejoinder on behalf of defendant no. 1 in
+I.A. No. 35394/2024 has been taken on record today, the IA be placed before
+the Hon’ble Court for further consideration.
+10. Be placed before the Hon’ble Court on 07.05.2025, for further
+directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL
+APRIL 4, 2025/PU
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:40
+
+===== ORDER =====
+
+$~39
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+CRL.M.A. 11565/2025
+IN
++ CS(COMM) 902/2023
+BALANCNED BODY INC .....Plaintiff
+Through: Ms. Sampurnaa Sanyal, Advocate.
+versus
+YASMINS BODY IMAGE PRIVATE LIMITED
+& ANR. .....Defendants
+Through: Ms. Neeha Nagpal, Mr. Malak Bhatt,
+Ms. Shreya Singh & Ms. Aparna Iyer,
+Advocates for D-1.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 17.04.2025
+CRL.M.A. 11565/2025 (under Sections 379 and 215 of the BNSS, 2023)
+1. The present application has been filed on behalf of the plaintiff
+seeking to highlight various instances wherein the defendant no.1, through
+its authorised representative Mr. Vaibhav Pravesh Dikshit, has allegedly
+made untrue and contradictory statements in its affidavits dated 5th January,
+2024 and 20th September, 2024.
+2. Issue notice.
+3. Notice is accepted by counsel appearing for the defendant no.1.
+4. Reply be filed within two (2) weeks from today.
+5. List on 7th May, 2025, i.e. date already fixed.
+AMIT BANSAL, J
+APRIL 17, 2025/at
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:39
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 902/2023, I.A. 25565/2023, I.A. 25566/2023, I.A.
+3784/2024, I.A. 5640/2024, I.A. 35394/2024 & CRL.M.A.
+11565/2025
+BALANCNED BODY INC .....Plaintiff
+Through: Ms. Udita Patro, Ms. Sampurna
+Sanyal and Ms. Nimrat Singh,
+Advocates
+versus
+YASMINS BODY IMAGE
+PRIVATE LIMITED & ANR. .....Defendants
+Through: Ms. Neeha Nagpal, Mr. Malak Bhatt,
+Ms. Shreya Singh and Ms. Aparna
+Iyer, Advocates for D-1
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 07.05.2025
+1. Counsel for the defendants submits that the reply is ready and the
+same shall be filed within one week from today, with a copy to the counsel
+for the plaintiff.
+2. Rejoinder thereto, if any, be filed within two weeks thereafter.
+3. List on 01st August, 2025.
+AMIT BANSAL, J
+MAY 07, 2025
+ds
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:38
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 902/2023 & CRL.M.A. 11565/2025, I.As. 25565/2023,
+25566/2023, 3784/2024, 5640/2024, 35394/2024
+BALANCNED BODY INC .....Plaintiff
+Through: Ms. Nimrat Singh, Advocate
+versus
+YASMINS BODY IMAGE PRIVATE LIMITED & ANR.
+.....Defendants
+Through: Mr. Rohan Tewari, Advocate
+(Through VC)
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 01.08.2025
+Learned counsel for the defendants seeks an adjournment on the
+ground of unavailability of the main counsel, which is not opposed by the
+plaintiff.
+At request, list on 10.12.2025.
+MANMEET PRITAM SINGH ARORA, J
+AUGUST 1, 2025/rhc
+Page 1 of 1
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:38
+
+===== ORDER =====
+
+$~226
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 902/2023
+BALANCNED BODY INC
+.....Plaintiff
+Through: Ms. Sampurnaa Sanyal, Adv. (VC)
+versus
+YASMINS BODY IMAGE PRIVATE LIMITED & ANR.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the defendant when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:37
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 902/2023
+BALANCNED BODY INC .....Plaintiff
+Through: Mr. Pravind Anand, Adv. (through
+VC)
+versus
+YASMINS BODY IMAGE PRIVATE LIMITED & ANR.
+.....Defendants
+Through: Ms. Neha Nagpal, Adv. (through VC)
+for D-1.
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 10.12.2025
+Crl.M.A. 11565/2025
+1. Learned counsel for the plaintiff seeks accommodation to file its
+rejoinder to IA 11565/2025.
+2. At request of the plaintiff, list for hearing on 27.02.2026.
+I.A. 5640/2024 (seeking effective compliance of order dated 19.12.2023)
+3. Learned counsel for the plaintiff states that this application may be
+disposed of as not pressed.
+4. The application stands disposed of.
+CS(COMM) 902/2023, I.A. 25565/2023, I.A. 3784/2024, I.A. 35394/2024
+5. It is clarified that I.A. 25565/2023 will be heard along with IA
+3784/2024 and IA 35394/2024.
+6. Parties are directed to file their written submissions not exceeding
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:37
+three (3) pages for each of these three applications, one (1) week prior to the
+next date of hearing.
+7. This Court notes that defendant no. 1 has been impleaded on the
+allegation that it has purchased the infringing goods. The manufacturer of
+the infringing goods has not been arrayed as a party to the suit. It is the
+contention of defendant no. 1 that defendant no. 1 ought to be deleted from
+the array of parties.
+8. List before Court for disposal of applications on 27.02.2026.
+MANMEET PRITAM SINGH ARORA, J
+DECEMBER 10, 2025
+gm
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:37
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 902/2023
+BALANCNED BODY INC
+.....Plaintiff
+Through: Mr. Dhananjay Khanna,
+Advocate
+versus
+YASMINS BODY IMAGE PRIVATE LIMITED & ANR.
+.....Defendant
+Through: Ms. Neeha Nagpal, Mr. Rohan
+Tewari (VC), Advocates for D-1
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 15.12.2025
+I.A. No. 31364/2025 on behalf of the plaintiff seeking
+condonation of delay of 188 days in filing rejoinder to reply
+to CRL M.A. No. 11565 of 2025 filed by defendant no. 1.
+1. Issue notice. Notice accepted by ld. Counsel for defendant
+no. 1 who submits that if the delay is to be condoned, same
+should be subject to a reasonable cost.
+2. For the reasons stated in the application, application is
+allowed subject to cost of Rs. 5000/-, to be paid to defendant no.
+1 through its counsel, within three weeks failing which further
+cost shall be imposed. Delay stands condoned. Rejoinder to
+reply to CRL M.A. No. 11565/2025 filed by defendant no. 1 is
+taken on record. IA stands disposed off. Plaintiff is directed to
+re-file the rejoinder within 5 days whereafter the Registry is
+directed to place the same on record.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+DECEMBER 15, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:36

@@ -1,0 +1,1196 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_824_2023
+case_status: PENDING
+n_orders: 28
+
+$~42
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 824/2023 & I.As. 22712-17/2023
+GET OUT SYSTEMS PRIVATE LIMITED & ANR...... Plaintiffs
+Through: Mr. J. Sai Deepak, Ms. Srishti
+Banerjee, Mr. Cheitanya Madan, Ms.
+Arpita Bishnoi & Mr. R. Vigneshwar,
+Advs.
+versus
+MR RAJEEV MALHOTRA & ORS. ..... Defendants
+Through: None.
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 10.11.2023
+1. This hearing has been done through hybrid mode.
+I.A. 22714/2023 (for exemption)
+2. This is an application seeking exemption from filing
+originals/certified/cleared/typed or translated copies of documents, left side
+margins, electronic documents, etc. Original documents shall be
+produced/filed at the time of Admission/Denial, if sought, strictly as per the
+provisions of the Commercial Courts Act and the DHC (Original Side)
+Rules, 2018.
+3. Exemption is allowed, subject to all just exceptions.
+4. Accordingly, application is disposed of.
+I.A. 22713/2023 (for additional documents)
+5. This is an application seeking leave to file additional documents under
+the Commercial Courts, Commercial Division and Commercial Appellate
+Division of High Courts Act, 2015 (hereinafter, ‘Commercial Courts Act’).
+CS(COMM)824/2023 Page1of6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:29
+The Plaintiff, if it wishes to file additional documents at a later stage, shall
+do so strictly as per the provisions of the Commercial Courts Act and the
+DHC (Original Side) Rules, 2018.
+6. Application is disposed of.
+I.A. 22715/2023 (u/S 12A of the Commercial Courts Act)
+7. This is an application filed by the Plaintiff seeking exemption from
+instituting pre-litigation mediation under Section 12A of the Commercial
+Courts Act. Considering the facts and circumstances of the case, the Court is
+satisfied that in terms of the judgment of the Supreme Court in Yamini
+Manohar v. T.K.D Keerthi [2023 LiveLaw (SC) 906] the suit contemplates
+urgent interim relief. In these facts, the exemption under Section 12A of the
+Commercial Courts Act is granted to the Plaintiff. Accordingly, the
+application is disposed of.
+I.A. 22716/2023 (exemption from advance service to the Defendants)
+8. In view of the fact that the Plaintiff has sought ex parte ad-interim
+injunction along with the appointment of the Local Commissioner, the
+exemption from advance service to the Defendants is granted.
+9. Application is disposed of.
+I.A.22717/2023 (for court fee)
+10. This is an application for exemption from filing court fees. Let the
+Court fee be filed within two weeks. Application is disposed of.
+CS (COMM) 824/2023
+11. Let the plaint be registered as a suit.
+12. Issue summons to the Defendants through all modes upon filing of
+Process Fee.
+13. The summons to the Defendants shall indicate that the written
+CS(COMM)824/2023 Page2of6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:29
+statement to the plaint shall be positively filed within 30 days from date of
+receipt of summons. Along with the written statement, the Defendants shall
+also file an affidavit of admission/denial of the documents of the Plaintiff,
+without which the written statement shall not be taken on record.
+14. Liberty is given to the Plaintiff to file the replication within 15 days of
+the receipt of the written statement(s). Along with the replication, if any,
+filed by the Plaintiff, an affidavit of admission/denial of documents of the
+Defendants, be filed by the Plaintiff, without which the replication shall not
+be taken on record. If any of the parties wish to seek inspection of any
+documents, the same shall be sought and given within the timelines.
+15. List before the Joint Registrar for marking of exhibits on 2nd April,
+2024.It is made clear that any party unjustifiably denying documents would
+be liable to be burdened with costs.
+16. List before Court on 23rd November, 2023.
+I.A. 22712/2023 (u/O XXXIX Rules 1 & 2 CPC)
+17. Issue notice.
+18. The present suit reveals a dispute concerning the source code of
+Plaintiff No. 1-Get Out Systems Pvt. Ltd, a company engaged in travel
+business. The plaint avers that the Plaintiff No. 2-Mr. Sanjeev Malhotra is
+the co-founder/CEO of the Plaintiff No.1, and is the majority shareholder. It
+is stated that the Plaintiff No. 2 and Defendant No.1- Mr. Rajeev Malhotra
+are real brothers. It is averred that both of the brothers own shareholding in
+the Plaintiff company. However, recently, disputes have arisen in respect of
+their respective business stakes.
+19. It is the Plaintiffs’ case that Plaintiff No. 1 developed a Software as-a-
+Service (hereinafter referred to as "SAAS") platform, hosted on
+CS(COMM)824/2023 Page3of6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:29
+https://www.getout.ai/ and www.getout.travel, as an integrated travel
+marketplace in collaboration with MasterCard Asia Pacific Private Limited,
+banks including HDFC Bank, ICICI Bank and other funding banks.
+20. The plaint avers that the Plaintiff company, in partnership with
+MasterCard and Issuer Banks, has developed a system that allows
+corporates, travel management companies (TMCs), and travel agents to pay
+travel suppliers using Virtual Credit Cards (VCCs). The said setup offers
+risk-free, frictionless transactions with benefits like transparency, auto-
+reconciliation, data control, and cost savings. It is stated that the Plaintiff
+company's process automation generates virtual cards with various controls,
+and its integrated expense management app helps employees manage
+receipts and reports, identifying any policy violations.
+21. The Plaintiff No. 2 avers that he spearheaded the development of the
+‘Spends Ecosystem’ in collaboration with MasterCard, revolutionizing
+traditional corporate and business expenses. The said ecosystem integrates
+the Plaintiff's SaaS platform with a marketplace serving all stakeholders,
+including MasterCard, Issuer Banks, and Acquiring Banks. It is submitted
+that the collaboration with MasterCard has led to the creation of a
+comprehensive platform for travel bookings, payments, and compliance.
+This platform acts as a one-stop-shop, facilitating seamless physical and
+VCC payments, aligning with customers' business needs.
+22. In the present suit, Defendant No. 1-Mr. Rajeev Malhotra, holds 20%
+shareholding in the Plaintiff company. It is averred that he joined the
+company as the Chief Technology Officer (CTO) in 2019-2020 and was
+responsible for developing the software and source code for the company's
+SaaS-based digital platform. Defendant No. 2-Mr. Divyansh Jaiswal was
+CS(COMM)824/2023 Page4of6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:29
+stated to have been appointed as Software Development Engineer-II in the
+Plaintiff company. Defendant No. 3-Mr. Adesh Kumar Singh is stated to
+have joined the Plaintiff company as an Amazon Web Services (AWS)
+developer. Defendant No. 4-Mr. Nitin Kumar Singh is also stated to have
+been appointed as the Software Development Engineer-I in the Plaintiff
+company. Defendant No. 5 is Amazon Web Services India Private Limited,
+which provides cloud web hosting services to the Plaintiff company and is
+responsible for storing the source code of the Plaintiff's SaaS-based
+platform.
+23. The disputes between the Plaintiffs and the Defendants have arisen
+recently as of September, 2023 and the Defendant No.1 who was working as
+the CTO is stated to have exclusive access to the source code which is
+maintained on the platform of Amazon Web Services India Pvt. Ltd.
+However,
+24. However, he has urgently left India and is in the U.S. and is not
+giving access to the Plaintiff No. 1’s account on AWS. The Plaintiffs’
+apprehension is that access to the source code has been retained by the
+Defendant No.1, and the same may be tampered or made inaccessible to the
+Plaintiffs, whose operations/business would be jeopardised.
+25. Considering the fact that the Defendant No.1 would also need to be
+heard before any proper effective orders can be passed in respect of the
+source code, it is directed that Defendant No.5-Amazon Web Services India
+Pvt. Ltd. shall not provide access to the Plaintiff No. 1’s account to either
+Plaintiff No.2 or to Defendant No.1 till the next date of hearing or anyone
+acting for or on their behalf.
+26. Copy of this order be served upon Defendant No.1- Mr. Rajeev
+CS(COMM)824/2023 Page5of6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:29
+Malhotra and Defendant No.5 - Amazon Web Services India Pvt. Ltd.
+through all permissible modes including WhatsApp.
+27. List on the dates fixed above.
+28. Order dasti.
+PRATHIBA M. SINGH, J.
+NOVEMBER 10, 2023/dj/dn
+CS(COMM)824/2023 Page6of6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:29
+
+===== ORDER =====
+
+$~45
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 824/2023
+GET OUT SYSTEMS PRIVATE
+LIMITED & ANR. ..... Plaintiffs
+Through: Mr. J. Sai Deepak, Mr. Cheitanya
+Madan, Ms. Srishti Banerjee, Ms.
+Arpita Bishnoi and Mr. R.
+Vigneshwar , Advocates (M:
+8588939380).
+Versus
+MR RAJEEV MALHOTRA & ORS. ..... Defendants
+Through: Mr Vaibhav Gaggar, Ms. Monica
+Lakhanpal Gaggar, Ms Kokila
+Kumar, Mr. Utkarsh Tiwari and Mr.
+Dhruv Mehta, Advocates for D-1 (M:
+7060914799).
+Mr. Aaditya Vijaykumar, Advocates
+for D-2 to 4 (M: 9717622082).
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 23.11.2023
+1. This hearing has been done through hybrid mode.
+2. Mr. Vaibhav Gaggar, ld. Counsel on behalf of Defendant No. 1 - Mr
+Rajeev Malhotra submits that his client has complete access to the source
+code which is on the platform of Defendant No. 5 - Amazon Web Services
+India Private Limited (AWS).
+3. As on date, in view of the order passed on 10th November, 2023,
+AWS has been directed not to provide access to the account of Plaintiff No.1
+- Get Out Systems Private Limited to either Plaintiff No. 2 - Mr. Sanjeev
+Malhotra or Defendant No. 1 till the next date of hearing which is today.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:29
+4. Ms. Jain, ld. Counsel for AWS submits that somebody has to be
+reflected as the administrative contact on the said account.
+5. Parties are referred to day to day mediation. Mr. Rajeev Virmani,
+Senior Advocate (9810049143) is appointed as ld. Mediator in this matter.
+The fees of the ld. Mediator is fixed at Rs.2,00,000/- which shall be paid
+equally both the parties.
+6. Parties shall appear before the ld. Mediator in his chamber or any
+other premises as may be suggested on 24th November, 2023.
+7. The control of the Plaintiff No.1 account on AWS platform shall now
+vest with the ld. Mediator who may put his own email ID and password, so
+that the technical requirement of AWS is satisfied. Ms. Jain may accordingly
+contact Mr. Virmani who shall do the needful.
+8. List on 14th December, 2023.
+PRATHIBA M. SINGH, J.
+NOVEMBER 23, 2023
+mr/ kt
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:29
+
+===== ORDER =====
+
+$~28
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 824/2023, I.As. 22712/2023, 25154/2023 &
+25155/2023
+GET OUT SYSTEMS PRIVATE LIMITED & ANR...... Plaintiffs
+Through: Mr J. Sai Deepak, Mr Nitin Wadhwa,
+Ms Srishti Banerjee, Mr Cheitanya
+Madan,, Mr R.Vigneshwar, Ms Arpita
+Bishnoi, Advocates.
+versus
+MR RAJEEV MALHOTRA & ORS. ..... Defendants
+Through: Mr. Vaibhav Gaggar, Ms Monica
+Lakhanpal, Ms Kokila Kumar. Ms
+Shefali Munde, Mr Dhruv Mehta,
+and Mr Utkarsh Tiwari, Advs. for R-
+1 (M. 9871077334)
+Ms Sneha Jain, Ms Surabhi Pande ,
+Ms R Ramya, and Ms Srishti
+Doundiyal, Advocates for D-5.
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 14.12.2023
+1. This hearing has been done through hybrid mode.
+I.A. 25154/2023 & I.A. 25155/2023 (for exemptions)
+2. Allowed, subject to all just exceptions. Applications are disposed of.
+CS(COMM) 824/2023 & I.A. 22712/2023
+3. The present suit, filed by the Plaintiffs, seeks an injunction to restrain
+the Defendants from infringing the source code belonging to the Plaintiff
+company, and to recover possession of credentials required to access this
+source code.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:28
+4. Vide order dated 23rd November, 2023, this Court referred the parties
+for mediation. The said order reads as follows:
+“2. Mr. Vaibhav Gaggar, ld. Counsel on behalf of
+Defendant No. 1 - Mr Rajeev Malhotra submits that his
+client has complete access to the source code which is
+on the platform of Defendant No. 5 - Amazon Web
+Services India Private Limited (AWS).
+3. As on date, in view of the order passed on 10th
+November, 2023, AWS has been directed not to provide
+access to the account of Plaintiff No.1 - Get Out
+Systems Private Limited to either Plaintiff No. 2 - Mr.
+Sanjeev Malhotra or Defendant No. 1 till the next date
+of hearing which is today.
+4. Ms. Jain, ld. Counsel for AWS submits that
+somebody has to be reflected as the administrative
+contact on the said account.
+5. Parties are referred to day to day mediation. Mr.
+Rajeev Virmani, Senior Advocate (9810049143) is
+appointed as ld. Mediator in this matter. The fees of
+the ld. Mediator is fixed at Rs.2,00,000/- which shall be
+paid equally both the parties.
+6. Parties shall appear before the ld. Mediator in his
+chamber or any other premises as may be suggested on
+24th November, 2023.
+7. The control of the Plaintiff No.1 account on AWS
+platform shall now vest with the ld. Mediator who may
+put his own email ID and password, so that the
+technical requirement of AWS is satisfied. Ms. Jain
+may accordingly contact Mr. Virmani who shall do the
+needful.”
+5. Today, the parties report that the settlement talks have failed. The
+Plaintiff No.1 seeks access to the source code, and on the other hand, the
+Defendant No.1 denies that the source code belongs to the Plaintiff No.1.
+6. After some hearing, it is submitted that the parties are again willing to
+finalize and arrive at a settlement in the present suit.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:28
+7. Accordingly, list this matter on 19th December, 2023 on top of the
+board.
+PRATHIBA M. SINGH, J.
+DECEMBER 14, 2023
+Rahul/dn
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:28
+
+===== ORDER =====
+
+$~36
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 824/2023 & I.A. 22712/2023
+GET OUT SYSTEMS PRIVATE LIMITED & ANR...... Plaintiffs
+Through: Mr. J. Sai Deepak, Mr. Cheitanya
+Madan, Ms. Srishti Banerjee, Ms.
+Arpita Bishnoi, Mr. R. Vigneshwar,
+Advs. (M. 8588939380)
+versus
+MR RAJEEV MALHOTRA & ORS. ..... Defendants
+Through: Mr. Vaibhav Gaggar, Ms Monica
+Lakhanpal, Ms Saloni Gupta, Ms
+Kokila Kumar, Ms Shefali Munde,
+Mr Dhruv Mehta, Advs. for D-1 (M.
+9810823029)
+Ms Sneha Jain, Ms Surabhi Pande ,
+Ms R Ramya, and Ms Srishti
+Doundiyal,Advocates for D-5.
+CORAM:
+JUSTICE PRATHIBAM. SINGH
+O R D E R
+% 19.12.2023
+1. This hearing has been done through hybrid mode.
+2. Both the brothers i.e. Plaintiff No.2 - Mr. Sanjeev Malhotra and
+Defendant No.1 - Mr. Rajeev Malhotra are present in Court.
+3. A chamber hearing was also held today and certain proposals were
+discussed. However, there is no meeting point between the parties.
+4. The matter has to be heard on merits.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:28
+5. Let a reply to the interim application be filed within two weeks.
+Rejoinder thereto be filed within two weeks thereafter.
+6. Insofar as the maintenance of the AWS account is concerned, since
+the payment is required to be made in order to ensure that the account is not
+disrupted, the payment would be made by Plaintiff No.1 through the Ld.
+Mediator. However, 50% of the same shall be treated as a payment made by
+Defendant No.1, so that no equities are claimed due to this payment. This
+would be without prejudice to the rights and contentions of both parties.
+7. List for hearing on 20th February 2024.
+8. It is made clear that the matter is not part heard.
+9. The interim order granted vide order dated 10th November 2023 shall
+continue.
+PRATHIBA M. SINGH, J.
+DECEMBER 19, 2023/dk/kt
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:28
+
+===== ORDER =====
+
+$~37
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 824/2023
+GET OUT SYSTEMS PRIVATE LIMITED & ANR. ..... Plaintiffs
+Through: Mr. J. Sai Deepak, Mr. Cheitanya
+Madan, Ms. Srishti Banerjee,
+Ms. Arpita Bishnoi, Mr. R.
+Vigneshwar, Advocates.
+versus
+MR RAJEEV MALHOTRA & ORS. ..... Defendants
+Through: Mr. Vaibhav Gaggar, Mr. Vidur
+Mohan, Ms. Saloni Gupta, Ms. Kokila
+Kumar, Ms. Shefali Mende and
+Mr. Dhruv Mehta, Advocates for D-1.
+Mr. Aaditya Vijay Kumar, Advocate
+for D-2 to 4.
+Ms. Surabhi Pande, Ms. Savni D.
+Endlaw and Ms. R. Ramya,
+Advocates for D-5.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 08.02.2024
+I.A. 3099/2024 (on behalf of the Plaintiffs seeking directions)
+1. AWS Account No. 761404316429 (“AWS Account”) is the subject
+matter of the Court order dated 10th November, 2023 (along with subsequent
+orders), whereby Defendant No. 5 (Amazon Web Services India Pvt. Ltd.)
+was directed to restrict access to the AWS Account. However, Defendant
+No. 5 had not done so, stating that the system requires someone to be
+reflected as the administrative contact on the AWS Account. Therefore, this
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:27
+Court vested control of the AWS Account with the Mediator vide order
+dated 23rd November, 2023, so that Defendant No. 5’s technical
+requirements were fulfilled. However, despite this, and despite clearance of
+all dues, Defendant No. 5 sent a mail stating that the AWS Account, which
+housed Plaintiff’s intellectual property, has been closed.
+2. The Applicant submits that though this account was reactivated by
+Defendant No. 5 after the service of the instant application, it is concerning
+to note that account was deactivated without the permission of the Court in
+the first place.
+3. Since the account has been reactivated, the first prayer sought in the
+application is rendered infructuous. The other prayers seek directions to
+Defendant No. 5, restraining them from taking any further action regarding
+the closure of the account. Considering the facts noted above, the Court is
+inclined to get into the bottom of things to discern the reason that led to
+deactivation of the account, without the permission of the Court.
+4. Accordingly, Defendant No. 5 is directed to file a detailed affidavit
+explaining the circumstances commencing from 10th November, 2023, i.e.,
+date of the first order in this suit, till the stage of reactivation. Additionally,
+Defendant No. 5 shall in the affidavit disclose the activity logs pertaining to
+the period the account remained deactivated. Such details would include:
+a. Cloud Trail Logs with IP address and location.
+b. All active users and actions performed.
+c. Details of the any outstanding dues towards the AWS Account of the
+Plaintiff company (if any).
+d. Cloud watch and RDS logs for the services that were active on the
+account.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:27
+e. CloudTrail Lake and Event logs, server logs, system logs (or
+syslog's), Web logs.
+5. It is made clear that Defendant No. 5 shall henceforth refrain from
+taking any steps to deactivate the account without the permission of the
+Court.
+6. With the above directions, list on the date fixed i.e. on 20th February,
+2024.
+SANJEEV NARULA, J
+FEBRUARY 8, 2024
+nk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:27
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 824/2023
+GET OUT SYSTEMS PRIVATE LIMITED & ANR.
+..... Plaintiff
+Through: Mr. Cheitanya Madan (VC),
+Ms. Srishti Banerjee, Advocates
+versus
+MR RAJEEV MALHOTRA & ORS.
+..... Defendant
+Through: Ms. Shefali Munde (VC),
+Ms. Kokila Kumar, Mr. Dhruv
+Mehta, Advocates for D-1
+Ms. R.Ramya, Ms. Srishti
+Dhoundiyal, Advocates for D-5.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 13.02.2024
+I.A. No. 3458/2024 filed by the plaintiff to condone the delay of
+12 days in filing replication along with an affidavit of
+admission/denial of documents, supporting documents to the
+replication and rejoinder to I.A. 22712 of 2023 (u/o 39 r 1&2) to
+the written statement & reply filed by defendant no.1.
+Issue notice.
+Notice accepted by ld. Counsel for the defendants.
+The delay of 12 days has been worked out from the date of
+expiry of 30 days from the date of receipt of copy of written
+statement which was 13.12.2023. The replication has thereafter
+been filed on 24.01.2024.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:27
+Ld. Counsel for the defendants submits that she has no
+objection if the application is allowed.
+For the reasons stated in the application, application is
+allowed. Delay stands condoned. Replication is brought on record.
+IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 13, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:27
+
+===== ORDER =====
+
+$~25
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 824/2023, I.A. 22712/2023, I.A. 3099/2024,
+GET OUT SYSTEMS PRIVATE LIMITED & ANR. ..... Plaintiffs
+Through: Mr. Cheitanya Madan and Ms. Srishti
+Banerjee, Advocates
+versus
+MR RAJEEV MALHOTRA & ORS. ..... Defendants
+Through: Ms. Shefali Munde, Ms. Kokila
+Kumar, Mr. Dhruv Mehta, Advocates
+for D-1
+Ms. R. Ramya, Ms. Srishti
+Dhoundiyal, Advocates for D-5.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 20.02.2024
+I.A. 4040/2024 (under Order VII Rule 11 read with Section 151 of Code of
+Civil Procedure 1908 on behalf of Defendant no. 1 seeking rejection of
+plaint)
+1. Issue notice. Mr. Cheitanya Madan, counsel for Plaintiffs, accepts
+notice. Reply, if any, be filed within a period of four weeks from today.
+Rejoinder thereto, if any, be filed within a period of two weeks thereafter.
+2. Re-notify on 16th April, 2024.
+I.A. 3099/2024 (on behalf of Plaintiff seeking directions)
+3. Ms. R. Ramya, counsel for the Defendant No. 5, states that the
+affidavit in terms of order dated 8th February, 2024, shall be filed today
+itself. Let a copy of the same be supplied to the counsel for Plaintiff and
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:26
+Defendant No. 1.
+4. Re-notify on 16th April, 2024.
+5. Interim orders to continue.
+I.A. 3458/2024 (for condonation of delay)
+6. Since this application has already been disposed of by the Joint Registrar
+vide order dated 13th February, 2024, Registry is directed not to reflect the
+same in the causelist.
+SANJEEV NARULA, J
+FEBRUARY 20, 2024
+ab
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:26
+
+===== ORDER =====
+
+$~43
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 824/2023
+GET OUT SYSTEMS PRIVATE LIMITED & ANR. ..... Plaintiffs
+Through: Mr. Cheitanya Madan, Mr. Nitin
+Wadhwa, Ms. Srishti Banerjee and
+Ms. Arpita Bishnoi, Advocates.
+versus
+MR RAJEEV MALHOTRA & ORS. ..... Defendants
+Through: Mr. Vaibhav Gaggar, Mr. Vidur
+Mohan, Ms. Kokila Kumar, Mr.
+Dhruv Mehta, Ms. Shefali Munde and
+Ms. Saloni Gupta, Advocates for D-1.
+Ms. Navya Nanda, Advocates for D-2
+to 4.
+Ms. Sneha Jain, Ms. Surabhi Pande
+and Ms. Srishti Dhoundiyal,
+Advocates for D-5.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 18.03.2024
+I.A. 6401/2024 (filed on behalf of the Plaintiffs seeking urgent directions)
+1. Through this application, the Plaintiffs seek access to AWS Account
+No. 761404316429 for downloading the cloud watch and RDS logs in
+relation to the services that were active on the account and also the
+CloudTrail Lake and Event logs, server logs, system logs (or syslog's), Web
+logs etc.
+2. Counsels for Defendant No.1 and 5 state that they have no objection
+to directions being issued to the Mediator for grant of access to the said
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:25
+account.
+3. Counsels for Defendant No. 1 and Defendant No. 5 suggest that since
+the mediator may not have the necessary technical wherewithal, the
+representatives of Plaintiffs as well as Defendants No. 1 and 5 should also
+remain present to assist the mediator, so that the account can be accessed
+smoothly.
+4. In light of the above, the application is disposed of with a direction
+that the mediator shall be permitted to access the AWS account mentioned
+above. The date for the above purpose shall be fixed by the mediator in
+consultation with the counsel for parties. On the said date, the representative
+of both the Plaintiffs and Defendant No. 1 as well as Defendant No. 5 shall
+remain present to assist the mediator in securing the access to the account.
+5. The representative of Defendant No. 5 is also directed to join the
+proceedings through video conferencing mechanism.
+SANJEEV NARULA, J
+MARCH 18, 2024
+as
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:25
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 824/2023
+GET OUT SYSTEMS PRIVATE LIMITED & ANR.
+..... Plaintiff
+Through: Ms. Arpita Bishnoi (VC), Advocate
+versus
+MR RAJEEV MALHOTRA & ORS.
+..... Defendant
+Through: Mr. Prerak Khurana, Advocate for D-1
+Ms. R.Ramya, Advocate
+Ms. Navya Nanda (VC), Advocate for
+D-2 to D-4.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 21.03.2024
+I.A. No. 6702/2024 filed by D-5 seeking condonation of delay of 89 days
+in filing the written statement
+&
+I.A. No. 6703/2024 filed by D-5 seeking condonation of delay of 71 days
+in filing the reply to I.A. 22712 of 20239 U/o 39 R1&2
+Issue notice.
+Notice accepted by ld. Counsel for the plaintiff in both the above
+captioned IAs.
+Ld. Counsel for the plaintiff submits that she has no objection if the
+applications are allowed subject to a reasonable cost.
+For the reasons stated in the applications, applications are allowed
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:25
+subject to a cumulative cost of Rs.1500/-, to be paid to the plaintiff. Delays
+stand condoned. Written statement / reply is taken on record. Replication /
+rejoinder, if any be filed as per rule as worked out from today. Cost be paid
+within two weeks, failing which written statement / reply shall be deemed to
+have been taken off the record.
+Both IAs stand disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 21, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:25
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 824/2023
+GET OUT SYSTEMS PRIVATE LIMITED & ANR.
+..... Plaintiff
+Through: Mr. Chetyna Madan, Ms. Shristhi
+Banerjee (VC), Advocates
+versus
+MR RAJEEV MALHOTRA & ORS. ..... Defendant
+Through: Mr. Devvrat Joshi (VC),
+Ms. Srishti Dhoundiyal,
+Advocates for D-5.
+Mr. Dhruv Mehta (VC),
+Advocate for D-1.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 02.04.2024
+I.A. No. 22712/2023 (u/O XXXIX Rules 1 & 2 CPC).
+Reply to this IA has only been filed by defendant no. 1 and
+defendant no. 5. Final opportunity is granted to the remaining
+defendants to file their respective replies within two weeks.
+Put up for completion of pleadings on the next date of
+hearing.
+CS(COMM) 824/2023
+Written statement has been filed by defendant no. 1 to
+which replication has also been filed. Written statement has also
+been filed on behalf of defendant no. 5 to which replication is to
+be filed as per rules. Written statements of defendant nos. 2 to 4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:24
+are stated to be under objections on account of delay and are yet
+to be brought on record.
+Matter is already listed before the Hon’ble Court for
+16.04.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 16.04.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 2, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:24
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 824/2023
+GET OUT SYSTEMS PRIVATE LIMITED & ANR.
+..... Plaintiff
+Through: Mr. Cheitanya Madan (VC),
+Ms. Srishti Banerjee, Advocates
+versus
+MR RAJEEV MALHOTRA & ORS. ..... Defendant
+Through: Mr. Dhruv Mehta, Ms. Shefali
+Munde, Advocates for D-1.
+Ms. Navya Nanda (VC),
+Advocate for D-2, 3 & 4.
+Ms. R.Ramya, Ms. Srishi D,
+Advocates for D-5.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 05.04.2024
+I.A. No. 7629/2024 filed by defendant-4 seeking condonation
+of delay of 56 days in filing written statement.
+&
+I.A. No. 7657/2024 filed by defendant-2 seeking condonation
+of delay of 56 days in filing written statement.
+&
+I.A. No. 7658/2024 filed by defendant-3 seeking condonation
+of delay of 56 days in filing written statement.
+Issue notice. Notices accepted by the ld. Counsel for the
+plaintiffs.
+For the reasons mentioned in the applications, the delays
+stand condoned. Period to file replication shall commence from
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:24
+the day when the copy of the re-filed written statement is
+supplied to ld. Counsel for the plaintiff on his email. Ld.
+Counsel for the defendant no. 2 to 4 is also directed to supply a
+copy of the re-filed written statement to the ld. Counsel for
+defendant no. 5 on her email.
+IAs stand disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 5, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:24
+
+===== ORDER =====
+
+$~43
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 824/2023
+GET OUT SYSTEMS PRIVATE LIMITED & ANR. ..... Plaintiffs
+Through: Mr. Cheitanya Madan and Ms. Srishti
+Banerjee, Advocates.
+versus
+MR RAJEEV MALHOTRA & ORS. ..... Defendants
+Through: Mr. Vaibhav Gaggar, Ms. Saloni
+Gupta, Ms. Kokila Kumar, Mr. Dhruv
+Mehta and Ms. Shefali, Advocates for
+D-1.
+Ms. Surabhi Pande and Ms. R.
+Ramya, Advocates for D-5.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 08.04.2024
+I.A. 7948/2024 (on behalf of D-1 seeking urgent directions).
+1. On 23rd November, 2023, Mr. Rajeev Virmani, Senior Advocate, was
+appointed as a Mediator. The fee of the Mediator was fixed anticipating that
+the mediation would be completed in a short duration. Although the
+settlement discussions failed, pursuant to the request made by the Plaintiff,
+certain directions were issued on 18th March, 2024 for accessing the AWS
+Account no. 761404316429. Post the failure of mediation, in order to carry
+out the Court’s directions, three further meetings have taken place before the
+Mediator.
+2. The next meeting before Mr. Virmani is scheduled for 10th April, 2024. In
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:23
+this background, Defendant No. 1 has applied for certain further directions
+to be given to the Mediator in order to secure their interest.
+3. Considering the above, at the outset, the Court had queried from the
+counsels regarding the fee paid to the Mediator, who is rendering his
+services more as a Local Commissioner than a Mediator, for carrying out the
+Court’s directions issued on the request of parties. The counsels have stated
+that they will have to take instructions from their client on this issue.
+Considering this, counsel for parties state that they will request Mr. Virmani
+to reschedule the meeting fixed for 10th April, 2024. They suggest that
+hearing be stood over to the next scheduled date of hearing i.e. 16th April,
+2024. While this adjournment request is accepted, nonetheless, considering
+the fact that three meetings have already been held before the Mediator, it is
+directed that parties shall pay further amount of Rs. 2,00,000/- to the
+Mediator which shall be borne equally by Plaintiffs and Defendant No. 1.
+4. List on 16th April, 2024.
+SANJEEV NARULA, J
+APRIL 8, 2024
+nk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:23
+
+===== ORDER =====
+
+$~28
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 824/2023, I.A. 22712/2023, I.A. 3099/2024,
+I.A. 4040/2024, I.A. 7948/2024
+GET OUT SYSTEMS PRIVATE LIMITED & ANR. ..... Plaintiffs
+Through: Mr. Cheitanya Madan and Ms. Srishti
+Banerjee, Advocates.
+versus
+MR RAJEEV MALHOTRA & ORS. ..... Defendants
+Through: Mr. Vaibhav Gaggar, Ms. Saloni
+Gupta, Ms. Kokila Kumar, Mr. Dhruv
+Mehta and Ms. Shefali Munde,
+Advocates for D-1.
+Ms. R. Ramya and Ms. Srishi
+Doundiyal, Advocates for D-5.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 16.04.2024
+1. It is already 04:35 PM. Due to paucity of time, it is not possible to
+take up this matter today.
+2. Re-notify on 28th August, 2024.
+SANJEEV NARULA, J
+APRIL 16, 2024
+nk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:23
+
+===== ORDER =====
+
+$~38
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 824/2023
+GET OUT SYSTEMS PRIVATE LIMITED & ANR.
+..... Plaintiff
+Through: Mr. Cheitanya Madan,
+Ms. Srishti Banerjee, Advocates
+versus
+MR RAJEEV MALHOTRA & ORS. ..... Defendant
+Through: Mr. Dhruv Mehta (VC),
+Advocate for D-1.
+Ms. Navya Nanda (VC),
+Advocate for D-2, 3 & 4.
+Ms. R.Ramya, Ms. Srishti D,
+Advocate for D-5
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 23.04.2024
+I.A. No. 8858/2024 filed by defendant no. 1 to condone the
+delay of 12 days in filing the rejoinder to the reply to I.A.
+4040/2024 (seeking rejection of plaint).
+Issue notice.
+Notice accepted by ld. Counsel for the plaintiff.
+Ld. Counsel for the plaintiff submits that he has no
+objection if the application is allowed.
+For the reasons stated in the application and in view of the
+„no objection‟ of ld. Counsel for the plaintiff, application is
+allowed. Delay stands condoned. Rejoinder is taken on record.
+IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 23, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:22
+
+===== ORDER =====
+
+$~30
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 824/2023
+GET OUT SYSTEMS PRIVATE LIMITED & ANR. ..... Plaintiffs
+Through: Mr. J. Sai Deepak, Mr. Cheitanya
+Madan, Ms. Srishti Banerjee and
+Mr. R. Vigneshwar, Advocates.
+versus
+MR RAJEEV MALHOTRA & ORS. ..... Defendants
+Through: Ms. Shefali Munde, Ms. Kokila
+Kumar and Mr. Dhruv Mehta,
+Advocates for D-1.
+Ms. R. Ramya and Ms. Shrishti
+Dhoundiyal, Advocate for D-5.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 10.05.2024
+I.A. 10770/2024 (application on behalf of Plaintiff seeking early hearing)
+1. The present application filed on behalf of the Plaintiffs seeks early
+hearing for a decision on the interim injunction application [I.A.
+22712/2023]. However, during the course of the proceedings, Mr. J. Sai
+Deepak, counsel for the Plaintiffs, makes a request that the Defendants could
+consider an arrangement where both Plaintiffs as well as Defendant No. 1
+are permitted to use the software in question during the pendency of the
+application [I.A. 22712/2023]. Counsels for Defendant No. 1, states that she
+will have to take instructions on this aspect.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:22
+2. List on 16th May, 2024.
+SANJEEV NARULA, J
+MAY 10, 2024
+nk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:22
+
+===== ORDER =====
+
+$~41
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 824/2023
+GET OUT SYSTEMS PRIVATE LIMITED & ANR. ..... Plaintiffs
+Through: Mr. J. Sai Deepak, Mr. Cheitanya
+Madan, Ms. Srishti Banerjee and Mr.
+R. Vigneshwar, Advocates.
+versus
+MR RAJEEV MALHOTRA & ORS. ..... Defendants
+Through: Mr. Vaibhav Gaggar, Ms. Saloni
+Gupta, Ms. Kokila Kumar, Ms.
+Shefali Munde and Mr. Dhruv Mehta,
+Advocates for D-1.
+Ms. Surabhi Pande and Mr. Angad
+Makkar, Advocates for D-5.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 16.05.2024
+I.A. 10770/2024 (for early hearing)
+1. Counsel for parties state that their clients are amenable to explore a
+possibility of settlement and this regard they will schedule a meeting in this
+week itself. The application has been rendered infructuous.
+2. Disposed of.
+CS(COMM) 824/2023
+3. Renotify on the date already fixed i.e., 20th August, 2024.
+SANJEEV NARULA, J
+MAY 16, 2024/as
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:21
+
+===== ORDER =====
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 824/2023, I.A. 22712/2023-Stay, I.A. 3099/2024-by
+plaintiff seeking directions, I.A. 4040/2024-by D-1 seeking
+rejection of plaint, I.A. 7948/2024-by D-1 seeking urgent directions.
+GET OUT SYSTEMS PRIVATE LIMITED & ANR. .....Plaintiffs
+Through: Mr. Cheitanya Madan and Ms.
+Srishti Banerjee, Advocates with
+plaintiff in person
+versus
+MR RAJEEV MALHOTRA & ORS. .....Defendants
+Through: Mr. Vaibhav Gaggar, Ms. Saloni
+Gupta, Mr. Dhruv Mehta and Ms.
+Shefali Munde, Advocates for D-1
+Ms. Surabhi Pande and Ms. Srishti
+Dhoundiyal, Advocates for D-5
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 28.08.2024
+1. Learned counsel for the parties seek, and are granted, four weeks to
+file written synopsis not exceeding five pages giving a chronological list
+of dates and events and relevant documents, if any, alongwith duly
+highlighted relevant judgments, which they wish to rely upon.
+2. Accordingly, renotify on 29.11.2024.
+SAURABH BANERJEE, J
+AUGUST 28, 2024/akr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:20
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 824/2023 with I.A. 22712/2023, I.A. 3099/2024, I.A.
+4040/2024, I.A. 7948/2024, I.A. 46655/2024
+GET OUT SYSTEMS PRIVATE LIMITED & ANR. .....Plaintiffs
+Through: Mr. Vikas Nanda, Advocate with P-2
+in person.
+versus
+MR RAJEEV MALHOTRA & ORS. .....Defendants
+Through: Mr. Vaibhav Gaggar, Mr. Dhruv
+Mehta and Ms. Shefali, Advocates for
+D-1.
+Mr. Saikrishna Rajagopal, Ms.
+Surabhi Pande, Mr. Angad Makkar
+and Ms. Srishti Dhoundiyal,
+Advocates for D-5.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 29.11.2024
+I.A. 46655/2024 (O-XXXIX Rule 2A of CPC)
+1. Let a copy of the application be supplied to Mr Saikrishna Rajagopal
+appearing for the defendant no.5 within two (2) days.
+2. Mr Rajagopal appearing on behalf of the defendant no.5 seeks a short
+accommodation.
+3. At the request of Mr. Rajagopal, renotify on 20.12.2024.
+4. Interim orders, if any, to continue.
+AMIT BANSAL, J
+NOVEMBER 29, 2024
+PB
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:20
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 824/2023 with I.A. 22712/2023, I.A. 3099/2024, I.A.
+4040/2024, I.A. 7948/2024 and I.A. 46655/2024
+GET OUT SYSTEMS PRIVATE LIMITED
+& ANR. .....Plaintiffs
+Through: Mr. Vikas Nanda, Advocate.
+versus
+MR RAJEEV MALHOTRA & ORS. .....Defendants
+Through: Mr. Saikrishna Rajagopal, Mr. Anaga
+S. Makkar and Ms. Surabhi Pande,
+Advocates for D-5.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 20.12.2024
+1. In the order dated 8th February 2024, this Court has passed directions
+qua Defendant No.5/Amazon Web Services India Pvt Ltd, which are set out
+hereinafter:
+4. Accordingly, Defendant No. 5 is directed to file a detailed
+affidavit explaining the circumstances commencing from 10th
+November, 2023, i.e., date of the first order in this suit, till the
+stage of reactivation. Additionally, Defendant No. 5 shall in the
+affidavit disclose the activity logs pertaining to the period the
+account remained deactivated. Such details would include:
+a. Cloud Trail Logs with IP address and location.
+b. All active users and actions performed.
+c. Details of the any outstanding dues towards the AWS
+Account of the Plaintiff company (if any).
+CS(COMM)824/2023 Page1of 3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:19
+d. Cloud watch and RDS logs for the services that were
+active on the account.
+e. CloudTrail Lake and Event logs, server logs, system logs
+(or syslog's), Web logs.
+2. Pursuant to the aforesaid directions an affidavit has been filed on
+behalf of Defendant No.5/Amazon Web Services India Pvt Ltd. In the
+affidavit, it has been stated that due to human oversight and error, the
+impugned Amazon web services account (hereinafter AWS Account) got
+suspended/terminated, which was completely unintentional and inadvertent.
+2.1 Paragraphs 5, 6 and 7 of the said affidavit are set out below:
+“5. Pursuant to the directions passed by the Hon’ble Court as above,
+Defendant No.5 (through their counsel) contacted the Ld. Mediator and
+transferred the root administrator access of the Impugned AWS Account to
+theLd.Mediator, havingemail IDrajeev@virmani.in.
+6. As per the records of Defendant No.5, the invoices for the months of
+December 2023 through July 2024 were not paid in relation to the
+Impugned AWS Account. As per the AWS Customer Agreement and policies
+accessible at https://aws.amazon.com/agreement/, if the payments are not
+made timely, the respective AWS account is suspended. The process
+followed for suspension due to non-payment included an automated pre-
+suspension notice, which is issued to the root email ID of the AWS account
+holder prior to suspension, sample of which is enclosed. This notice usually
+mentions the date by which the payment is to be made. If the payment is not
+made on the said date, the AWS account is suspended. It is pertinent to
+disclose here that as per Defendant No.5’s policy indicated at
+https://reports.aws/knowledge-center/reactivate-suspended-account if the
+customer does not make the payment within 120 days of the account
+suspension notice, the AWS account is terminated permanently and no
+reactivation is possible. The copy of the AWS policies indicated above
+indicatingthesameis enclosedherewith.
+7. The Impugned AWS Account was previously suspended on 20th
+December 2023, due to non-payment of account fee. The Impugned AWS
+Account was re-activated on 8th February 2024 once the fee was paid and A
+WS was intimated of the same. The Defendant No. 5 has also filed an
+affidavit detailingthesameon19th February2024.”
+CS(COMM)824/2023 Page2of 3
+This is a digitally signed order.
+The authenticity of the order can be re-verified fro
+
+[TRUNCATED — rights are established in the opening orders above]

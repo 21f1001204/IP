@@ -1,0 +1,738 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_930_2023
+case_status: PENDING
+n_orders: 17
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 930/2023
+M/S MRS BECTORS FOOD SPECIALITIES LTD
+..... Plaintiff
+Through: Ms. Zeba Tarranum Khan,
+Ms. Sruthi Venugopal & Ms.
+Deeksha Gulati, Advs.
+(M- 9818558690).
+versus
+M/S PUSHTI FOOD PRODUCTS & ANR.
+..... Defendant
+Through: Ms. Rashi Bansal, Adv.
+(M- 9811229212).
+Ms. Tesu Gupta, Adv.
+(M- 9718617859).
+Mr. Tushar Mudgil, Adv. for
+D-1 through VC.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 21.02.2024
+The service-affidavits filed, vide diary no. 53936/24 &
+269957/24 shows that the defendants were served via courier on
+16.01.2024; via speed posts on 23.01.2024 & 01.02.2024 and via
+e-mails on 17.01.2024.
+The counsel for the defendants states that she had already
+filed the written statement yesterday, vide diary no. E-502283/24.
+The office noting in respect thereof is however awaited.
+The plaintiff may file the replication once the written
+statement comes on record.
+After the pleadings are completed, the parties shall then file
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:31
+the physical copies of their respective documents, if not already
+filed and the joint schedule of the documents.
+List the matter for admission-denial and marking of exhibits
+on 24.05.2024.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 21, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:31
+
+===== ORDER =====
+
+$~31
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 930/2023 & I.A. 4994/2024
+M/S MRS BECTORS FOOD SPECIALITIES LTD .... Plaintiff
+Through: Mr. Shailen Bhatia, Mr. Amit Jain,
+Mr. Sheril Bhatia, Ms. Stuthi
+Venugopal and Mr. Ashutosh Pandey,
+Advs.
+versus
+M/S PUSHTI FOOD PRODUCTS & ANR. ..... Defendants
+Through: Ms. Rashi Bansal, Mr. Naveen Kumar
+and Mr. Tesu Gupta, Advs.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 04.03.2024
+I.A. 4994/2024 (seeking release of goods)
+1. This application has been filed by the defendants seeking release of
+goods seized by the Local Commissioner pursuant to the order dated 21st
+December, 2023 passed by this Court whereby an ex-parte ad interim order
+was passed in favour of the plaintiff. Two Local Commissions were
+executed, in which large amounts of allegedly infringing products were
+found with defendant No.2 and a very small set of products was found with
+defendant No.1. The Application is moved in the context that these
+commodities are biscuits being perishable and, therefore, the reliefs be
+allowed in favour of the defendants.
+2. However, during submissions, it has transpired and rightly pointed out
+by the defendants that the plaintiff has not made a claim on the word
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:30
+‘BOURBON’ per se. However, the essential grievance was on the manner
+of writing ‘BOURBON’, on the packaging, and trade dress being utilised by
+the defendants which was deceptively similar to that of the plaintiff.
+3. Counsel for defendants, on instructions, states that they have no
+difficulty in changing the packaging of the said biscuits.
+4. Accordingly, parties are open to seeking an amicable resolution
+through mediation before the Delhi High Court Mediation and Conciliation
+Centre.
+5. Parties along with their counsels may appear before the Mediator
+today i.e. 04th March, 2024 at 4:00 P.M. before the Mediator, DHC M&CC.
+6. Copy of the order be sent to the Organising Secretary, DHC M&CC
+for information and compliance.
+7. The proximate time is being given since the defendants are from
+Hyderabad and their counsel is present here in Court today.
+8. List before the Court on 27th March, 2024, the date already fixed.
+9. In the meantime, if the parties achieve a settlement prior to the next
+date, they will be at liberty to file an appropriate application before this
+Court.
+10. Copy of the order be given dasti under the signatures of the Court
+Master.
+11. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+MARCH 4, 2024/MK/ig
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:30
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 930/2023
+M/S MRS BECTORS FOOD SPECIALITIES LTD
+..... Plaintiff
+Through: Ms. Zeba Tarannum Khan,
+Ms. Ishita Suri, Advocates
+versus
+M/S PUSHTI FOOD PRODUCTS & ANR...... Defendant
+Through: Ms. Rashi Bansal, Ms. Tesu
+Gupta (VC), Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 13.03.2024
+I.A. No. 5837/2024 filed by defendants seeking condonation of
+delay of 5 days in filing the written statement.
+Issue notice.
+Notice accepted by ld. Counsel for the plaintiff.
+Ld. Counsel for the plaintiff submits that she has no
+objection if the application is allowed.
+For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the plaintiff, application is
+allowed. Delay stands condoned. Written statement is taken on
+record. Replication be filed within the period permissible, as
+worked out from today.
+IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 13, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:29
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 930/2023, I.A. 25905/2023 & I.A. 4994/2024
+M/S MRS BECTORS FOOD SPECIALITIES LTD ..... Plaintiff
+Through: Appearance not given.
+versus
+M/S PUSHTI FOOD PRODUCTS & ANR. ..... Defendants
+Through: Ms. Rashi Bansal, Mr. Naveen Kumar,
+Ms. Tesu Gupta and Ms. Kriti Dang,
+Advocates
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 27.03.2024
+1. Hon’ble Judge is on leave today.
+2. Renotify on 09th April, 2024.
+3. Order be uploaded on the website of this Court.
+BY ORDER
+(COURT MASTER)
+MARCH 27, 2024/kct
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:29
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 930/2023, I.A. 25905/2023 & I.A. 4994/2024.
+M/S MRS BECTORS FOOD SPECIALITIES LTD ..... Plaintiff
+Through: Mr. Shailen Bhatia, Mr. Raghav
+Bhalla, Mr. Sheril Bhatia and Ms.
+Sruthi Venugopal, Advs.
+versus
+M/S PUSHTI FOOD PRODUCTS & ANR. ..... Defendants
+Through: Ms. Rashi Bansal and Ms. Kriti
+Dang, Advocates
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 09.04.2024
+1. It is informed by counsels for parties that mediation attempts have
+remained unsuccessful. Accordingly, list before the Joint Registrar on 24th
+May 2024, the date already fixed.
+2. Counsel for defendants states on instructions, that defendants will
+change packaging of biscuits, without prejudice to their rights and
+contentions. However, she wishes place contentions in arguments on
+application under Order XXXIX Rule 1 and 2 CPC.
+3. In the meantime, as and when packaging is changed of said biscuits,
+defendants shall file the same on record of this Court with copy to the
+opposing counsel.
+4. Re-notify on 13th August, 2024.
+5. Interim orders to continue till then.
+6. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+APRIL 9, 2024/sm
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:28
+
+===== ORDER =====
+
+$~25
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 930/2023
+M/S MRS BECTORS FOOD SPECIALITIES LTD
+..... Plaintiff
+Through: Appearance not given.
+versus
+M/S PUSHTI FOOD PRODUCTS & ANR.
+..... Defendant
+Through: Ms. Rashi Bansal, Ms. Tesu
+Gupta, Ms. Kriti Dang (VC),
+Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 22.04.2024
+I.A. No. 8606/2024 filed by the defendants seeking
+condonation of delay of 2 days in filing the reply to the
+application bearing no. I.A. No. 25905 /2023 (stay).
+Issue notice.
+Notice accepted by ld. Counsel for the plaintiff.
+Ld. Counsel for the plaintiff submits that he has no
+objection if the application is allowed.
+For the reasons stated in the application and in view of the
+„no objection‟ of ld. Counsel for the plaintiff, application is
+allowed. Delay stands condoned. Reply is taken on record.
+IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 22, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:28
+
+===== ORDER =====
+
+$~10
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 930/2023
+M/S MRS BECTORS FOOD SPECIALITIES LTD ..... Plaintiff
+Through: Mr. Zeba Tarnnum Khan, Ms. Ayushi
+Dhall, Advocates.
+versus
+M/S PUSHTI FOOD PRODUCTS & ANR. ..... Defendant
+Through: Ms. Rashi Bansal & Ms. Tesu Gupta,
+Advocates.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. AJAY GULATI
+O R D E R
+% 24.05.2024
+Pleadings are complete between the parties. Plaintiff has filed its
+documents in physical form. Defendants are also directed to file its
+documents in physical form within four weeks. Joint document schedule is
+also yet to be filed. The same be filed within six weeks.
+Put up for admission/denial on 07.08.2024 before this court.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 24, 2024/Ni
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:27
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 930/2023
+M/S MRS BECTORS FOOD SPECIALITIES LTD
+.....Plaintiff
+Through: Ms. Zeba Tarannum Khan,
+Ms. Sruthi Venugopal,
+Advocates
+versus
+M/S PUSHTI FOOD PRODUCTS & ANR. ....Defendant
+Through: Ms. Rashi Bansal (VC),
+Mr. Kriti Dang, Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 07.08.2024
+1. The matter has been listed today for carrying out
+admission / denial of documents.
+2. Ld. Counsel for the defendant seeks some more time to file
+documents in physical form. Plaintiff, however, has filed its
+documents in physical form. Draft joint document schedule has
+been shared with the defendants and ld. Counsel for the plaintiff
+is awaiting the revert from the defendants.
+3. Matter is already listed before the Hon’ble Court for
+13.08.2024. Put up before the Hon’ble Court on the date already
+fixed i.e. 13.08.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 7, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:27
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 930/2023, I.A. 25905/2023 & I.A. 4994/2024
+M/S MRS BECTORS FOOD SPECIALITIES LTD
+.....Plaintiff
+Through: Mr. Amit Jain & Ms. Shruti
+Venugopal, Advs.
+versus
+M/S PUSHTI FOOD PRODUCTS & ANR.
+.....Defendant
+Through: Ms. Rashi Bansal, Adv.
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 13.08.2024
+1. Learned counsels for the parties submit that they may be granted
+some more time to file draft Joint Document Schedule.
+2. Let the needful be done before the next date of hearing.
+3. The other directions, as passed by the learned Joint Registrar
+(Judicial), shall also be complied with.
+4. Re-notify before the Joint Registrar (Judicial) on 04th September,
+2024.
+5. Interim order to continue.
+MINI PUSHKARNA, J
+AUGUST 13, 2024/da
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:26
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 930/2023
+M/S MRS BECTORS FOOD SPECIALITIES LTD
+.....Plaintiff
+Through: Ms. Zeba Tarannum Khan,
+Advocate
+Versus
+M/S PUSHTI FOOD PRODUCTS & ANR. .....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 04.09.2024
+1. Matter has been listed today for carrying out admission
+and denial of documents. However, admission and denial of
+documents could not be conducted today as none is present on
+behalf of the defendants despite two passovers. Even the
+documents of the defendants have not been filed in physical
+form. It needs a highlight that on 24.05.2024, defendants were
+directed to file their documents in physical form within four
+weeks and thereafter, again on 07.08.2024, ld. Counsel for the
+defendant sought some more time to file documents in physical
+form. However, neither any documents have been filed till date
+on behalf of the defendants nor any appearance has been put in
+today, as already highlighted. In view thereof, cost of
+Rs.10,000/- is imposed on the defendants out of which Rs.5,000/-
+be paid to the plaintiff / Counsel for the plaintiff and remainder
+be deposited within Bharat Ke Veer Fund, online portal within 3
+weeks.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:25
+2. Defendants are now directed to file their documents in
+physical form within a period of four weeks failing which further
+costs shall be imposed.
+3. Put up for admission / denial of documents on 06.11.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 4, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:25
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 930/2023
+M/S MRS BECTORS FOOD SPECIALITIES LTD
+.....Plaintiff
+Through: Mr. Amit Jain, Mr. Ashutosh
+Pandey, Advocates
+versus
+M/S PUSHTI FOOD PRODUCTS & ANR. .....Defendant
+Through: Ms. Rashi Bansal, Ms. Deepti
+Thapa, Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 06.11.2024
+1. The matter has been listed today for carrying out
+admission / denial of documents. However, there is a request for
+adjournment on behalf of the defendant. Allowed as requested.
+Cost imposed on the defendant vide order dated 04.09.2024,
+stands waived in view of the oral explanation rendered today.
+Registry is directed to take the physical copies of the documents
+of the defendant on record. Documents of the plaintiff in
+physical form are already on record.
+2. Put up for admission / denial of documents on 31.01.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 6, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:25
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 930/2023
+M/S MRS BECTORS FOOD SPECIALITIES LTD
+.....Plaintiff
+Through: Ms. Zeba Tarannum Khan,
+Mr. Raghav Bhalla, Advocate
+versus
+M/S PUSHTI FOOD PRODUCTS & ANR. .....Defendant
+Through: Ms. Rashi Bansal, Ms. Deepti
+Thapa, Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 31.01.2025
+1. The matter has been listed today for carrying out
+admission / denial of documents.
+2. Proxy Counsel for the defendants submits that main
+counsel is not available and hence admission / denial of
+documents of the plaintiff cannot be conducted.
+3. Documents in physical form on behalf of defendants are
+lying under objections. Ld. Counsel for the defendants is
+directed to take steps to bring the same on record before the next
+date.
+3. Put up for admission / denial of documents on 24.04.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 31, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:24
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 930/2023
+M/S MRS BECTORS FOOD SPECIALITIES LTD
+.....Plaintiff
+Through: Mr. Raghav Bhalla, Ms. Sruthi
+Venugopal, Mr. Varun Kajla,
+Advocates
+versus
+M/S PUSHTI FOOD PRODUCTS & ANR.
+.....Defendant
+Through: Ms. Rashi Bansal, Ms. Deepti
+Thapa, Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 24.04.2025
+1. The matter has been listed today for carrying out
+admission / denial of documents. However, admission / denial of
+documents could not be carried out today as files are not
+traceable. Registry is directed to trace the files / documents
+before the next date.
+2. Put up again for admission / denial of documents on
+13.08.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 24, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:24
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 930/2023
+M/S MRS BECTORS FOOD SPECIALITIES LTD
+.....Plaintiff
+Through: Mr. Raghav Bhalla, Mr. Anvesh
+Soni, Advocates
+versus
+M/S PUSHTI FOOD PRODUCTS & ANR.
+.....Defendant
+Through: Ms. Deepti Thapa, Mr. Hritvvik
+V. Kapoor, Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 13.08.2025
+1. The matter has been listed today for carrying out
+admission / denial of documents.
+2. Ld. Counsel for the plaintiff admits only one document
+filed by the defendant which has been identified as Ex. D-1. Rest
+of the documents have been denied by the plaintiff.
+3. On the other hand, ld. counsel for the defendants admits 41
+documents filed by the plaintiff, which have been identified as
+Ex. P-1 to Ex. P-41. Rest of the documents have been denied by
+the defendant.
+4. Admission / denial of documents stands complete. Matter
+is ripe for framing of issues.
+5. Put up before the Hon’ble Court on 11.09.2024, for further
+directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 13, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:23
+
+===== ORDER =====
+
+$~239
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 930/2023
+M/S MRS BECTORS FOOD SPECIALITIES LTD
+.....Plaintiff
+Through: Ms. Ishita Suri, Adv.
+versus
+M/S PUSHTI FOOD PRODUCTS & ANR.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the defendant when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:22
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 930/2023, I.A. 25905/2023 & I.A. 4994/2024
+M/S MRS BECTORS FOOD SPECIALITIES LTD .....Plaintiff
+Through: Mr. Varun Kajla, Advocate.
+versus
+M/S PUSHTI FOOD PRODUCTS & ANR. .....Defendants
+Through: None.
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 11.09.2025
+1. The learned Counsel for the Plaintiff submits that there has been a
+bereavement in the family of the learned Counsel for the Plaintiff.
+2. At the request of the learned Counsel for the Plaintiff, list on
+12.01.2026.
+TEJAS KARIA, J
+SEPTEMBER 11, 2025/sms
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:22
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 930/2023, I.A. 25905/2023 & I.A. 4994/2024
+M/S MRS BECTORS FOOD SPECIALITIES LTD .....Plaintiff
+Through: Mr. Raghav Bhalla, Mr. Bhavesh and
+Mr. Varun Kalra, Advocates.
+versus
+M/S PUSHTI FOOD PRODUCTS & ANR. .....Defendants
+Through: Ms. Rashi Bansal and Ms. Deepti
+Thapa, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE TUSHAR RAO GEDELA
+O R D E R
+% 12.01.2026
+1. Learned counsel appearing for the parties submit that though the matter
+is listed today for framing of issues, however, the parties are interested in
+amicable resolution of the disputes. They also submit that this Court may refer
+the matter to the Mediation Centre.
+2. Accordingly, the matter may be listed before the Delhi High Court
+Mediation Centre on 20.01.2026 at 04:30 pm. The parties, alongwith their
+respective counsel, if any, may appear before the Mediation Centre on
+20.01.2026.
+3. List before the Court on 12.05.2026, awaiting the mediation
+proceedings.
+TUSHAR RAO GEDELA, J
+JANUARY 12, 2026
+yrj
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:21

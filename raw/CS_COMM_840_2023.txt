@@ -1,0 +1,1124 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_840_2023
+case_status: PENDING
+n_orders: 33
+
+$~51
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 840/2023, I.As. 23284/2023, 23285/2023, 23286/2023,
+23287/2023, 23288/2023 & 23378/2023
+SUPER CASSETTES INDUSTRIES
+PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Amit Sibal Sr. Adv. with Mr.
+Ameet Naik Ms. Madhu Gadodia
+Mr. Harshvardhan Jha, Mr. Harsh
+Kaushik, Mr. Shashank Trivedi, Mr.
+Sanjeevi Sheshadri, Ms. Bhagyshree
+Shukla, Mr. Aman Pathak and Mr.
+Darpan Sachdeva Advocates (M:
+9971121185).
+versus
+RELIANCE ENTERTAINMENT STUDIOS
+PRIVATE LIMITED ..... Defendant
+Through: Mr. Saurabh Kirpal Sr. Adv. with
+Ms. Malvika Kapila and Ms.
+Tanwangi Shukla, Advs. (M.
+9810400283).
+Ms. Savni Dutt Endlaw, Ms. Srishti
+Kumar and Ms. Rimjhim Tiwari,
+Advocates for D-3.
+Mr. Devvrat Joshi, Mr. Navankur
+Pathak, Advs. D-4 (M.
+9649992172).
+Ms. Sneha Jain, Mr. Angad Makkar
+and Mr. Manas Raghuvanshi,
+Advocates for D-5 (M:
+7703840056).
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 23.11.2023
+1. This hearing has been done through hybrid mode.
+CS(COMM)840/2023 Page1of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:02
+I.A.23286/2023 (for exemption)
+2. This is an application filed by the Plaintiff seeking exemption from
+filing originals/certified/cleared/typed or translated copies of documents, left
+side margins, electronic documents, etc. Original documents shall be
+produced/filed at the time of Admission/Denial, if sought, strictly as per the
+provisions of the Commercial Courts Act, 2015 and the DHC (Original
+Side) Rules, 2018.
+3. Exemption is allowed, subject to all just exceptions.
+4. Accordingly, the application is disposed of.
+I.A.23288/2023 (u/S 12A of the Commercial Courts Act)
+5. This is an application filed by the Plaintiff seeking exemption from
+instituting pre-litigation mediation under Section 12A of the Commercial
+Courts Act, 2015.
+6. There has been sufficient correspondence in this matter to explore
+amicable resolution. However, there has been no resolution between the
+parties, leading to the filing of the present suit.
+7. Considering the facts and circumstances of the case, the Court is
+satisfied that in terms of the judgment of the Supreme Court in Yamini
+Manohar v. T.K.D Keerthi, (2023 LiveLaw (SC) 906), that the present suit
+contemplates urgent interim relief. Thus, the exemption is granted to the
+Plaintiff. Accordingly, application is disposed of.
+I.A.23278/2023 (u/O XXI Rule 46 for attachment)
+8. This application has been filed by the Plaintiff under Order XXI Rule
+46 impleading various third parties, who according to the Plaintiff, owe
+money to the Defendant and are likely to pay the said amounts. Thus, the
+Plaintiff prays for an attachment order of the said amounts from the third-
+CS(COMM)840/2023 Page2of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:02
+parties as well. However, ld. Counsels appearing for the third parties assert
+that they have been served with the present application, without the
+accompanying suit papers.
+9. Accordingly, notice is issued only to the Defendant in the suit. The
+Defendant shall disclose its receivables from any third parties with respect to
+works over which the Plaintiff may enjoy lien, in terms of the Loan
+Agreement dated 19th May, 2021, within two weeks.
+10. List on 19th December, 2023.
+I.A.23287/2023 (for Court fee)
+11. Court fee is stated to have been deposited. Let the stamp be deposited
+within two weeks.
+12. Application is disposed of.
+CS(COMM) 840/2023
+13. Let the plaint be registered as a suit.
+14. Issue summons to the Defendant through all modes upon filing of the
+Process Fee. Summons is accepted on behalf of the Defendant by Ms.
+Malvika Kapila.
+15. The written statement(s) to the plaint shall be positively filed within
+30 days from date of receipt of summons. Along with the written
+statement(s), the Defendant shall also file an affidavit of admission/denial of
+the documents of the Plaintiff, without which the written statement(s) shall
+not be taken on record.
+16. Liberty is given to the Plaintiff to file the replication(s) within 15 days
+of the receipt of the written statement(s). Along with the replication(s), if
+any, filed by the Plaintiff, an affidavit of admission/denial of documents of
+the Defendant, be filed by the Plaintiff, without which the replication(s)
+CS(COMM)840/2023 Page3of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:02
+shall not be taken on record. If any of the parties wish to seek inspection of
+any documents, the same shall be sought and given within the timelines.
+17. List before the Joint Registrar for marking of exhibits on 18th
+January, 2024. It is made clear that any party unjustifiably denying
+documents would be liable to be burdened with costs.
+18. List before Court on 19th December, 2023.
+I.A.23285/2023 (u/O XXXVIII Rule 5) and I.A. 23284/2023 (u/O XXXIX
+Rules 1 & 2 CPC)
+19. An I.A.23285/2023 under Order XXXVIII Rule 5 of CPC has been
+filed by the Plaintiff inter alia seeking attachment of the amounts to be
+received by the Defendant in relation to any future films produced by
+Defendant. The said application shall be considered at the next date of
+hearing.
+20. The present suit was structured as a contractual dispute arising out of
+the Loan Agreement dated 19th May, 2021 (hereinafter, ‘the agreement’).
+However, a perusal of the plaint and the said agreement leaves no doubt that
+the same relates to production of cinematograph films and other copyrighted
+content, in respect of which a contractual dispute has arisen between the
+parties.
+21. As per the plaint, an injunction is sought to the effect that the
+Defendant ought not to be permitted to assign or create any third-party rights
+or revenues in any future films acquired/produced by the Defendant. Such
+averments clearly relate to rights in cinematograph films under Section
+2(1)(f) and Section 14(1)(d) of the Copyright Act, 1957 which would be
+subject matter of intellectual property rights in terms of Rule 2(i) of the
+Delhi High Court Intellectual Property Rights Division Rules, 2021.
+CS(COMM)840/2023 Page4of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:02
+22. At the outset, Mr. Saurabh Kirpal, ld. Senior Counsel for the
+Defendant raises an issue regarding the maintainability of the present suit on
+the ground of territorial jurisdiction, as the entire transaction between the
+parties has taken place in Mumbai, Maharashtra. He further submits that the
+Defendant has already issued a notice dated 10th November 2023 to the
+Plaintiff stating that there could be litigation initiated in Mumbai.
+23. On the other hand, Mr. Amit Sibal, ld. Senior Counsel for the Plaintiff
+has pointed out that the agreement dated 19th May 2021, describes both
+parties as having their respective addresses in Delhi. Further, Clause 14(2)
+of the agreement vests exclusive jurisdiction over any dispute arising out of
+the said agreement in the Courts of Delhi.
+24. Having heard the preliminary submissions, the Court has proceeded to
+hear the matter.
+25. The present suit has been filed by Plaintiff- Super Cassettes Industries
+Private Limited against Defendant- Reliance Entertainment Studios Private
+Limited. The case of the Plaintiff is that it entered into the said Agreement
+dated 19th May 2021, which required the Plaintiff to extend a loan for a sum
+of Rs.268 crores, along with cost of capital at the rate of 12.5% per annum
+on the loan amount, along with various other clauses.
+26. As per the said agreement, the Plaintiff has vested rights in various
+cinematographic films to be produced by the Defendant, and also enjoys lien
+and charge on revenues of future works. The relevant clauses of the said
+agreement read as follows:
+“3. LOAN AMOUNT & COST OF CAPITAL
+3.1 SCIPL hereby agrees to provide to the
+Producer with a total Loan Amount which shall
+be up to Rs. 268,000,0000/- (Rupees Two
+CS(COMM)840/2023 Page5of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:02
+Hundred and Sixty Eight Crores Only) towards
+part Production Budget and P&A Costs of all the
+Films.
+3.2 Payment schedule for the Loan Amount for
+each of the Films as mentioned in Annexure – A
+annexed hereto shall also be mutually agreed in
+writing between the Parties hereto.
+3.3 Cost of capital on the loan amount provided
+by SCIPL to the Producer for each of the Films: It
+is hereby mutually agreed between the Parties
+that SCIPL shall be entitled to receive cost of
+capital at the rate of 12.5% p.a. on the Loan
+Amount actually received by the Producer from
+SCIPL for each Film, to be calculated from the
+date of receipt by Producer of each tranche of the
+LoanAmount for every Film until the date of
+receipt by SCIPL from the Producer of the said
+LoanAmount of each Film, on a reducing balance
+basis.. The said cost of capital shall be subject to
+deduction of applicable taxes at source.
+3.4 For the purpose of this Agreement, Loan
+Amount for each Film and cost of capital on the
+Loan Amount for each Film shall collectively be
+referred to as “Refundable Amount for each
+Film”.
+5. LIEN
+5.1 It is specifically agreed by the Producer that
+until SCIPL receives the Refundable Amount of a
+particular Filmie. Loan Amount for a particular
+Film and cost of capital on the Loan Amount for
+such particular Film, SCIPL shall have the first
+and foremost lien and charge on Revenues of such
+particular Film. If the Refundable Amount of such
+particular Filmie. Loan Amount for such
+particular Film and cost of capital on the Loan
+Amount for such particular Film is not recovered
+against the Revenues of such particular Film, then
+SCIPL shall have first and foremost lien and
+CS(COMM)840/2023 Page6of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:02
+charge on the Revenues of future films of the
+Producer(whether produced solely by the
+Producer and/or with any third party) Such future
+films shall also include the other Films.
+(hereinafter collectively referred to as “SCIPL
+Lien”).
+27. However, it is stated that the terms of the said agreement were revised
+at various stages, and revised amounts were paid to the Defendant. The
+Plaintiff’s stance is that under the said agreement, a total sum of Rs.168
+crores has been paid to the Defendant, instead of the originally agreed
+Rs.268 crores. Vide Plaintiff’s communication dated 17th March 2023,
+terms for transactions between the Plaintiff and the Defendant concerning
+the production of six cinematograph films were outlined. Further, it was
+clarified that a loan of Rs. 168 crore was extended by the Plaintiff to the
+Defendant, as acknowledged by the Defendant. Additionally, the Plaintiff
+was to recover the said amount plus the estimated cost of capital, totalling
+approximately Rs. 190 crores.
+28. It is averred that over the last two years, the pecuniary terms of the
+said agreement went through modifications, and numerous exchanges
+transpired between the parties with regard to the production of
+cinematograph films as highlighted vide communication dated 10th October
+2023. Ld. Sr. Counsel for the Plaintiff placed reliance on the said
+communication to highlight the outstanding amount owed by the Defendant.
+He further submits that despite the said payments been made, the Defendant
+has defaulted on a number of obligations under the agreement. However, as
+per the Plaintiff, the entire transaction was clear to the effect that the
+Plaintiff was given an over-arching rights over the films which was yet to be
+CS(COMM)840/2023 Page7of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:02
+produced.
+29. It is the Plaintiff’s case that in view of the various defaults under the
+agreement, it is entitled to reliefs including of injunction, lien on all future
+films which may be produced or co-produced by the Defendant and a
+garnishee/attachment of the revenues which the Defendant has to receive
+from the third parties.
+30. Mr. Amit Sibal, ld. Sr. Counsel submits that the Plaintiff had entered
+into correspondence with the Defendant on multiple occasions and had sent
+various communications calling upon the Defendant to comply with the
+obligations under the agreement. According to the Plaintiff, the sum due as
+on date, subject to further accounts being revealed by the Defendant and the
+third parties for the two films, which the Defendant has already released, is
+approximately to the tune of Rs. 60 crores.
+31. The submission of ld. Sr. Counsel for Plaintiff is that in the reply
+given by Reliance Entertainment Studios Private Limited (hereinafter,
+RESPL) on 11th October, 2023, the obligations of RESPL are admitted.
+Further, the Defendant also stated that they agreed to pay the amounts owed.
+However, the Defendant took a stand, that the Plaintiff had no lien on
+content produced for web-series/OTT shows and thus, no injunction on any
+web-series or OTT shows can be granted.
+32. Ld. Sr. Counsel for Plaintiff further highlighted some of the clauses of
+the agreement to argue that the Defendant is in gross violation of the terms
+of the agreement. Thus, the Plaintiff is entitled to an injunction and an order
+of attachment on the receivables of the Defendant from third parties.
+33. Specifically, it is highlighted that one of the web series in which
+rights have been enjoyed by the Defendant is a commissioned web series
+CS(COMM)840/2023 Page8of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:02
+called “Sultan of Delhi”. The rights in respect of which are now owned by
+Novi Digital Entertainment Private Limited (hereinafter, “Hotstar”).
+34. On the other hand, Mr. Saurabh Kirpal, ld. Sr. Counsel submits that
+the Defendant, through its group Company-Reliance Big Entertainment
+Private Limited (hereinafter, ‘RBEP’), issued notice dated 10th November,
+2023 under the terms of a Long Form Agreement (hereinafter, LFA) dated
+5th December, 2009 and Music Assignment Agreement (hereinafter, MAA)
+entered into between the Plaintiff and Defendant. In the said notice it is
+stated the Plaintiff is in default of not having produced all the accounts and
+adequate disclosures with respect of exploitation of the said music rights as
+per the MAA. According to the Defendant a sum of approximately Rs.200
+crores is due from the Plaintiff, and it is to avoid this obligation, the present
+suit has been filed by the Plaintiff.
+35. However, this is denied by the ld. Sr. Counsel for the Plaintiff on the
+ground that the reply to this notice has been issued on 20th November,2023
+which categorically takes the position that the Plaintiff has complied with
+its obligations and has given all the accounts to the Defendant.
+36. Ld. Sr. Counsel for the Plaintiff further submits that there is a
+litigation pending between the parties in respect of the LFA where an
+injunction has been granted in favour of the Plaintiff on 5th June, 2023.
+37. Insofar as the merits of the present suit is concerned, Mr. Saurabh
+Kirpal, ld. Sr. Counsel submits that the Defendant is willing to render
+accounts in respect of the two films i.e., Bholaa and IB 71. However, no
+injunction be passed in respect of any other works.
+38. On behalf of Novi Digital it is submitted by Ms. Savni Endlaw, that
+the TV series ‘Sultans of Delhi’ is a commissioned work for which the
+CS(COMM)840/2023 Page9of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:02
+Defendant was engaged by Novi Digital Entertainment Private Limited. No
+copyrights vest in the Defendant in respect of the said series.
+39. The Court firstly observes that insofar as the accounts and payments
+are concerned, the same ought to be reconciled between the two parties.
+Accordingly, in view of the fact that reconciliation between the parties
+would be necessary, senior officials of both the parties shall hold a meeting
+on 4th December, 2023 and/or on any date thereafter in order to try and
+resolve the disputes amicably.
+40. However, Mr. Saurabh Kirpal, ld. Sr. Counsel, fairly submits that in
+view of the long association between the Defendant and the Plaintiff, the
+Defendant shall not release any cinematograph films for the next two weeks
+and shall not transfer any rights in any cinematograph films for the next two
+weeks. If the Defendant wishes to do so, it would approach the Court by
+way of an application.
+41. In the meantime, notice is accepted. Let reply be filed within two
+weeks. Rejoinder, if any, before the next date.
+42. List before the Court on 19th December, 2023.
+PRATHIBA M. SINGH, J.
+NOVEMBER 23, 2023
+mr/bh
+CS(COMM)840/2023 Page10of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:02
+
+===== ORDER =====
+
+$~28
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 840/2023, I.A. 23284/2023, 23285/2023 & 23378/2023
+SUPER CASSETTES INDUSTRIES
+PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Amit Sibal Sr. Adv., Mr. Ameet
+Naik, Ms. Madhu Gadodia, Mr.
+Harshvardhan Jha, Mr. Harsh Kaushik,
+Mr. Shashank Trivedi, Mr. Sanjeevi
+Sheshadri, Ms. Bhagyshree Shukla, Mr.
+Aman Pathak and Mr. Darpan Sachdeva,
+Advs. (M. 9971121185)
+versus
+RELIANCE ENTERTAINMENT STUDIOS
+PRIVATE LIMITED ..... Defendant
+Through: Mr. Saurabh Kirpal Sr. Adv. with Ms.
+Malvika Kapila Kalra, Ms Tanwangi
+Shukla,Advs. (M. 9810400283)
+Ms. Savni D Endlaw, Ms. Srishti Kumar,
+Ms. Rimjhim Tiwari,Advs. for D-3
+Ms. Sneha Jain, Mr. Angad Makkar, Mr.
+Manas Raghuvanshi, Advs. for D-5 (M.
+7703840056)
+Mr. Sidharth Joshi, Mr. Pratap, Mr. Zaki,
+Mr. Raushan, Advs. for D-7 (M.
+9350058310)
+CORAM:
+JUSTICE PRATHIBAM. SINGH
+O R D E R
+% 19.12.2023
+1. This hearing has been done through hybrid mode.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:01
+2. The present suit has been filed by Plaintiff- Super Cassettes Industries
+Private Limited against the Defendant- Reliance Entertainment Studios Private
+Limited. By way of the present suit, the Plaintiff seeks to recover a sum of
+more than ₹60 crores from the Defendant. It is averred that the said amount
+represents the outstanding principal, cost of capital, and revenue share owed to
+the Plaintiff under the terms of a Loan Agreement dated 19th May 2021,
+wherein inter alia the Defendant sought a loan of up to ₹268 Crores from the
+Plaintiff to produce eleven Hindi language films.
+3. Vide previous order dated 23rd November, 2023, this Court issued notice
+in the application under Order XXXIX Rule 1&2 CPC bearing I.A. 23284/2023
+and referred the parties for mediation to arrive at settlement. The Court directed
+as follows:
+“….
+29. It is the Plaintiff’s case that in view of the various
+defaults under the agreement, it is entitled to reliefs
+including of injunction, lien on all future films which
+may be produced or co-produced by the Defendant
+and a garnishee/attachment of the revenues which
+the Defendant has to receive from the third parties.
+30. Mr. Amit Sibal, ld. Sr. Counsel submits that the
+Plaintiff had entered into correspondence with the
+Defendant on multiple occasions and had sent various
+communications calling upon the Defendant to comply
+with the obligations under the agreement. According
+to the Plaintiff, the sum due as on date, subject to
+further accounts being revealed by the Defendant and
+the third parties for the two films, which the
+Defendant has already released, is approximately to
+the tune of Rs. 60 crores.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:01
+31. The submission of ld. Sr. Counsel for Plaintiff is
+that in the reply given by Reliance Entertainment
+Studios Private Limited (hereinafter, RESPL) on 11th
+October, 2023, the obligations of RESPL are admitted.
+Further, the Defendant also stated that they agreed to
+pay the amounts owed. However, the Defendant took a
+stand, that the Plaintiff had no lien on content
+produced for web-series/OTT shows and thus, no
+injunction on any web-series or OTT shows can be
+granted.
+32. Ld. Sr. Counsel for Plaintiff further highlighted
+some of the clauses of the agreement to argue that the
+Defendant is in gross violation of the terms of the
+agreement. Thus, the Plaintiff is entitled to an
+injunction and an order of attachment on the
+receivables of the Defendant from third parties.
+33. Specifically, it is highlighted that one of the web
+series in which rights have been enjoyed by the
+Defendant is a commissioned web series called “Sultan
+of Delhi”. The rights in respect of which are now
+owned by Novi Digital Entertainment Private Limited
+(hereinafter, “Hotstar”).
+34. On the other hand, Mr. Saurabh Kirpal, ld. Sr.
+Counsel submits that the Defendant, through its
+group Company-Reliance Big Entertainment Private
+Limited (hereinafter, ‘RBEP’), issued notice dated
+10th November, 2023 under the terms of a Long
+Form Agreement (hereinafter, LFA) dated 5th
+December, 2009 and Music Assignment Agreement
+(hereinafter, MAA) entered into between the Plaintiff
+and Defendant. In the said notice it is stated the
+Plaintiff is in default of not having produced all the
+accounts and adequate disclosures with respect of
+exploitation of the said music rights as per the MAA.
+According to the Defendant a sum of approximately
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:01
+Rs.200 crores is due from the Plaintiff, and it is to
+avoid this obligation, the present suit has been filed
+by the Plaintiff.
+35. However, this is denied by the ld. Sr. Counsel for
+the Plaintiff on the ground that the reply to this notice
+has been issued on 20th November,2023 which
+categorically takes the position that the Plaintiff has
+complied with its obligations and has given all the
+accounts to the Defendant.
+36. Ld. Sr. Counsel for the Plaintiff further submits
+that there is a litigation pending between the parties in
+respect of the LFA where an injunction has been
+granted in favour of the Plaintiff on 5th June, 2023.
+37. Insofar as the merits of the present suit is
+concerned, Mr. Saurabh Kirpal, ld. Sr. Counsel
+submits that the Defendant is willing to render
+accounts in respect of the two films i.e., Bholaa and IB
+71. However, no injunction be passed in respect of any
+other works.
+38. On behalf of Novi Digital it is submitted by Ms.
+Savni Endlaw, that the TV series ‘Sultans of Delhi’ is a
+commissioned work for which the Defendant was
+engaged by Novi Digital Entertainment Private
+Limited. No copyrights vest in the Defendant in respect
+of the said series.
+39. The Court firstly observes that insofar as the
+accounts and payments are concerned, the same ought
+to be reconciled between the two parties. Accordingly,
+in view of the fact that reconciliation between the
+parties would be necessary, senior officials of both
+the parties shall hold a meeting on 4th December,
+2023 and/or on any date thereafter in order to try and
+resolve the disputes amicably.
+40. However, Mr. Saurabh Kirpal, ld. Sr. Counsel,
+fairly submits that in view of the long association
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:01
+between the Defendant and the Plaintiff, the Defendant
+shall not release any cinematograph films for the
+next two weeks and shall not transfer any rights in
+any cinematograph films for the next two weeks. If
+the Defendant wishes to do so, it would approach the
+Court by way of an application.
+41. In the meantime, notice is accepted. Let reply be
+filed within two weeks. Rejoinder, if any, before the
+next date.”
+4. In terms of the previous order, the replies to both applications being I.A.
+23284/2023 and I.A.23285/2023 are stated to have been filed, but the same are
+not on record. They have been filed today, with a delay of more than two
+weeks, despite the Defendant being cognizant of the urgency in the matter.
+Both the replies are taken on record, subject to payment of costs of Rs.50,000/-
+to the Plaintiff. Let rejoinder to both the replies in the above applications be
+filed within a period of two weeks. Let the costs be paid to the Plaintiff within
+2 weeks.
+5. Further, an affidavit of disclosure dated 7th December, 2023 has been
+placed on record by the Defendant. In the said affidavit, details are provided
+regarding the receivables from third parties, concerning the works over which
+the Plaintiff may have a lien, as per the Loan Agreement dated 19th May 2021.
+The Defendant deposes that the receivable amount is more than Rs. 7.42 crores
+from Zee Entertainment Enterprises Ltd. for the films covered under the said
+LoanAgreement. The Defendant, as per the said affidavit, undertakes to deposit
+the said amount in the bank account, in terms of the LoanAgreement.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:01
+6. The admitted amounts in terms of the affidavit of disclosure dated 7th
+December, 2023 shall be deposited within two weeks in terms of the Loan
+Agreement dated 19th May, 2021.
+7. Since the matter could not be heard due to the late replies, the
+submission made by Mr. Kirpal, ld. Senior Counsel, as recorded in paragraph
+40 of the previous order dated 23rd November, 2023, that the Defendant shall
+not release any cinematograph films, or transfer any rights in them, shall
+continue. If the Defendant wishes to release or transfer rights in any
+cinematograph films, the same shall be done only after obtaining the leave of
+this Court.
+8. This interim order shall continue till the next date of hearing.
+9. List on 12th January, 2024.
+PRATHIBA M. SINGH, J.
+DECEMBER 19, 2023
+Rahul/dn
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:01
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 840/2023, I.A. 23284/2023 I.A. 23285/2023, I.A.
+23378/2023, 519/2024, 815/2024, 873/2024
+SUPER CASSETTES INDUSTRIES PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Amit Sibal, Sr. Advocate with
+Mr. Ameet Malik, Ms. Madhu, Mr.
+harsh Vardhan Jha, Mr. Harsh
+Kaushik, Mr. Shashank Trivedi, Mr.
+Sanjeevi, Ms. Bhagyashree Shukla,
+Mr. Aman Pathak and Mr. Darpan,
+Advocates.
+versus
+RELIANCE ENTERTAINMENT STUDIOS PRIVATE LIMITED
+..... Defendant
+Through: Mr. Gaurav Vutts, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 12.01.2024
+1. The undersigned is scheduled to be a part of Special Benches in the
+post lunch session, thus, it would not be possible to hear the matter today.
+2. Re-notify on 19th February, 2024.
+SANJEEV NARULA, J
+JANUARY 12, 2024/PT
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:01
+
+===== ORDER =====
+
+$~52
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 840/2023
+SUPER CASSETTES INDUSTRIES PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Harshvardhan Jha, Ms. Madhu
+Chaudhary, Mr. Shashank Trivedi,
+Ms. Bhagyashree Shukla and
+Ms. Aman Pathak, Advocates.
+versus
+RELIANCE ENTERTAINMENT STUDIOS PRIVATE LIMITED
+..... Defendant
+Through: Ms. Malvika Kalra and Ms. Tanwangi
+Shukla, Advocates.
+Ms. Savni Dutt Endlaw, Ms. Srishti
+Kumar and Ms. Rimjhim Tiwari,
+Advocates for D-3.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 15.01.2024
+I.A. 978/2024 (seeking leave to file additional documents along with
+affidavit)
+1. Issue notice. Counsel mentioned in appearance above, accept notice on
+behalf of their respective Defendants. Reply, if any, be filed before the next
+date of hearing.
+2. List before the Joint Registrar on the date fixed i.e., on 18th January, 2024.
+SANJEEV NARULA, J
+JANUARY 15, 2024/nk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:00
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 840/2023
+SUPER CASSETTES INDUSTRIES PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Amit Jain, Mr. Nakul Mehta &
+Mr. Ashutosh Pandey, Advocates.
+versus
+RELIANCE ENTERTAINMENT STUDIOS PRIVATE LIMITED
+..... Defendant
+Through: Ms. T. Shukla, Advocate.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 18.01.2024
+I.A. 978/2022
+1. Learned counsel for the defendant submits that reply to the present
+I.A. shall be filed within the period permitted by the Hon’ble Court. Copy of
+the reply be supplied to the learned counsel for the plaintiff in advance.
+Rejoinder be filed within a week of receipt of advance copy of the reply.
+2. Put up before the Hon’ble Court on 19.02.2024 which is the date
+already fixed, for further directions.
+Dr. AJAY GULATI, J
+JANUARY 18, 2024/MR
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:00
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 840/2023, I.As. 23284-23285/2023, 23378/2023,
+519/2024, 873/2024, 978/2024 & 3970-3971/2024
+SUPER CASSETTES INDUSTRIES PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Amit Sibal, Senior Advocate with
+Mr. Ameet Malik, Ms. Madhu,
+Mr. Harshvardhan Jha, Mr. Harsh
+Kaushik, Mr. Deepak Dekhmukh,
+Ms. Abha Shah, Mr. Sanjeevi,
+Ms. Bhagyashree Shukla, Mr. Aman
+Pathak and Mr. Darpan Sachdeva,
+Advocates.
+versus
+RELIANCE ENTERTAINMENT STUDIOS PRIVATE LIMITED
+..... Defendant
+Through: Mr. Saurabh Kirpal, Senior Advocate
+with Ms. Malvika Kapila Kalra and
+Ms. Tanwangi Shukla, Advocates for
+D-1.
+Ms. Savni D. Endlaw, Ms. Srishti
+Kumar and Ms. Rimjhim Tiwari,
+Advocates for D-3.
+Mr. Devvrat Joshi, Advocate for D-4.
+Ms. Sneha Jain, Mr. Angad Singh
+Makkar and Mr. Manas Raghuvanshi,
+Advocates for D-5.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 19.02.2024
+I.A. 815/2024 (for violation and non-compliance of the orders dated
+23.11.2023 & 19.12.2023)
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:59
+1. Issue notice. Counsel for Defendants mentioned in the appearance above,
+accept notice. Reply, if any, be filed within four weeks from today.
+Rejoinder, if any, be filed within two weeks thereafter.
+2. List on 25th April, 2024.
+SANJEEV NARULA, J
+FEBRUARY 19, 2024
+nk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:59
+
+===== ORDER =====
+
+$~54
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 840/2023, I.A. 6629/2024
+SUPER CASSETTES INDUSTRIES PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Mukul Rohatgi, Senior Advocate,
+Mr. Amit Sibal, Sr. Advocate, Mr.
+Harsh Kaushik, Mr. Nikhil Rohatgi,
+Mr. Sanjeevi Sheshadri, Mr. Darpan
+Sachdeva, Ms. Srishti Mishra,
+Advocates.
+versus
+RELIANCE ENTERTAINMENT STUDIOS PRIVATE LIMITED &
+ORS. ..... Defendants
+Through: Mr. Saurabh Kirpal, Senior Advocate
+with Ms. Malvika Kapila Kalra,
+Ms. Tanwangi Shukla and Ms. Adya
+Rajkotia, Advocates for D-1.
+Ms. Srishti Kumar, Advocate for D-3.
+Mr. Thomas George, Mr. Navankur
+Pathak, Ms. Sneha Jain, Advocates
+for D-4.
+Ms. Sneha Jain, Mr. Angad S.
+Makkar, Advocates for D-5.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 20.03.2024
+I.A. 6607/2024 (under Order XXXIX Rule 1 & 2 of the Code of Civil
+Procedure, 1908 read with Section 151 of the Code Of Civil Procedure,
+1908 seeking injunction restraining the Defendant from releasing future
+films along with supporting affidavit)
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:59
+1. This is the second application under Order XXXIX Rule 1 and 2 of
+the Code of Civil Procedure, 1908 [“CPC”] seeking to restrain the
+Defendant – Reliance Entertainment Studios Private Limited [“Reliance”]
+from releasing any future cinematograph films.
+2. Mr. Mukul Rohatgi, Senior Counsel representing the Plaintiff – Super
+Cassettes Industries Private Limited [“SCIPL”], refers to paragraph No. 40
+of the order dated 23rd November, 2023, which records Reliance’s
+undertaking to not release any cinematograph films or transfer any rights in
+the said films without the leave of the Court, for two weeks from the date of
+the said order, which was later extended on 19th December, 2023. As SCIPL
+apprehends that Reliance is on the verge of releasing three films – Amar
+Singh Chamkila, Section 84, and Singham Again (also marketed as Singham
+3), they seek urgent injunctive reliefs against any such publication.
+3. Mr. Rohatgi points out that the Loan Agreement dated 19th May,
+2021, as revised by communication dated 17th March, 2023, stipulates that in
+the event of any default in repayment of the loan amount, SCIPL shall have
+a lien over all future films produced by Reliance, whether individually or
+with any third-party. He submits that the afore-noted films proposed to be
+released shortly, are covered by the arrangement between the parties as they
+have been co-produced by Reliance. To demonstrate this, Mr. Rohatgi refers
+to the following documents:
+(a) Netflix India Slate 2024 wherein, Reliance has been identified as the
+co-producer of the film Amar Singh Chamkila, set to release on 12th April,
+2024.
+(b) Pleadings in Civil Suit No. 2915/2023 instituted by a third-party
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:59
+claiming certain rights in the film Amar Singh Chamkila before the Civil
+Judge, Senior Division, Ludhiana. In the said suit, Reliance [Defendant No.
+2 therein] has, in their reply to an application under Order XXXIX Rules 1
+and 2 of CPC, asserted that they have produced the film. The said pleadings
+are also supported by a Board Resolution in favour of Reliance’s Authorized
+Representative.
+(c) Screenshots of articles posted on third-party news websites and
+Reliance’s own website displaying Reliance as a co-producer of Section 84
+film.
+4. Mr. Rohatgi submits that in view of the overwhelming evidence
+referred above, including Defendant’s own admission before the Court in
+Ludhiana, acknowledging that they are the producers/ co-producers of the
+films forming the subject matter of this application, Reliance must be
+restrained from releasing/ exhibiting/ broadcasting the said movies, without
+the Court’s leave.
+5. Mr. Saurabh Kirpal, Senior Counsel representing Reliance, contests
+the instant application and seeks a short accommodation to file a reply
+thereto. As a preliminary submission, he states that Reliance is not the
+producer/ co-producer of the films Amar Singh Chamkila, Section 84 or
+Singham Again and thus, the Plaintiff has no locus to seek an injunction
+against their release. Mr. Kirpal also points to the memo of parties appended
+to the plaint of the civil suit before the Civil Judge, Ludhiana to argue that
+Reliance had been impleaded through an LLP called Window Seat Films,
+where Reliance is an interest-holder. He submits that the films in question
+have been produced by Windows Seat Films, and not Reliance, as averred in
+the pleadings in the Ludhiana suit.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:59
+6. Counsel for Reliance and Netflix are permitted to file a reply to the
+instant application, within a period of four days from today. Rejoinder
+thereto, if any, be filed within three days thereafter.
+7. Re-notify on 27th March, 2024.
+SANJEEV NARULA, J
+MARCH 20, 2024
+ab
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:59
+
+===== ORDER =====
+
+$~63
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 840/2023
+SUPER CASSETTES INDUSTRIES PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Amit Sibal, Senior Advocate with
+Mr. Harsh Kaushik, Mr. Sanjeevi
+Sheshadri, Mr. Darpan Sachdeva and
+Ms. Srishti Mishra, Advocates.
+versus
+RELIANCE ENTERTAINMENT STUDIOS PRIVATE LIMITED
+..... Defendant
+Through: Mr. Saurabh Kirpal, Senior Advocate
+with Ms. Malvika Kapila,
+Ms. Tanwangi Shukla and Ms. Adya
+Rajkotia, Advocates for D-1.
+Mr. Sandeep Sethi, Senior Advocate
+with Mr. Sidharth Chopra,
+Mr. Thomas George, Mr. Devrat
+Joshi and Mr. Navankar Pathak,
+Advocates for Los Gatos Production
+Services LLP.
+Ms. Noni Digital, Ms. Srishti Kumar
+and Ms. Astha Sehgal, Advocates for
+Novi Digital Private Limited (Non-
+Applicant in IA 23378/2023).
+Ms. Sneha Jain, Mr. Angad Singh
+Makkar and Mr. Manas Raghuvanshi,
+Advocates for Amazon Seller
+Services Private Limited (Non-
+Applicant in IA 23378/2023).
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:58
+O R D E R
+% 27.03.2024
+I.A. 6607/2024 (seeking injunction restraining the Defendant from releasing
+future films along with supporting affidavit)
+1. Reply filed by the Defendant and Los Gatos Production Services India
+LLP and rejoinder of the Plaintiff thereto stated to have been filed, are not
+on record. The counsel are instructed to follow-up with the Registry to
+ensure that the same are placed on the file of this Court before the next date
+of hearing.
+2. List on 1st April, 2024.
+I.A. 6629/2024 (seeking disclosure and production of documents in
+possession of the Defendant along with supporting affidavit)
+3. Issue notice. Ms. Malvika Kapila, counsel, accepts notice on behalf of
+Defendant.
+4. Reply, if any, be filed within four weeks from today. Rejoinder, if any, be
+filed within two weeks thereafter.
+5. List on 1st April, 2024.
+SANJEEV NARULA, J
+MARCH 27, 2024
+nk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:58
+
+===== ORDER =====
+
+$~38
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 840/2023, I.A. 6629/2024
+SUPER CASSETTES INDUSTRIES PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Amit Sibal, Sr. Advocate, Mr.
+Harsh Kaushik, Mr. Sanjeevi
+Sheshadri, Mr. Darpan Sachdeva, Ms.
+Srishti Mishra, Advocates.
+versus
+RELIANCE ENTERTAINMENT STUDIOS PRIVATE LIMITED
+..... Defendant
+Through: Mr. Saurabh Kirpal, Sr. Advocate,
+Ms. Malvika Kapila, Ms. Tanwangi
+Shukla, Ms. Adya Rajkotia,
+Advocates for D-1.
+Mr. Sandeep Sethi, Sr. Advocate, Mr.
+Thomas George, Ms. Tanvi Sinha,
+Mr. Devrat Joshi, Ms. Riya Kumar,
+Mr. Sumer, Ms. Shreya Sethi,
+Advocates for Los Gatos Productions
+Services India LLP.
+Ms. Srishti Kumar, Ms. Rimjhim
+Tiwari, Advocates for Novi Digital
+Private Limited (Non-Applicant in IA
+23378/2023).
+Ms. Diya Kapur, Mr. Raj Duggal, Mr.
+Aditya Lodha, Mr. Raghav Kumar,
+Advocates for Window Seats Films
+LLP.
+Ms. Sneha Jain, Mr. Angad Singh
+Makkar and Mr. Manas Raghuvanshi,
+Advocates for Amazon Seller
+Services Private Limited (Non-
+Applicant in IA 23378/2023).
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:58
+O R D E R
+% 01.04.2024
+I.A. 6607/2024 (seeking injunction restraining the Defendant from releasing
+future films along with supporting affidavit)
+1. Arguments have been heard extensively. At the outset, Mr. Amit
+Sibal, Senior Counsel representing the Plaintiff, submits that for the
+moment, the Plaintiff is willing to confine the scope of reliefs in the instant
+application to a direction to the Defendant to deposit with the Court, the
+amount of approximately Rs. 42.16 crores received by them from Los Gatos
+Productions Services India LLP, for licensing the movie Amar Singh
+Chamkila over which, the Plaintiff has the right to enforce their lien.
+2. Among the various objections raised, Mr. Saurabh Kirpal, Senior
+Counsel for Defendant, has contended that prayer for deposit is not a part of
+the prayer clause and pertinently, the Plaintiff must demonstrate their
+entitlement to seek such a relief under Order XXXVIII Rule 5 of the Code
+of Civil Procedure, 1908. On this issue, Mr. Sibal points to the averments
+made in the application to argue that there are sufficient pleadings which
+justify the Plaintiff’s request. Besides, he argues that there is no legal
+impediment for a party to seek a relief lesser than what has been prayed for
+in the pleading.
+3. Be that as it may, the Court inquired from Mr. Kirpal as to whether
+Defendant would like to file an additional reply as regards the prayer for
+deposit. No answer was forthcoming till the time hearing was concluded.
+Nonetheless, since the hearing is being adjourned for further arguments, the
+Defendant is permitted to file an additional reply, if any, on or before the
+next date of hearing, with respect to the Plaintiff’s request for deposit of the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:58
+amount, as noted above. A copy thereof shall also be e-mailed to the Court
+Master within the said timeline.
+4. Re-notify for further submissions on 03rd April, 2024.
+SANJEEV NARULA, J
+APRIL 1, 2024/ab
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:58
+
+===== ORDER =====
+
+$~48
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 840/2023
+SUPER CASSETTES INDUSTRIES PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Amit Sibal, Senior Advocate with
+Mr. Harsh Kaushik, Mr. Sanjeevi
+Sheshadri, Mr. Darpan Sachdeva and
+Ms. Srishti Mishra, Advocates.
+versus
+RELIANCE ENTERTAINMENT STUDIOS PRIVATE LIMITED
+..... Defendant
+Through: Mr. Saurabh Kirpal Sr. Advocate with
+Ms. Malvika Kapila Kalra, Ms.
+Tanwangi Shukla & Ms. Adya
+Rajkota Advoctaes for D-1.
+Ms. Srishti Kumar & Ms. Rimjhim
+Tiwari, Advocates for Novi Digital
+Private Limited (Non-Applicant in IA
+23378/2023).
+Ms. Diya Kapur & Mr. Raj Duggal,
+Advocates for Window Seat Films
+LLP.
+Mr. Sandeep Sethi, Sr. Advocate with
+Ms. Sneha Jain, Ms. Tanvi Sinha, Mr.
+Devvrat Joshi, Ms. Neeti Nihal & Ms.
+Riya Kumar, Advocates for LOS
+Gatos Productions India LLP.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 03.04.2024
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:57
+I.A. 6607/2024 (seeking injunction restraining the Defendant from releasing
+future films along with supporting affidavit)
+1. Mr. Saurabh Kirpal, counsel for Defendant, has been heard for some
+time. He states that he will take 30 more minutes to complete his
+submissions.
+2. Re-notify on 04th April, 2024.
+SANJEEV NARULA, J
+APRIL 3, 2024/da
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:57
+
+===== ORDER =====
+
+$~42
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+Date of Decision: 04th April, 2024
++ CS(COMM) 840/2023, I.A. 6629/2024
+SUPER CASSETTES INDUSTRIES PRIVATE LIMITED
+..... Plaintiff
+Through: Mr. Amit Sibal, Senior Advocate with
+Mr. Harsh Kaushik, Mr. Sanjeevi
+Sheshadri, Mr. Darpan Sachdeva and
+Ms. Srishti Mishra, Advocates.
+versus
+RELIANCE ENTERTAINMENT STUDIOS PRIVATE LIMITED
+..... Defendant
+Through: Mr. Saurabh Kirpal, Senior Advocate
+with Ms. Malvika Kapila Kalra,
+Ms. Tanwangi Shukla and Ms. Adya
+Rajkotia, Advocates for Defendant
+No. 1.
+Mr. Sandeep Sethi, Senior Advocate
+with Mr. Thomas George, Ms. Tanvi
+Sinha, Mr. Sidharth Chopra,
+Mr. Devvrat Joshi, Ms. Neeti Nihal
+and Ms. Riya Kumar, Advocates for
+Los Gatos.
+Ms. Shyel Trehan, Mr. Raj Duggal,
+Mr. Raghav Kumar, Mr. Rohan
+Poddar, Mr. Aditya Ladha and
+Ms. Ganeha Gambani, Advocates for
+Window Seats Films LLP.
+Mr. Sidharth Joshi and Mr. Vikrant
+Ballav Sharan, Advocates for D-7.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+JUDGMENT
+CS(COMM) 840/2023 Page 1 of 25
+SANJEEV NARULA, J. (Oral):
+I.A. 6607/2024 (on behalf of the Plaintiff seeking injunction restraining the
+Defendant from releasing future films along with supporting affidavit)
+1. The Plaintiff, Super Cassettes Industries Private Limited,1 has now,
+for the second time, filed the instant application seeking to prevent the
+Defendant, Reliance Entertainment Studios Private Limited,2 from releasing/
+exhibiting/ broadcasting cinematographic films. SCIPL claims a lien and
+charge on the revenues generated by these films, asserting a consequential
+right to seek an injunction emanating from the Loan Agreement dated 19th
+May, 2021,3 and other ancillary agreements between the parties. SCIPL
+further alleges non-compliance by Reliance wi
+
+[TRUNCATED — rights are established in the opening orders above]

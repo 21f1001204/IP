@@ -1,0 +1,605 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_934_2023
+case_status: DISPOSED
+n_orders: 12
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 934/2023
+CHARAT ENTERPRISES & ORS. ..... Plaintiffs
+Through: Mr. Sanjay Goel, Ms. Pooja Mishra,
+Advs. for P-3.
+versus
+KNITCRAFT APPARELS INT. P LTD. AND ANR.
+..... Defendants
+Through: None.
+CORAM:
+HON'BLE MR. JUSTICE DINESH KUMAR SHARMA
+O R D E R
+% 22.12.2023
+I.A. 26033/2023
+1. Exemption granted, subject to all just exceptions.
+2. Application stands disposed of.
+CS(COMM) 934/2023
+3. The present commercial suit has been filed for recovery under Section
+7 of the Commercial Courts, Commercial Division & Commercial Appellate
+Division of the High Court Act, 2015 of Rs. 3,41,65,265/- (Rs. Three Crore
+Forty One Lakh Sixty Five Thousand Two Hundred Sixty Five Only)
+together with pendent-lite and future interest @ 18% P.A. from the date of
+filing of the suit till the date of realization of the same with costs throughout
+with the following prayer:
+“(I) Pass a decree for recovery of money in favour of the
+Plaintiffs and against the Defendants for a sum of Rs.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:06
+3,41,65 265/- (Rs. Three Crore Forty One Lakh Sixty-Five
+Thousand Two Hundred Sixty-Five only) thereby directing
+the Defendants 1 & 2 to pay the above said entire
+outstanding amounts to the Plaintiffs:
+(II) Award the interest at the rate of 18% per annum
+pendente-lite i.e. during pendency of the suit as well as
+future interest 18% p.a. from the date of filing of the suit till
+the date of realization of the same with costs throughout;
+(III) Award the cost of the suit / litigation in favour of the
+Plaintiffs and against the Defendants;
+(IV) Pass any other further order(s) or relief(s) in favour of
+the Plaintiffs and against the Defendants as this Hon'ble
+Court may deem fit and proper in view of aforesaid facts
+and circumstances of the case.”
+4. Let the plaint be registered as a suit.
+5. Summons be issued to the defendants by all permissible modes, which
+shall indicate that the written statements must be filed within thirty days
+from the date of receipt of the summons.
+6. The defendants are directed to file affidavit of admission/denial
+against the documents filed by the plaintiff, failing which the written
+statement shall not be taken on record.
+7. The plaintiff is at liberty to file replications thereto within fifteen days
+of filing of the written statements, which shall be accompanied by affidavits
+of admission/denial, in respect of the documents filed by the defendants,
+failing which the replications shall not be taken on record.
+8. It is made clear that any unjustified denial of documents may lead to
+an order of costs against the concerned party.
+9. Any party seeking inspection of documents may do so in accordance
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:06
+with the Delhi High Court (Original Side) Rules, 2018.
+10. List before Joint Registrar (Judicial) on 27.02.2024.
+DINESH KUMAR SHARMA, J
+DECEMBER 22, 2023/AR/SJ..
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:06
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 934/2023
+CHARAT ENTERPRISES & ORS.
+..... Plaintiff
+Through: Mr. Sanjay Goel & Ms. Shriya
+Sirohi, Advs. with P-3 in person
+versus
+KNITCRAFT APPARELS INT. P LTD. AND ANR.
+..... Defendant
+Through: None.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. MANISH
+SHARMA, (DHJS)
+O R D E R
+% 27.02.2024
+1. As per office note, defendant no.1 & 2 have been
+served.
+2. None has appeared on behalf of the defendant no.1 & 2
+despite service.
+3. Defendant nos.1 & 2 are directed to file written
+statement and affidavit of admission/denial of
+documents within stipulated period with advance copy
+to the opposite side.
+4. Plaintiff is at liberty to file replication and affidavit of
+admission/denial of documents within four weeks
+thereafter.
+5. Re-notify the matter for completion of pleadings and
+admission/denial of documents on 26th April, 2024.
+MANISH SHARMA, (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 27, 2024/nk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:05
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 934/2023
+CHARAT ENTERPRISES & ORS.
+..... Plaintiff
+Through: Mr. Sanjay Goel & Ms. Shriya
+Sirohi, Advs.
+versus
+KNITCRAFT APPARELS INT. P LTD. AND ANR.
+..... Defendant
+Through: Mr. Keshri Kumar, Adv.
+(appeared through VC).
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. MANISH
+SHARMA, (DHJS)
+O R D E R
+% 26.04.2024
+1. As per office note, vakalatnama has been filed on
+behalf of defendant nos.1 & 2.
+2. Written statement and affidavit of admission/denial of
+documents have been filed on behalf of the defendants.
+3. Learned counsel for plaintiff submits that there is delay
+in filing written statement and the same cannot be taken
+on record.
+4. Learned counsel for defendants submits that he has also
+moved an application seeking condonation of delay in
+filing written statement. However, the same has not
+come on record. Learned counsel for defendant is
+requested to check it up with the Registry and have the
+same placed on record.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:05
+5. Re-notify the matter for completion of pleadings and
+admission/denial of documents on 25th July, 2024.
+MANISH SHARMA, (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+APRIL 26, 2024/nk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:05
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 934/2023
+CHARAT ENTERPRISES & ORS.
+..... Plaintiff
+Through: None.
+versus
+KNITCRAFT APPARELS INT. P LTD. AND ANR.
+..... Defendant
+Through: Mr. Keshri Kumar, Adv.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. MANISH
+SHARMA, (DHJS)
+O R D E R
+% 06.05.2024
+I.A.No.10193/2024 (under Order VIII Rule 1 CPC filed
+on behalf of defendants seeking condonation of delay of
+17 days in filing written statement) &
+1. It is submitted that the matter is coming up before this
+Court on 25/07/2024.
+2. File is taken up today on listing of the captioned IA.
+3. Issue notice of the captioned IA to the plaintiff through
+counsel, on filing of PF, returnable on the date already
+fixed i.e. 25th July, 2024.
+MANISH SHARMA, (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+MAY 6, 2024/nk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:04
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 934/2023
+CHARAT ENTERPRISES & ORS.
+.....Plaintiffs
+Through: Mr. Sanjay Goel, Ms. Shriya Sirohi,
+Advs. (M: 9810554030, Email:
+sanjaygoel.com@gmail.com)
+versus
+KNITCRAFT APPARELS INT. P LTD. AND ANR.
+.....Defendants
+Through: Mr. Keshri Kumar, Adv. (Through
+VC)
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 25.07.2024
+I.A. No. 10193/2024(Application U/O VIII Rule 1 by defendants seeking
+condonation of delay in filing the written statement)
+It is submitted by learned counsel for the applicant that the defendants
+had changed the address and therefore, summons were not served upon them
+but defendants came to know about this case on 27.02.2024 and thereafter,
+filed the written statement on 15.04.2024. Therefore, delay may be
+condoned.
+Learned counsel for plaintiff opposed the application stating that there
+is unreasonable delay in filing the written statement and same may not be
+condoned.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:04
+I have considered the submissions of both the parties. As per office
+noting, the summons were served upon the defendants on 30.01.2024 and
+therefore, written statement was to be filed within 30 days i.e. up to
+29.02.2024. However, same has been filed after the delay of about 45 days.
+However, in the interest of justice, same is condoned subject to a cost of Rs.
+5,000/- to be given to the opposite party.
+The captioned IA is accordingly allowed and disposed of.
+CS(COMM) 934/2023
+Written statement on behalf of the defendants be taken on record.
+Put up for completion of pleadings in accordance with law and
+thereafter for completion of process of filing of Joint Document Schedule in
+terms of Rule 7A of Chapter VII of The Delhi High Court (Original
+Side) Rules, 2018 physically by plaintiffs after getting it signed from
+defendants, admission / denial of documents and marking of Exhibits in
+accordance with law on 26.11.2024.
+Documents, if e-filed be filed physically by parties so as to mark the
+Exhibits.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JULY 25, 2024/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:04
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 934/2023
+CHARAT ENTERPRISES & ORS. .....Plaintiffs
+Through: Sanjay Goel, Ms. Shriya Sirohi, Advs.
+along with P3 in person (M:
+9810554030, Email:
+sanjaygoel.com@gmail.com)
+versus
+KNITCRAFT APPARELS INT. P LTD. AND ANR. .....Defendants
+Through: Mr. Keshri Kumar, Adv. (Through
+VC)
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 26.11.2024
+1. Learned counsel for defendants submitted that he will pay the cost in
+furtherance of previous order today itself.
+2. Replication has already been filed on behalf of the plaintiff.
+3. Hard copy of documents already filed on behalf of the plaintiff.
+4. As per learned counsel for defendant, he had not filed any document
+with the written statement nor he had admitted any document of the plaintiff.
+5. At joint request, as there is no requirement of filing of Joint
+Document Schedule / marking of Exhibits, put up before the Hon’ble Court
+for further directions for 09.12.2024.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 26, 2024/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:03
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 934/2023
+CHARAT ENTERPRISES & ORS. .....Plaintiffs
+Through: Mr. Sanjay Goel, Advocate for
+Plaintiff no. 3.
+versus
+KNITCRAFT APPARELS INT. P LTD. AND ANR.
+....Defendants
+Through: Mr. Keshri Kumar, Advocate
+(through VC)
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 09.12.2024
+1. Learned counsel for the Plaintiffs states that claims raised in the
+captioned suit are also substantiated by tax invoices raised on the defendant.
+He states that the defendants have acknowledged the invoices as they have
+availed the input of the Goods and Services Tax (‘GST’) recorded in these
+invoices.
+2. Learned counsel for the Defendants states that he has to take
+instructions from the defendants with respect to the submissions as to
+whether input of GST has been availed by the defendants.
+3. In the aforesaid facts, learned counsel for the Plaintiffs states that he
+will be filing an appropriate application under Order XIII Rule A, Code of
+Civil Procedure, 1908 for summary judgement.
+4. At request of counsel for Plaintiffs, matter is adjourned to 27.03.2025.
+MANMEET PRITAM SINGH ARORA, J
+DECEMBER 9, 2024/mr/AKT Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:02
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 934/2023 & I.A. 8029/2025
+CHARAT ENTERPRISES & ORS. .....Plaintiffs
+Through: Mr. Sanjay Goel, Advocate
+versus
+KNITCRAFT APPARELS INT. P LTD. AND
+ANR. .....Defendants
+Through: Mr. Keshri Kumar, Mr. Mukesh Kr.
+Gautam, Mr. Jitender Kumar and Ms.
+Monika Agrawal, Advocates
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 27.03.2025
+I.A. 8029/2025 (on behalf of the plaintiffs under order XIII-A read with sec.
+151 of the CPC for passing of summary judgement)
+1. This is an application filed by the plaintiffs under Order XIII-A Code
+of Civil Procedure, 1908 (CPC) read with Section 151 CPC.
+2. Issue notice. Learned counsel for the defendants accepts notice. He
+seeks and is granted four (4) weeks’ time to file his reply.
+3. Rejoinder, if any, be filed within two (2) weeks thereafter.
+4. List for consideration on 11.08.2025.
+CS(COMM) 934/2023
+5. List on 11.08.2025.
+MANMEET PRITAM SINGH ARORA, J
+MARCH `27, 2025/msh
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:02
+
+===== ORDER =====
+
+$~41
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 934/2023
+CHARAT ENTERPRISES & ORS. .....Plaintiffs
+Through: Mr. Sanjay Goel, Advocate
+versus
+KNITCRAFT APPARELS INT. P LTD. AND ANR. .....Defendants
+Through: Mr. Keshri Kumar, Advocate
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 07.07.2025
+I.A. 15479/2025 (for referring the matter to the Mediation)
+1. This is a joint application filed by the plaintiff no. 3 along with
+defendant nos. 1 and 2 seeking reference to mediation.
+2. Learned counsel for the plaintiffs’ states that plaintiff no. 3 is the son
+of plaintiff no. 2 and this application has been filed on behalf of both
+plaintiff nos. 2 and 3.
+3. At joint request of the parties, the parties are hereby referred to Delhi
+High Court Mediation and Conciliation Centre (‘Mediation Centre’).
+4. Accordingly, list this matter before the Mediation Centre on
+16.07.2025 at 02:30 P.M.
+5. With the aforesaid directions, the application stands disposed of.
+CS(COMM) 934/2023
+6. In view of the orders passed today, the date already fixed i.e.
+11.08.2025 is hereby cancelled.
+CS(COMM) 934/2023 Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:01
+7. List this matter before the Ld. Joint Registrar for reporting the
+outcome of the mediation on 21.08.2025.
+MANMEET PRITAM SINGH ARORA, J
+JULY 7, 2025/rhc
+Click here to check corrigendum, if any
+CS(COMM) 934/2023 Page 2 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:01
+
+===== ORDER =====
+
+$~199
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 934/2023
+CHARAT ENTERPRISES & ORS.
+.....Plaintiff
+Through: None
+versus
+KNITCRAFT APPARELS INT. P LTD. AND ANR.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 04.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared on behalf of the parties.
+Let this matter be sent back to the Hon’ble Court for further
+directions.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 04, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:01
+
+===== ORDER =====
+
+$~2
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 934/2023
+CHARAT ENTERPRISES & ORS. .....Plaintiffs
+Through: Ms.Bhawna, Adv.
+versus
+KNITCRAFT APPARELS INT. P LTD. AND ANR. .....Defendants
+Through: (Appearance not given)
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 21.08.2025
+1. It is submitted by learned counsel for both parties that matter has
+already been settled through Mediation. Settlement agreement dated
+28.07.2025 received.
+2. At joint request, list the matter before the Hon'ble Court for further
+directions on 28.08.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 21, 2025/tp
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:33:00
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 934/2023 & I.A. 8029/2025
+CHARAT ENTERPRISES & ORS. .....Plaintiffs
+Through: Mr.SanjayGoel,Ms.AkankshaGupta
+& Ms. Himani Tiwari, Advs.
+versus
+KNITCRAFT APPARELS INT. P LTD. AND ANR. .....Defendants
+Through: Mr. Keshri Kumar, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 28.08.2025
+1. The parties have settled their disputes in the mediation proceedings
+before the Delhi High Court Mediation and Conciliation Centre.
+2. The Settlement Agreement dated 28th July, 2025 (hereinafter
+‘Settlement Agreement’), which bears the signatures of the authorised
+representatives of the plaintiffs as well as the defendants, has been placed on
+record.
+3. IntermsoftheSettlementAgreement,asumofRs.99,00,000/-(Rupees
+Ninety Nine Lakhs Only) has been paid by the defendants to the plaintiffs.
+4. In view thereof, the present suit is disposed of in terms of the aforesaid
+settlement.
+5. The pending applications stand disposed of.
+6. Since the matter has been settled between the parties in mediation
+proceedings, the Registry is directed to issue a certificate of refund of 100%
+oftheCourtFeesinfavouroftheplaintiffs,intermsofSection16oftheCourt
+CS(COMM)934/2023 Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:59
+Fees Act, 1870 read with Section 89 Code of Civil Procedure, 1908.
+AMIT BANSAL, J
+AUGUST 28, 2025
+at
+CS(COMM)934/2023 Page 2 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:59

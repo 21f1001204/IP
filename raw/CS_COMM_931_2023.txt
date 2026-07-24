@@ -1,0 +1,490 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_931_2023
+case_status: DISPOSED
+n_orders: 12
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 931/2023
+MOMENTIVE PERFORMANCE MATERIALS INC.
+..... Plaintiff
+Through: Mr. Prajjwal Kushwaha,
+Adv.
+versus
+BALAJI BIO CORP CHEMICALS,
+..... Defendant
+Through: Mr. Pallav Gupta, Adv. for
+D-4.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 19.02.2024
+Learned P.O is on leave today.
+Put up the matter on 12.03.2024 for purpose already fixed.
+Reader a/w
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 19, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:40
+
+===== ORDER =====
+
+$~10
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 931/2023
+MOMENTIVE PERFORMANCE MATERIALS INC.
+..... Plaintiff
+Through: Mr. Shobhit Agarwal,
+Mr. Prajjwal Kushwaha,
+Advocates
+versus
+BALAJI BIO CORP CHEMICALS, ..... Defendant
+Through: Mr. Pallav Gupta, Mr. Mohit
+Dewan, Mr. Utkarsh Batra,
+Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 12.03.2024
+I.A. No. 5753/2024 on behalf of the defendant for condoning
+the delay of 20 days in filing of written statement.
+Issue notice.
+Notice accepted by ld. Counsel for the plaintiff.
+Ld. Counsel for the plaintiff submits that he has no
+objection if the application is allowed.
+For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the plaintiff, application is
+allowed. Delay stands condoned. Written statement is taken on
+record. Replication be filed within the period permissible, as
+worked out from today.
+IA stands disposed off.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:39
+CS(COMM) 931/2023
+Matter is already listed before the Hon’ble Court for
+28.03.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 28.03.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 12, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:39
+
+===== ORDER =====
+
+$~8
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 931/2023 & I.A. 25917/2023
+MOMENTIVE PERFORMANCE MATERIALS INC. ..... Plaintiff
+Through: Appearance not given.
+versus
+BALAJI BIO CORP CHEMICALS, ..... Defendant
+Through: Mr. Pallav Gupta, Advocate (through
+VC).
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 28.03.2024
+1. Hon’ble Judge is on leave today.
+2. Renotify on 08th August, 2024.
+3. Order be uploaded on the website of this Court.
+BY ORDER
+(COURT MASTER)
+MARCH 28, 2024/kct
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:39
+
+===== ORDER =====
+
+Not Available (Error: Could not read PDF)
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 931/2023 & I.A. Nos. 25917/2023 & 33129/2024
+MOMENTIVE PERFORMANCE MATERIALS INC. .....Plaintiff
+Through: Mr. Prajjwal Kushwaha, Advocate.
+(M): 7791065506
+versus
+BALAJI BIO CORP CHEMICALS .....Defendant
+Through: Mr. Pallav Gupta, Advocate.
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 08.08.2024
+1. Notice in I.A. No. 33129/2024, being an application for summary
+judgment filed on behalf of the plaintiff, was issued on the last date of
+hearing.
+2. Mr. Pallav Gupta, Advocate puts in appearance on behalf of the
+defendant, and submits that he has not received copy of the said application.
+3. Accordingly, plaintiff is directed to provide a copy of the application
+to learned counsel appearing for the defendant.
+4. Let reply be filed by the defendant within a period of four weeks.
+Rejoinder thereto, if any, be filed within a period of two weeks, thereafter.
+5. List on 11th December, 2024.
+/
+MINI PUSHKARNA, J
+AUGUST 8, 2024/c
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:38
+
+===== ORDER =====
+
+$~33
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 931/2023 & I.A. Nos. 25917/2023 & 33129/2024
+MOMENTIVE PERFORMANCE MATERIALS INC. .....Plaintiff
+Through: Mr. Saif Khan with Mr. Prajjwal
+Kushwaha, Advocates.
+(M): 7791065506
+versus
+BALAJI BIO CORP CHEMICALS, .....Defendant
+Through: Mr. Pallav Gupta with Mr. Ajit Nair,
+Advocates.
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 11.12.2024
+1. Learned counsel appearing for the defendant submits that reply in I.A.
+No. 33129/2024 has been filed yesterday. However, the same is not on
+record.
+2. Let steps be taken by the defendant to have the reply on record.
+3. Accordingly, list on 24th March, 2025.
+MINI PUSHKARNA, J
+DECEMBER 11, 2024
+c
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:37
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 931/2023
+MOMENTIVE PERFORMANCE MATERIALS INC.
+.....Plaintiff
+Through: Ms. Meghana Kudligi (VC),
+Advocate
+versus
+BALAJI BIO CORP CHEMICALS .....Defendant
+Through: Mr. Ajit Nair (VC), Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 07.03.2025
+I.A. No. 6208/2025 on behalf of the defendant for condoning
+the delay of 96 days in filing of reply to I.A. no. 33129/2024
+filed on behalf of the plaintiff.
+1. Issue notice. Notice accepted by ld. Counsel for the
+plaintiff who submits that if the delay is to be condoned, same
+should be subject to a reasonable cost.
+2. For the reasons stated in the application, application is
+allowed subject to cost of Rs. 5000/-, to be paid to the plaintiff /
+counsel for the plaintiff within three weeks failing which the
+reply shall be deemed to have been taken off the record. Proof
+of payment be furnished with the Registry. Delay stands
+condoned. Reply to IA No. 33129/2024 is taken on record. IA
+stands disposed off.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 7, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:37
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 931/2023 and I.A. 25917/2023
+MOMENTIVE PERFORMANCE MATERIALS INC. .....Plaintiff
+Through: Mr. Saif Khan, Mr. Shobhit Agarwal
+and Mr. Prajjwal Kushwaha, Advocates.
+versus
+BALAJI BIO CORP CHEMICALS, .....Defendant
+Through: None.
+CORAM:
+HON'BLE MS. JUSTICE JYOTI SINGH
+O R D E R
+% 24.03.2025
+I.A. 33129/2024
+1. Reply filed by the Defendant to the application is not on record. Let
+the same be brought on record positively before the next date of hearing. If
+the reply is not filed, the same will be taken on record subject to payment of
+costs of Rs.10,000/- to the Plaintiff.
+2. List on 22.04.2025.
+3. Interim order to continue, till the next date of hearing.
+JYOTI SINGH, J
+MARCH 24, 2025
+B.S.Rohella
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:36
+
+===== ORDER =====
+
+$~31
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 931/2023, I.A. 25917/2023-Stay,
+MOMENTIVE PERFORMANCE MATERIALS INC. .....Plaintiff
+Through: Advocate (appearance not given)
+versus
+BALAJI BIO CORP CHEMICALS, .....Defendant
+Through: Mr. Pallav Gupta, Advocate
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 22.04.2025
+I.A. 33129/2024-By plaintiff for summary judgment
+1. Learned counsel for the defendant submits that all the objections in
+the reply have been removed and the costs of Rs.5,000/- and Rs.10,000/-
+imposed vide orders dated 07.03.2025 and 24.03.2025 respectively have
+also been paid.
+2. Subject to the defendant filing the proof(s) of the aforesaid costs
+being duly paid, let the reply by the defendant be taken on record.
+3. At this stage, leaned counsel for the defendant prays for referring
+the parties for mediation before the Delhi High Court Mediation and
+Conciliation Centre (DHCMCC), to which learned counsel for the plaintiff
+has no objection.
+4. In view of the submissions made, the parties are referred to the
+DHCMCC.
+5. List before the DHCMCC on 30.04.2025, wherein the parties/ their
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:36
+representatives/ counsels will appear either through video conferencing or
+physically.
+6. List before this Court on 30.07.2025.
+SAURABH BANERJEE, J
+APRIL 22, 2025/akr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:36
+
+===== ORDER =====
+
+$~32
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 931/2023 with I.A. 25917/2023 & I.A. 33129/2024
+MOMENTIVE PERFORMANCE MATERIALS
+INC. .....Plaintiff
+Through: Ms. Meghana Kudligi, Advocate.
+versus
+BALAJI BIO CORP CHEMICALS, .....Defendant
+Through: Mr. Ayan Sharma and Ms. Sheena
+Munjal, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 30.07.2025
+1. The learned Counsel for the Parties submit that the Parties have
+finalized the Settlement Terms and the same is pending execution. The next
+date in the Mediation proceedings is 04.08.2025.
+2. At the joint request made by learned Counsel for the Parties, list on
+04.11.2025.
+TEJAS KARIA, J
+JULY 30, 2025
+ap
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:35
+
+===== ORDER =====
+
+$~240
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 931/2023
+MOMENTIVE PERFORMANCE MATERIALS INC.
+.....Plaintiff
+Through: None
+versus
+BALAJI BIO CORP CHEMICALS,
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared on behalf of the parties.
+Let this matter be sent back to the Hon’ble Court for further
+directions.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:34
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 931/2023, I.A. 25917/2023 & I.A. 33129/2024
+MOMENTIVE PERFORMANCE MATERIALS INC. .....Plaintiff
+Through: Mr. Saif Khan and Mr. Prajjwal
+Kushwaha, Advocates.
+versus
+BALAJI BIO CORP CHEMICALS, .....Defendant
+Through: Mr. Pallav Gupta, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 04.11.2025
+1. The learned Counsel for the Parties submit that the Parties have been
+able to arrive at a settlement agreement dated 13.08.2025 (“Settlement
+Agreement”).
+2. The Settlement Agreement received from the Delhi High Court
+Mediation and Conciliation Centre is placed on record.
+3. Accordingly, the Suit is decreed in terms of the Settlement Agreement.
+The Parties are directed to be bound by the terms of the Settlement
+Agreement. Let the Decree Sheet be drawn up accordingly.
+4. The Suit along with all the pending Applications stands disposed of.
+5. The learned Counsel for the Plaintiff seeks refund of the Court Fees.
+Considering that the matter has been settled through Mediation and further
+considering the hearings that have taken place in the matter, the Registry is
+directed to issue a Certificate of Refund of 50% of the Court Fees in favour
+of Plaintiff, in terms of Section 16A of the Court Fees Act, 1870.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:34
+6. It is however, made clear that in case any dispute arises between the
+Parties and in the event,either Party approaches this Court for enforcement of
+the Settlement Agreement / Decree, the said Party or Parties will become
+liable to pay the entire Court Fees thereon.
+TEJAS KARIA, J
+NOVEMBER 4, 2025/sms
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:34

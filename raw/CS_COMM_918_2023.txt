@@ -1,0 +1,612 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_918_2023
+case_status: DISPOSED
+n_orders: 4
+
+$~40
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 918/2023, I.As. 25750/2023, 25751/2023, 25752/2023,
+25753/2023, 25754/2023
+WINZO GAMES PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Abhishek Malhotra, Ms.
+Anukriti Trivedi, Mr. Kartikay Dutta,
+Advs. (M. 8979516789)
+versus
+HTTPS//VINZOGAME.COM & ANR. ..... Defendants
+Through: None.
+CORAM:
+JUSTICE PRATHIBAM. SINGH
+O R D E R
+% 20.12.2023
+1. This hearing has been done through hybrid mode.
+I.A. 25751/2023 (for exemption)
+2. This is an application filed by the Plaintiff seeking exemption from filing
+originals/certified/cleared/typed or translated copies of documents, proper
+margins, electronic documents, etc. Original documents shall be produced/filed
+at the time of Admission/Denial, if sought, strictly as per the provisions of the
+Commercial Courts, Commercial Division and Commercial Appellate Division
+of High Courts Act, 2015 (hereinafter, ‘Commercial Courts Act’) and the DHC
+(Original Side) Rules, 2018.
+3. Exemption is allowed, subject to all just exceptions. Accordingly,
+application is disposed of.
+I.A. 25752/2023 (for additional documents)
+4. This is an application seeking leave to file additional documents under
+the Commercial Courts Act, 2015. The Plaintiff, if it wishes to file additional
+CS(COMM)918/2023 Page1of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:41
+documents at a later stage, shall do so strictly as per the provisions of the
+Commercial CourtsAct and the DHC (Original Side) Rules, 2018.
+5. Application is disposed of.
+I.A. 25754/2023 (u/S 12A)
+6. This is an application filed by the Plaintiff seeking exemption instituting
+pre-litigation mediation under Section 12Aof the Commercial CourtsAct.
+7. Considering the facts and circumstances of the case, the Court is satisfied
+that in terms of the judgment of the Hon’ble Supreme Court in Yamini
+Manohar v. T.K.D Keerthi, (2023 LiveLaw (SC) 906), that the present suit
+contemplates urgent interim relief.
+8. Accordingly, the exemption is allowed and application is disposed of.
+I.A. 25753/2023 (for court fees)
+9. This is an application for extension of time to file a Court fee. Let the
+Court fee be deposited within one week. Injunction be issued subject to deposit
+of the court fee.
+10. Application is disposed of.
+CS(COMM) 918/2023
+11. Let the plaint be registered as a suit.
+12. Issue summons to the Defendants through all modes upon filing of
+Process Fee.
+13. The summons to the Defendants shall indicate that the written statement
+to the plaint shall be positively filed within 30 days from date of receipt of
+summons. Along with the written statement, the Defendants shall also file an
+CS(COMM)918/2023 Page2of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:41
+affidavit of admission/denial of the documents of the Plaintiffs, without which
+the written statement shall not be taken on record.
+14. Liberty is given to the Plaintiff to file the replication within 15 days of
+the receipt of the written statement. Along with the replication, if any, filed by
+the Plaintiff, an affidavit of admission/denial of documents of the Defendants,
+be filed by the Plaintiff, without which the replication shall not be taken on
+record. If any of the parties wish to seek inspection of any documents, the
+same shall be sought and given within the timelines.
+15. List before the Joint Registrar for marking of exhibits on 13th February,
+2024. It is made clear that any party unjustifiably denying documents would be
+liable to be burdened with costs.
+16. List before Court on 17th May, 2024.
+I.A. 25750/2023 (u/O XXXIX Rules 1 & 2 CPC)
+17. Issue notice in the application.
+18. The Plaintiff is a digital gaming and technology company founded in
+2016, with its registered office in New Delhi. It operates a popular online skill-
+based gaming and entertainment platform under the registered trade mark and
+brand name 'WinZO/WINZO'. Launched in February 2017, as per the Plaintiff,
+the platform has garnered over 100 million users, particularly in tier-2 cities
+and rural India. It is stated that Plaintiff’s platform WinZO is only available for
+and caters to users who are above 18 years of age, per its terms and conditions.
+WinZO is available only in those Indian states where skill gaming is allowed by
+statutory regulations. It claims to be the largest social gaming app in India in
+terms of the variety of games, vernacular languages and format of games
+CS(COMM)918/2023 Page3of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:41
+formats offered. The Plaintiff claims to have active users, who spend an
+average of 55 minutes per day on the platform, along with 3.5 billion
+microtransactions and over 1 billion monthly gameplays.
+19. As per the plaint, the mark ‘WinZO/WINZO’was conceived and adopted
+by the Plaintiff in 2017. It is an innovative and distinctive combination of the
+words ‘Win’ and ‘ZO’ (signifying speed and energy), and it represents the
+essence of the games available on the platform. The Plaintiff claims that goods
+and services under the said marks have gained immense popularity, goodwill,
+and reputation.
+20. The Plaintiff has various registered several marks, some of which were
+initially in the name of a former director, but have since been assigned to the
+Plaintiff through an assignment deed dated 5th April, 2019. The Plaintiff has
+shown a steady increase in annual revenue from 2016-17 to 2021-22, indicating
+the growing popularity of its services under the trade marks. For the financial
+year 2022-23, the annual revenue was more than Rs. 673 crores.
+21. Further, extensive marketing and advertising efforts have been made to
+promote the Plaintiff's goods and services bearing Plaintiff’s ‘WINZO’ marks.
+The said marks have been endorsed by celebrities like cricketer Akash Chopra,
+actor Sanjay Mishra, Kritika Kamra, Nikhil Chinappa, and Indian cricketer
+M.S. Dhoni. Collaborations include a nationwide TV commercial with actor
+Ranveer Singh for the movie ‘83’. For the year 2022-23, the Plaintiff claims to
+have expended more than Rs. 257 crores on advertisement expenditure.
+22. It is further averred that the Plaintiff was also a sponsor and participant at
+the Indian Game Developers Conference in November 2022. The significant
+CS(COMM)918/2023 Page4of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:41
+investment in promotional and marketing activities is evident from the annual
+advertisement expenditure, which has consistently increased over the years.
+23. It is also stated that Plaintiff has an extensive presence through the world
+wide web as its business is largely operated through online media. Among
+others, Plaintiff owns the following domain names comprising the Trade Mark
+WinZO/WINZO as listed in paragraph 18 of the plaint.
+24. The Plaintiff claims common law and statutory rights in respect of its
+marks. It claims to have applied for various marks, including marks ‘WinZO’
+and ‘WinZO Games’, and other ‘WINZO’ formatives/variant marks in respect
+of mobile applications, online gaming, services relating to business
+administrations telecommunications services and design and development of
+hardware and software services falling under classes 9,35, 38, 41 & 42. The
+complete details of Plaintiff’s resisted marks are provided in paragraph 10 of
+the Plaint. The details of some of the Plaintiff’s ‘WINZO’ marks are extracted
+below:
+CS(COMM)918/2023 Page5of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:41
+25. The grievance of the Plaintiff in the present suit is that the Defendant-
+https://vinzogame.com has been registered by unknown persons through
+NameCheap Inc. which is a Domain Name Registrar (hereinafter, ‘DNR’).
+According to the Plaintiff, on the said https://vinzogame.com website, the
+Defendant No.1 is offering gambling services as is evidenced from the
+screenshots below:-
+CS(COMM)918/2023 Page6of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:41
+CS(COMM)918/2023 Page7of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:41
+26. It is stated that Defendant No. 1 claims that it is a company, which
+provides betting services since 2020 and is gaining popularity due to having the
+highest odds on live games. It refers itself to as a bookmaker i.e., which is a
+bookie that accepts bets on live sporting events. Defendant No. 2 is an entity
+named ‘Namecheap Inc’, which appears to be an ICANN-accredited domain
+name registrar providing domain name registration based in Arizona, United
+States of America. Further investigation by the Plaintiff revealed that the
+infringing website was easily accessible in India through world wide web, and
+provides services for gambling and betting.
+27. Further, a perusal of the Defendant No.1’s website would show that
+though the actual location of the Defendant No. 1 is not available, and that the
+Defendant No. 1 is collecting money through various Apps which are available
+in India i.e., PhonePe, UPI, GPAY, IMPS etc., including seeking deposits in
+INR which is evidence from the following screenshots:-
+CS(COMM)918/2023 Page8of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:41
+28. The name “VinZOgame” and the mark “VinZO” used by the Defendants
+are almost phonetically and ocularly identical to Paintiff’s mark ‘WINZO’.
+Considering the reputation of the Plaintiff in the gaming industry, the use of the
+domain name or the website https://vinzogame.com would be not only violative
+of the Plaintiff’s statutory and common law rights but also is likely to result in
+confusion amongst the internet users who may presume that Defendants to be
+connected to the Plaintiff. Moreover, the nature of the services that are being
+offered would also involve high monetary stakes and Defendants, therefore, are
+liable to be injuncted by an interim order.
+29. In view of this position, there is a serious possibility of the said domain
+name is being misused, considering that the Plaintiff operates a gaming app
+under identical marks. The mark ‘WINZO’being a registered trade mark of the
+Plaintiff and the Plaintiff being a globally renowned gaming platform, misuse
+of the name would be impermissible. The Defendants are clearly are taking
+shelter under the technological tools to stay hidden, while continuing to operate
+the platform. Defendants’use of a similar name/ mark not only raises concerns
+about potential confusion but also suggests an attempt to free ride on the
+Plaintiff’s established reputation.
+30. Accordingly, the Plaintiffs has made a prima facie case for grant of an
+injunction. The balance of convenience also clearly lies in favour of the
+Plaintiff. Further, irreparable injury shall be caused not just to the Plaintiff, but
+maybe caused to the public at large as well, as the said websites may extract
+money and deceive the customers in the garb of Plaintiff’s reputation.
+CS(COMM)918/2023 Page9of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:41
+Therefore, the Plaintiffs have made out a case for the grant of an ex-parte ad-
+interim injunction against the Defendants.
+31. Under such circumstances, Defendant No. 1 is restrained from using the
+mark ‘VinZO’, ‘VinZOgame’, the domain name https://vinzogame.com and
+any other mark or name which is similar to the Plaintiff’s marks for offering
+any products or services including for gaming websites, gambling services,
+betting etc.,
+32. Defendant No. 2 is directed to give disclosure of the person or entity who
+had registered the said domain name to the Plaintiff within two weeks as also
+lock and suspend the said domain name so that the access to the domain name
+is not available.
+33. Reply to the application be filed within four weeks after service of
+pleadings and documents.
+34. Compliance under Order XXXIX Rule 3 within one week.
+35. List before the Joint Registrar on 13th February, 2024.
+36. List before the Court on 17th May, 2024.
+PRATHIBAM. SINGH, J.
+DECEMBER 20, 2023
+mr/bh
+CS(COMM)918/2023 Page10of10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:41
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 918/2023
+WINZO GAMES PRIVATE LIMITED
+..... Plaintiff
+Through: Ms. Anukriti Trivedi (VC),
+Advocate
+versus
+HTTPS//VINZOGAME.COM & ANR.
+..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 13.02.2024
+CS(COMM) 918/2018 & I.A. No. 25750/2023 (u/O XXXIX
+Rules 1 & 2 CPC):
+Defendants have been served as per the affidavit of service.
+Defendant no. 1 has been served through email on 22.12.2023
+whereas defendant no. 2 (resident of U.S.A.) has been served
+through speed post on 19.01.2024. Let the written statement/s be
+filed as per rules with an advance copy of the same to the opposite
+side. Replication thereto be filed as per rules thereafter.
+Put up for completion of pleadings on 24.04.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 13, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:41
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 918/2023
+WINZO GAMES PRIVATE LIMITED ..... Plaintiff
+Through: Ms. Anukriti Trivedi, Ms. Srishti
+Gupta, Mr. Kartikay Dutta,
+Advocates
+versus
+HTTPS//VINZOGAME.COM & ANR. .... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 24.04.2024
+CS(COMM) 918/2018 & I.A. No. 25750/2023 (u/O XXXIX
+Rules 1 & 2 CPC).
+Today is the 124th day from the date of service of
+summons on defendant no. 1 which was served through email on
+27.02.2024. No written statement has been preferred till date.
+Consequently, right to file written statement for defendant no. 1
+stands closed.
+Defendant no. 2 has been served with summons on
+19.01.2024. Let the written statement be filed as per rules with
+an advance copy of the same to the opposite side. However, there
+is no appearance on behalf of the defendants.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 17.05.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 24, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:40
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 918/2023 & I.A. 25750/2023
+WINZO GAMES PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Abhishek Malhotra and Mr.
+Kartikay Dutta, Advocates.
+versus
+HTTPS//VINZOGAME.COM & ANR. ..... Defendants
+Through: None.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 17.05.2024
+1. The Plaintiff, a digital gaming and technology company established in
+the year 2016, is headquartered in New Delhi. It operates under the
+registered trademark “WinZO”/ “WINZO”, managing a widely popular
+online platform that offers skill-based gaming and entertainment. The
+Plaintiff is recognized as India’s largest social gaming app, distinguished by
+its diverse range of games, variety of vernacular languages, and multiple
+game formats. In compliance with legal regulations, Plaintiff’s services are
+available exclusively in those Indian states where skill gaming is permitted.
+Additionally, the services are accessible only to users who are 18 years of
+age or older, in accordance with the company's terms and conditions.
+2. The Plaintiff conceived and adopted the trademark “WinZO”/
+“WINZO” in the year 2017. It is a distinctive and innovative amalgamation
+of ‘Win’ and ‘ZO’ (which symbolizes speed and energy), capturing the
+essence of the games offered on the platform.
+CS(COMM) 918/2023 Page 1 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:39
+3. The Plaintiff has secured several registrations for the trademark
+“WINZO” and related formative marks1 under the Trade Marks Act, 19992.
+Details of the Plaintiff’s trademark registrations are provided in Paragraph
+No. 10 of the plaint. The Plaintiff asserts both common law and statutory
+rights in respect of the WINZO Marks. Notably, some of these registrations
+which were originally in the name of the Plaintiff’s former director, have
+been officially assigned to the Plaintiff through an assignment deed dated 5th
+April, 2019. Additionally, the Plaintiff maintains a substantial online
+presence as the registered owner of several domain names that include the
+mark “WINZO”, with specifics outlined in Paragraph No. 18 of the plaint.
+4. Since its inception in February 2017, the goods and services under the
+WINZO Marks have amassed considerable popularity, goodwill, and
+reputation. The platform has rapidly grown to over 100 million registered
+users, with more than 30 million Monthly Active Users. Demonstrating a
+consistent upward trend, the Plaintiff’s annual revenue has increased each
+year since 2016-17, reaching an impressive INR 673 crores in the financial
+year 2022-233. In addition to its financial success, the Plaintiff has invested
+heavily in marketing, advertising, and promoting its goods and services
+bearing the WINZO Marks4. High-profile endorsements include
+collaborations with Indian cricket legend M.S. Dhoni and popular
+YouTubers such as Carry Minati and Bhuvan Bam. The brand’s visibility
+was further enhanced by a nationwide TV commercial featuring actor
+Ranveer Singh for the movie ‘83’. Moreover, the Plaintiff has actively
+participated in prominent industry events, including sponsoring the Indian
+Game Developers Conference in November 2023.
+1 “WINZO Marks”
+2 “the Act”
+3 Details of Plaintiff’s annual revenue figures are mentioned in Paragraph No. 11 of the plaint.
+4 Details of Plaintiff’s year-wise advertisement expenses are mentioned in Paragraph No. 15 of the plaint.
+CS(COMM) 918/2023 Page 2 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:39
+5. The Plaintiff’s primary grievance in the present suit concerns the
+registration of the domain name https://vinzogame.com, which was
+registered by unknown individuals through Defendant No. 2, NameCheap
+Inc., acting as the Domain Name Registrar (DNR). The website associated
+with this domain name offers gambling services, a fact substantiated by the
+screenshots provided below:
+6. Defendant No. 1 purports to be a company that has been providing
+betting services since the year 2020, referring to itself as a “bookie” that
+accepts bets on live sporting events. The company has been gaining traction
+by offering the ‘highest odds’ on live games. The Plaintiff’s further
+CS(COMM) 918/2023 Page 3 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:39
+investigation revealed that the infringing website, easily accessible in India
+via the World Wide Web, does not disclose its actual location. Despite this,
+Defendant No. 1 has been actively collecting money by soliciting deposits in
+INR through various Indian payment platforms, including PhonePe, UPI,
+GPAY, and IMPS. Screenshots of Defendant No. 1’s website demonstrating
+these activities have been filed along with the plaint.
+7. The Plaintiff has initiated this suit, alleging that Defendant No. 1’s use
+of “VinZO” constitutes both an infringement and a dilution/ tarnishment of
+the Plaintiff’s previously registered WINZO Marks. The marks in question
+are visually and phonetically identical or deceptively similar, leading to
+potential confusion and association with the Plaintiff’s established brand
+identity.
+8. On 20th December, 2023, finding a prima facie case in favour of the
+Plaintiff, this Court granted an ex-parte ad-interim injunction, restraining the
+Defendant No. 1 to the following effect:
+“31. Under such circumstances, Defendant No. 1 is restrained from using
+the mark ‘VinZO’, ‘VinZOgame’, the domain name
+https://vinzogame.com and any other mark or name which is similar to
+the Plaintiff’s marks for offering any products or services including for
+gaming websites, gambling services, betting etc.,”
+9. The summons were duly served on Defendant No. 1 on 22nd December,
+2023, and on Defendant No. 2 on 19th January, 2024, as recorded in order
+dated 13th February, 2024. Despite being served, neither Defendant has made
+an appearance nor filed any pleadings. The condonable period of 120 days
+for Defendant No. 1 to submit a written statement has lapsed, resulting in the
+closure of their right to do so, as ordered on 24th April, 2024. Regarding
+Defendant No. 2, the 120-day period will expire tomorrow, on 18th May
+2024. Given that Defendant No. 1 is the primary contesting party and
+Defendant No. 2 was included solely to comply with court orders, the Court
+has proceeded with hearing the present suit ex parte.
+CS(COMM) 918/2023 Page 4 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:39
+10. The documentation submitted into evidence conclusively affirms the
+Plaintiff's ownership of the WINZO Marks. The mark “VinZO”, used by
+Defendant No. 1, bears an overwhelming similarity to the Plaintiff's
+registered trademark “WinZO” — phonetically, visually, and structurally.
+The slight alteration—changing ‘W’ to ‘V’—is trivial and fails to provide
+adequate distinction between the two marks. Additionally, the Plaintiff holds
+registrations for “WINZO GAMES”, which makes Defendant No. 1’s use of
+“VinZOgame” strikingly deceptive. Notably, the contentious domain name
+‘vinzogame.com’ was registered only on 1st March, 2023, whereas the
+Plaintiff has been actively using their mark since 2017, establishing them as
+the senior user. Given that the Plaintiff’s operations include a gaming app
+under similar marks, the utilization of ‘https://vinzogame.com’ by Defendant
+No. 1 not only infringes on the Plaintiff’s statutory and common law rights
+but also poses significant risks. The established reputation of the Plaintiff in
+the gaming sector heightens the likelihood of confusion among consumers,
+who may erroneously associate Defendant No. 1’s website with the Plaintiff.
+This confusion is particularly perilous given the financial stakes involved in
+the services offered on the impugned website, increasing the potential for
+consumer deception and financial harm. Therefore, it is imperative that the
+provisional injunction granted earlier be made permanent to uphold the
+integrity of the Plaintiff’s trademark rights and prevent further damage.
+11. In this Court’s opinion, since Defendant No. 1 has neither contested the
+suit nor placed any defence on record, and considering the Plaintiff’s well-
+established statutory rights in the WINZO Marks, there appears to be no
+constructive purpose in requiring the Plaintiff to present ex-parte oral
+evidence in this matter. This view is supported by the reasoning of this Court
+in Disney Enterprises Inc. v. Balraj Muttneja5. Furthermore, under Order
+5 2014 SCC OnLine Del 781
+CS(COMM) 918/2023 Page 5 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:39
+VIII Rule 10 of the Code of Civil Procedure, 1908 (CPC), the Court is
+empowered to pronounce judgment where any party, from whom a written
+statement is required under Order VIII Rules 1 or 9 of CPC, fails to present
+the same within the time permitted or fixed by the Court. Since the
+Defendants have opted not to participate in the present proceedings despite
+service, they cannot be allowed to enjoy a premium for their dishonesty. In
+this regard, reliance is placed on the following observations of this Court in
+M/s Inter Ikea Systems BV v. Imtiaz Ahamed & Anr.6:
+“20. The court is mindful of the fact that in such a situation
+where the defendant chooses to stay away from the court
+proceedings, he should not be permitted to enjoy the benefits of
+such an evasion. Any view to the contrary would result in a
+situation where a compliant defendant who appears in court
+pursuant to summons being issued, participates in the
+proceedings and submits his account books, etc., for
+assessment of damages, would end up on a worse footing, vis-a-
+vis a defendant who chooses to conveniently stay away after
+being served with the summons in the suit. That was certainly
+not the intention of the Statute. Section 135 (1) of the Trademarks
+Act, 1999 provides that relief that may be granted in any suit for
+infringement of or for passing off includes injunction and at the
+option of the plaintiff, either damages or an account of profits.
+The plaintiffs in the present case have opted for claiming
+damages and have established beyond doubt that they have
+suffered damages on account of the conduct of the defendants
+which are a result of infringement of their trademark and
+copyright.”
+12. In light of the aforesaid, Defendant No. 1, and/or anybody acting on
+their behalf, is permanently injuncted from using the marks “VinZO”/
+“VinZOgame” and/or or any other mark that is identical or deceptively similar
+to the Plaintiff’s registered WINZO Marks, in either offline or online media,
+including as part of their domain names, websites, applications or any other
+6 2016 SCC OnLine Del 6717
+CS(COMM) 918/2023 Page 6 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:39
+digital platforms, so as to amount to infringement or dilution/ tarnishment/
+disparagement of the Plaintiff’s registered WINZO Marks.
+13. It is further directed that Defendant No. 2, Namecheap Inc., the DNR of
+the impugned domain name, shall transfer the domain name
+“vinzogame.com” to the Plaintiff. For the said purpose, a copy of this order
+shall be communicated by the Plaintiff to the DNR, who shall give effect to
+the same within 72 hours of receiving the same.
+14. The suit is decreed in the above terms. Mr. Abhishek Malhotra, counsel
+for Plaintiff, does not press for any other reliefs.
+15. Decree sheet be drawn up.
+16. With the above directions, the suit, along with pending applications, is
+disposed of.
+SANJEEV NARULA, J
+MAY 17, 2024
+as
+CS(COMM) 918/2023 Page 7 of 7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:39

@@ -1,0 +1,848 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_906_2023
+case_status: DISPOSED
+n_orders: 14
+
+$~44
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 906/2023, I.As. 25643/2023, 25644/2023, 25645/2023,
+25646/2023 & 25647/2023, 25648/2023
+DFM FOOD LTD ..... Plaintiff
+Through: Mr. Dhruv Anand, Ms. Udita Patro,
+Ms. Sampurnaa Sanyal and Ms
+Nimrat Singh, Advs. (M.
+9313399860)
+versus
+GUILTFREE INDUSTRIES LIMITED & ORS. ..... Defendants
+Through: None.
+CORAM:
+JUSTICE PRATHIBAM. SINGH
+O R D E R
+% 19.12.2023
+1. This hearing has been done through hybrid mode.
+I.A. 25645/2023 (for additional document)
+2. This is an application filed by the Plaintiff seeking leave to file
+additional documents under the Commercial Courts, Commercial Division
+and Commercial Appellate Division of High Courts Act, 2015 (hereinafter,
+‘Commercial Courts Act’). The Plaintiff, if it wishes to file additional
+documents at a later stage, shall do so strictly as per the provisions of the
+Commercial Courts Act and the DHC (Original Side) Rules, 2018.
+3. The application is disposed of.
+I.A.25646/2023 (for exemption)
+4. This is an application seeking exemption from filing
+originals/certified/cleared/typed or translated copies of documents, left side
+margins, electronic documents, etc. Original documents shall be
+CS(COMM)906/2023 Page1of8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:21
+produced/filed at the time of Admission/Denial, if sought, strictly as per the
+provisions of the Commercial Courts Act and the DHC (Original Side)
+Rules, 2018.
+5. Exemption is allowed, subject to all just exceptions.
+6. Accordingly, the application is disposed of.
+I.A.25648/2023 (u/S 12A of the Commercial Courts Act)
+7. This is an application filed by the Plaintiff seeking exemption
+instituting pre-litigation mediation under Section 12A of the Commercial
+Courts Act. Considering the facts and circumstances of the case, the Court
+is satisfied that in terms of the judgment of the Hon’ble Supreme Court in
+Yamini Manohar v. T.K.D Keerthi, (2023 LiveLaw (SC) 906), that the
+present suit contemplates urgent interim relief.
+8. The exemption is granted to the Plaintiff. Accordingly, the
+application is disposed of.
+I.A. 25647/2023 (for court fees)
+9. Court fee is stated to be filed. Let the stamp be filed within one
+week. Accordingly, the application is disposed of.
+CS (COMM) 906/2023
+10. Let the plaint be registered as a suit.
+11. Issue summons to the Defendants.
+12. The written statement to the plaint shall be positively filed within 30
+days from date of receipt of summons. Along with the written statement,
+the Defendants shall also file an affidavit of admission/denial of the
+CS(COMM)906/2023 Page2of8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:21
+documents of the Plaintiff, without which the written statement shall not be
+taken on record.
+13. Liberty is given to the Plaintiff to file a replication within 15 days of
+the receipt of the written statement. Along with the replication, if any, filed
+by the Plaintiff, an affidavit of admission/denial of documents of the
+Defendants, be filed by the Plaintiff, without which the replication shall not
+be taken on record. If any of the parties wish to seek inspection of any
+documents, the same shall be sought and given within the timelines.
+14. List before the Joint Registrar for marking of exhibits on 13th
+February, 2024. It is made clear that any party unjustifiably denying
+documents would be liable to be burdened with costs.
+15. List before Court on 13th May, 2024.
+I.A. 25643/2023 (u/O XXXIX Rules 1 & 2 CPC) and I.A. 25644/2023
+(seeking discovery)
+16. Issue notice.
+17. The present suit has been filed by the Plaintiff- DFM Foods Ltd.,
+seeking an injunction against the Defendants- Guiltfree Industries Limited
+and other retailers from using the trademark ‘CURLS’ in respect of snack
+food products. The case of the ld. Counsel for the Plaintiff is that it is one
+of the leading manufacturer and seller of various snacks products under the
+marks CRAX, CURLS, FRITTS and NATKHAT as well as traditional
+namkeens such as Bhujiyas, Mixtures, Daals and Nut Mixes.
+18. The Plaintiff claims to have launched iconic ‘CRAX’ rings in 1984
+which became extremely popular amongst children. The present suit relates
+CS(COMM)906/2023 Page3of8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:21
+to the products of the Plaintiff ‘CURLS’ which is stated to have been
+launched by the Plaintiff in December, 2016 followed by a nation-wide
+launch in March 2017. The ‘CURLS’ product is an extruded corn snack
+product having a distinctive packaging. The trademark ‘CURLS’ has also
+been registered by the Plaintiff in Class 30 in two forms i.e. ‘CURLS’ and
+‘CRAX CURLS’. The details of which are as under:-
+Sr. Trademarks Registration Class Valid up to
+No. No.
+1. 3164035 30 20.01.2026
+2. CRAX CURLS 3667345 30 01.11.2027
+19. The sales of the products sold under the mark ‘CURLS’ are claimed
+to be more than INR 167 crores in 2022-2023 and the marketing and
+advertising expenditures about INR 21.5 crores till date. Ld. Counsel for
+the Plaintiff submits that this is one of the most popular products of the
+Plaintiff which is sold at Rs.5/- and extremely popular, especially, amongst
+children.
+20. Further, it is stated that the Plaintiff has repeatedly enforced its rights
+against the third party use of the said marks.
+21. The Defendant No. 1 Guiltfree Industries Limited, which is a part of
+R.P. Sanjiv Goenka FMCG group is stated to be selling snack products
+CS(COMM)906/2023 Page4of8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:21
+under the mark ‘TOO YUMM’. However, recently, the Plaintiff was
+informed of launch of a product by the name ‘TOO YUMM CURLS’. The
+image of which is as under:-
+22. Immediately, the Plaintiff is stated to have an enquiry conducted and
+the investigator’s report has revealed that the said product has been soft
+launched in Kolkata and is likely to be launched across India soon.
+23. The said product has also been reflected in some third party
+YouTube videos. The Defendants have a large retail network across the
+country and the Plaintiff’s apprehension is that the products are likely to be
+launched very soon in Delhi as well.
+CS(COMM)906/2023 Page5of8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:21
+24. As per the investigator’s report the products are available in D-
+MART and SPENCERS in Kolkata already. Thus, it is prayed that an
+injunction ought to be granted.
+25. The facts and the documents would show that the trademark of the
+Plaintiff ‘CURLS’ is registered. The products of Defendants are identical to
+the Plaintiff’s products. The marks are identical and the businesses of the
+two companies are also identical. The competing product images are set out
+below:
+26. Under such circumstances, the adoption of the mark ‘CURLS’
+cannot be stated to be innocent.
+27. The present case is a case of TRIPLE IDENTITY as the mark is
+identical, the products are identical and the class of customers are identical.
+CS(COMM)906/2023 Page6of8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:21
+28. Further, in case of food products/ beverages – which are edibles
+consumed by different age groups, there ought to be additional caution, so |
+that these imitative attempts are curbed. This court relies on the judgement
+of Dominos Ip Holder LLC & Anr. vs Ms Dominick Pizza & Anr.
+(2023/DHC/7126), wherein it was held that Courts have, therefore, to be
+vigilant in ensuring that, where the marks relate to consumable items or to
+enterprises such as hotels, restaurants and eating houses where consumable
+items are served to customers, such imitative attempts are not allowed to go
+unchecked.The relevant portion is set out below:
+“36. The Court is inclined to note, here, that where the
+marks in question pertain to food items, or eateries where food
+items are dispensed and served, a somewhat higher degree of
+care and caution is expected to be observed. Running an eating
+house using a mark which is deceptively similar to a reputed
+mark does not speak well for the enterprise concerned. The
+intent to capitalise on the reputation of a known and
+established brand, by using a mark which is deceptively similar
+to the mark used by the brand, can, in a given case, give rise to
+a legitimate apprehension of quality compromise by the
+imitator. Courts have, therefore, to be vigilant in ensuring that,
+where the marks relate to consumable items or to enterprises
+such as hotels, restaurants and eating houses where
+consumable items are served to customers, such imitative
+attempts are not allowed to go unchecked.”
+29. Accordingly, the Plaintiff has made out a prima facie case for grant
+of an interim injunction. Considering the products in question are food
+products and edibles, the balance of convenience is also clearly in favour of
+the Plaintiff. Further, irreparable injury shall be caused not just to the
+Plaintiff, but maybe caused to the public at large as well, in case products
+CS(COMM)906/2023 Page7of8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:21
+with a deceptively similar mark as that of the Plaintiff are allowed to
+continue. These are consumable products which can be harmful to
+consumer health if the products are not manufactured as per food safety
+standards by the Defendants. Therefore, the Plaintiffs have made out a case
+for the grant of an ex-parte ad-interim injunction against the Defendants.
+30. Since the full-fledged launch of products are yet to take, the
+Defendant is restrained from manufacturing, selling or offering for sale
+snack products under the mark ‘TOO YUMM CURLS’, CURLS, or any
+other confusingly similar mark. If the Defendants have any manufactured
+stock already, they are free to move an application seeking permission to
+dispose of the said products.
+31. Compliance under Order XXXIX Rule 3 of CPC within one week.
+32. Reply to the application be filed within four weeks after service of
+pleadings and documents.
+33. List before Court on 13th May, 2024.
+PRATHIBA M. SINGH, J.
+DECEMBER 19, 2023
+mr/bh
+CS(COMM)906/2023 Page8of8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:21
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 906/2023
+DFM FOOD LTD
+..... Plaintiff
+Through: Ms. Sampurnaa Sanyal (VC),
+Advocate
+versus
+GUILTFREE INDUSTRIES LIMITED & ORS.
+..... Defendant
+Through: Mr. Nirupam Lodha, Mr. Gautam
+Wadhwa, Advocates for D-1.
+Mr. Dhruv Wadhwa, Shakti
+Pandey(VC), Advocates for D-5.
+Mr. Vihan Dang, Mr. Ujjawal
+Bhargava, Ms. Pragya Jain,
+Mr. Aditya Mathur, Advocates for
+D-6/Google.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 13.02.2024
+Presence has been put in on behalf of defendant nos. 1, 5 & 6.
+There is no clear service report regarding the service of summons on
+the defendants. Let the affidavit of service be filed within a week.
+In the meanwhile, defendants who have put in appearance shall file
+their written statement at the earliest, and as per rules.
+Put up for completion of pleadings on 24.04.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 13, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:20
+
+===== ORDER =====
+
+$~32
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 906/2023
+DFM FOOD LTD ..... Plaintiff
+Through: Mr. Dhananjay Khanna,
+Advocate
+versus
+GUILTFREE INDUSTRIES LIMITED & ORS.
+..... Defendant
+Through: Mr. Gautam Wadhwa, Advocate
+for D-1.
+Mr. Gaurav Arora (VC),
+Advocate for D-5/Applicant.
+Mr. Vihan Dang, Mr. Aditya
+Mathur, Ms. Pragya Jain,
+Advocates for D-6 / Google
+LLC.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 18.03.2024
+I.A. No. 6278/2024 on behalf of defendant no. 5 i.e. Geeta
+Polymers Private Limited for its deletion.
+Issue notice. Notice accepted by the ld. Counsel for the
+plaintiff. Let reply be filed within three weeks, with an advance
+copy of the same to the opposite side. Rejoinder thereto, if any,
+be filed thereafter within two weeks of receiving the copy of
+advance reply.
+Put up for completion of pleadings on 24.04.2024, the date
+already fixed.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 18, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:20
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 906/2023
+DFM FOOD LTD ..... Plaintiff
+Through: Ms. Nimrat Singh, Advocate
+versus
+GUILTFREE INDUSTRIES LIMITED & ORS.
+..... Defendant
+Through: Mr. Gautam Wadhwa (VC),
+Advocate for D-1
+Mr. Dhruv Wadhwa, Mr. Shakti
+Pandey, Mr. Gaurav Arora (VC),
+Advocates for D-5
+Mr. Ujjawal Bhargava, Advocate
+for D-6.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 24.04.2024
+I.A. No. 6278/2024 on behalf of defendant no. 5 i.e. Geeta
+Polymers Private Limited for its deletion.
+Final opportunity is granted to the plaintiff to file a reply
+within two weeks failing which the right to file the same shall
+stand closed. On advance receipt of copy of the reply, rejoinder
+may be filed within a week.
+CS(COMM)-906/2023:
+No written statement has been filed by any of the
+defendants. Settlement talks are ongoing between the plaintiff
+and defendant no. 1 which is stated to be the main defendant.
+Let the respective written statements be filed as per rules
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:19
+with an advance copy of the same to the opposite side.
+Ld. Counsel for the plaintiff submits that she shall seek
+instructions by the next date of hearing for deletion of defendant
+no. 6 which is an intermediatory and had already complied with
+the Hon’ble Court’s order.
+Matter is already listed before the Hon’ble Court for
+13.05.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 13.05.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 24, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:19
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 906/2023
+DFM FOOD LTD .... Plaintiff
+Through: Mr. Dhananjay Khanna (VC),
+Advocate
+versus
+GUILTFREE INDUSTRIES LIMITED & ORS.
+..... Defendant
+Through: Mr. Gautam Wadhwa, Advocate
+for D-1.
+Mr. Ujjawal Bhargava (VC),
+Advocate for D-6
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 09.05.2024
+I.A. No. 10575/2024 on behalf of defendant no. 6 seeking
+condonation of delay of 89 days in filing the written
+statement.
+Issue notice.
+Notice accepted by ld. Counsel for the plaintiff.
+Ld. Counsel for the plaintiff submits that he has no
+objection if the application is allowed.
+For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the plaintiff, application is
+allowed. Delay stands condoned. Written statement is taken on
+record. Replication be filed within the period permissible, as
+worked out from today.
+IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 9, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:19
+
+===== ORDER =====
+
+$~33
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 906/2023 & I.A. 25643-25644/2023, I.A. 6278/2024,
+I.A. 10575/2024
+DFM FOOD LTD ..... Plaintiff
+Through: Ms. Sampurna Sanyal, Advocate.
+versus
+GUILTFREE INDUSTRIES LIMITED & ORS. ..... Defendants
+Through: Mr. Gautam Wadhwa, Advocate for
+D-1.
+Mr. Gaurav Arora and Mr. Shakti
+Pandey, Advocates for D-5.
+Mr. Aditya Mathur, Advocate for D-
+6.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 13.05.2024
+1. It is already 04:45 PM. Due to paucity of time, it is not possible to
+take up this matter today.
+2. Re-notify on 16th October, 2024.
+SANJEEV NARULA, J
+MAY 13, 2024
+d.negi
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:18
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 906/2023& I.A. 25643-25644/2023, I.A. 10575/2024
+DFM FOOD LTD .....Plaintiff
+Through: Ms Sampurwaa Sanyal, Advocate.
+versus
+GUILTFREE INDUSTRIES LIMITED & ORS. .....Defendants
+Through: Mr Gautam Wadhwa, Advocate for
+D-1.
+Mr Gaurav Arora, Advocate for D-5.
+Mr Neel Mason, Mr Vihan Dang, Mr
+Ujjawal Bhargava, Mr Aditya Mathur
+and Ms Anuparna Chatterjee,
+Advocates for D-6.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 16.10.2024
+I.A. 6278/2024
+1. This application has been filed on behalf of the defendant no.5
+seeking deletion from the array of parties.
+2. It has been averred in application that the applicant/defendant no.5
+since the inception of its operations in the year 1999, has had no business
+dealing with the plaintiff and/or the defendants no.1 to 4, 6. It is further
+stated that the defendant no.5/applicant has never manufactured any
+products bearing the mark ‘CURLS’.
+3. In view of the aforesaid averments made in the application, counsel
+for the plaintiff does not object to the defendant no.5/applicant being deleted
+from the array of parties.
+4. Accordingly, the present application is allowed and the defendant
+CS(COMM)906/2023 Page1of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:17
+no.5 is deleted from the array of parties.
+CS(COMM) 906/2023
+5. In the written statement filed on behalf of the defendant no.6, the
+defendant no.6 sought deletion from the array of parties as it is only a pro-
+forma party and not a proper or necessary party to the suit.
+6. Counsel for the plaintiff does not object to the same.
+7. In view of the above, in addition to deletion of the defendant no.5 as
+ordered above, defendant no.6 is also deleted from the array of parties.
+8. Amended memo of parties be filed.
+9. None appears on behalf of the defendant no.4 despite service.
+10. Accordingly, the defendant no.4 is proceeded against ex-parte.
+11. The report of the Registry shows that defendant no.2 and 3 are yet to
+be served.
+12. Upon the plaintiff taking steps, let fresh summons be issued to the
+defendants no.2 and 3.
+13. Counsel for the plaintiff submits that the plaintiff is in settlement talks
+with the defendant no.1.
+14. She submits that parties may be referred for mediation.
+15. Accordingly, the parties are referred for mediation to Delhi High
+Court Mediation and Conciliation Centre (Mediation Centre).
+16. Parties along with their respective counsel shall appear before the
+Mediation Centre on 22nd October, 2024 at 03:00 PM.
+17. List before the Court on 20th December, 2024 to await the outcome of
+the mediation proceedings.
+AMIT BANSAL, J
+OCTOBER 16, 2024/rt
+CS(COMM)906/2023 Page2of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:17
+
+===== ORDER =====
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 906/2023 with I.A. 25643/2023, I.A. 25644/2023, I.A.
+6278/2024 and I.A. 10575/2024
+DFM FOOD LTD .....Plaintiff
+Through: Mr. Dhruv Anand, Ms. Nimrat Singh
+and Mr. Dhananjay Khanna,
+Advocates
+versus
+GUILTFREE INDUSTRIES LIMITED & ORS. .....Defendants
+Through: Ms. Shivangi Narang, Advocate for
+D-1 to D-3
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 20.12.2024
+1. Counsel for the parties submit that mediation proceedings are still
+underway.
+2. Renotify on 26th March, 2025.
+AMIT BANSAL, J
+DECEMBER 20, 2024
+ds
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:17
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 906/2023 with I.A. 25643/2023, I.A. 25644/2023, I.A.
+6278/2024 and I.A. 10575/2024
+DFM FOOD LTD .....Plaintiff
+Through: Ms. Sampurnaa Sanyal, Advocate.
+versus
+GUILTFREE INDUSTRIES LIMITED & ORS. .....Defendants
+Through: Mr. Kshitij Parashar and Mr. Gautam
+Wadhwa, Advocates for D-1 to D-3.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 26.03.2025
+1. Mediation proceedings are still underway.
+2. Counsel for the parties submit that terms of the settlement have been
+substantially finalized.
+3. Re-notify on 14th July, 2025.
+AMIT BANSAL, J
+MARCH 26, 2025
+kd
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:16
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 906/2023 & I.A. 25643/2023, I.A. 25644/2023, I.A.
+6278/2024, I.A. 10575/2024
+DFM FOOD LTD .....Plaintiff
+Through: Ms. Sampurnaa Sanyal, Advocate.
+versus
+GUILTFREE INDUSTRIES LIMITED & ORS. .....Defendants
+Through: Mr. Nirupam Lodha, Mr. Kshitij
+Parashar & Mr. Gautam Wadhwa,
+Advocates for D-1.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 14.07.2025
+1. Counsel for the parties submit that the parties have principally settled
+their disputes before the Delhi High Court Mediation and Conciliation
+Centre.
+2. At the joint request of counsel for the parties, renotify on 01st August,
+2025.
+AMIT BANSAL, J
+JULY 14, 2025
+ds
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:16
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 906/2023 & I.As. 25643-44/2023, 6278/2024,
+10575/2024
+DFM FOOD LTD .....Plaintiff
+Through: Ms. Nimrat Singh, Advocate
+versus
+GUILTFREE INDUSTRIES LIMITED & ORS. .....Defendants
+Through: Mr. Gautam Wadhwa, Advocate for
+D-1
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 01.08.2025
+Learned counsels for the parties state that they have already executed
+a settlement agreement and will take steps to have the same placed on record
+within one (1) week.
+At request, list on 20.08.2025.
+MANMEET PRITAM SINGH ARORA, J
+AUGUST 1, 2025/rhc
+Page 1 of 1
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:15
+
+===== ORDER =====
+
+$~227
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 906/2023
+DFM FOOD LTD
+.....Plaintiff
+Through: Ms. Sampurnaa Sanyal, Adv. (VC)
+versus
+GUILTFREE INDUSTRIES LIMITED & ORS.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the defendant when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:15
+
+===== ORDER =====
+
+$~55
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 906/2023 & I.A. 25643/2023 I.A. 25644/2023 I.A.
+6278/2024 I.A. 10575/2024
+DFM FOOD LTD .....Plaintiff
+Through: Ms. Sampurna, Adv.
+versus
+GUILTFREE INDUSTRIES LIMITED & ORS. .....Defendants
+Through: Mr. Gautam Wadhwa, Adv. for D-1
+(Through VC)
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 20.08.2025
+List on 21.08.2025.
+MANMEET PRITAM SINGH ARORA, J
+AUGUST 20, 2025/hp
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:14
+
+===== ORDER =====
+
+$~50
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 906/2023 & I.As. 25643/2023, 25644/2023, 6278/2024,
+10575/2024
+DFM FOOD LTD .....Plaintiff
+Through: Mr. Dhruv Anand, Ms. Sampurnaa
+Sanyal, Ms. Udita Patro, Ms. Nimrat
+Singh and Mr. Dhananjay Khanna,
+Advocates
+versus
+GUILTFREE INDUSTRIES LIMITED & ORS. .....Defendants
+Through: Ms. Smriti Yadav, Mr. Nirupam
+Lodha, Mr. Dhiren Karania, Mr.
+Kshitij Parashar and Mr. Gautam
+Wadhwa, Advocates for D-1
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 21.08.2025
+1. The present suit has been filed by the Plaintiff/DFM Foods Ltd.,
+seeking an injunction against the Defendants/Guiltfree Industries Limited
+and other retailers from using the trademark ‘CURLS’ in respect of snack
+food products.
+2. This Court vide order dated 16.10.2024 recorded the submission of
+the counsel for the Plaintiff and referred the parties to mediation under the
+aegis of Delhi High Court Mediation and Conciliation Centre (Mediation
+Centre). The mediation has resulted in successful settlement of dispute
+between the Plaintiff and Defendant No.1.
+3. The Settlement Agreement dated 31.07.2025 (‘said agreement’)
+executed between the parties before the Delhi High Court Mediation and
+Conciliation Centre has been received from registry and placed on record.
+4. The material terms of the agreement are set out in Clauses ‘1’ to ‘7’ of
+CS(COMM) 906/2023 Page 1 of 3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:14
+the said agreement.
+5. Learned counsel for the Plaintiff and the Defendant No.1 states that
+the suit may be disposed of in terms of the said agreement and that the
+Plaintiff and Defendant No.1 shall remain bound by the terms of said
+agreement.
+6. This Court has heard the learned counsel for the Plaintiff and the
+Defendant No.1 and perused the Settlement Agreement dated 31.07.2025.
+7. The Supreme Court in Afcons Infrastructure Ltd. v. Cherian
+Varkey Construction Co. (P) Ltd1., while dealing with Section 89 of the
+CPC has observed that the settlement agreement will have to be placed
+before the Court for recording it and for disposing of the suit in terms of the
+settlement. It held that the Court should apply the principles of Order XXIII
+Rule 3 CPC and make a decree in terms of the settlement with regard to the
+subject matter of the suit, to make such settlement effective.
+8. This Court is satisfied that the compromise between the parties as
+contained in the aforesaid agreement satisfies the requirements of Order
+XXIII Rule 3 CPC and the same appears to this Court to be lawful.
+9. The statements and undertaking given by the parties are accepted by
+this Court and the parties i.e., Plaintiff and Defendant No. 1 are held bound
+by the same.
+10. Consequently, the captioned suit is decreed in terms of the Settlement
+Agreement dated 31.07.2025 executed between the parties.
+11. The Registry of this Court is directed to prepare a decree in terms of
+this order and it is directed that the Settlement Agreement dated 31.07.2025
+shall form part of the said decree.
+1 (2010) 8 SCC 24.
+CS(COMM) 906/2023 Page 2 of 3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:14
+Refund of Court Fee
+12. Learned counsel for the Plaintiff prays that in view of the settlement
+in mediation Court Fee may be refunded.
+13. Keeping in view the aforesaid facts, the registry is directed to refund
+100% Court Fee in favour of Plaintiff within four (4) weeks, in accordance
+with law. The said direction has been passed having regard to Section 16
+and 16A of the Court Fees Act, 1870, and the judgment of the Supreme
+Court in High Court of Judicature at Madras v. M.C. Subramaniam &
+Ors2.
+Withdrawal of suit against the Defendant Nos. 2 to 6
+14. Learned counsel for the Plaintiff states that in view of the settlement
+arrived between Plaintiff and Defendant No. 1, Plaintiff is not pressing its
+reliefs qua the remaining Defendant Nos. 2 to 6 and seeks liberty to
+withdraw the suit qua the said defendants. The statement of the learned
+counsel for the Plaintiff is taken on record.
+15. In view of the submission of the Plaintiff, the suit is dismissed as
+withdrawn qua Defendant Nos. 2 to 6, without liberty reserved.
+16. Pending applications, if any, stand disposed of.
+17. Future dates stand cancelled.
+18. The digitally signed copy of this order, duly uploaded on the official
+website of the Delhi High Court, www.delhihighcourt.nic.in, shall be treated
+as a certified copy of the order for the purpose of ensuring compliance. No
+physical copy of order shall be insisted by any authority/entity or litigant.
+MANMEET PRITAM SINGH ARORA, J
+AUGUST 21, 2025/rhc
+2 (2021) 3 SCC 560.
+CS(COMM) 906/2023 Page 3 of 3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:14

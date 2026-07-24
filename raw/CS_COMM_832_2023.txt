@@ -1,0 +1,1168 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_832_2023
+case_status: PENDING
+n_orders: 21
+
+$~75
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 832/2023 & I.A. 23016/2023, I.A. 23017/2023,
+I.A. 23018/2023, I.A. 23019/2023, I.A. 23020/2023, I.A.
+23021/2023, I.A. 23022/2023, I.A. 23023/2023, I.A.
+23024/2023
+EICHER MOTORS LIMITED ..... Plaintiff
+Through: Mr. Sandeep Sethi, Sr. Adv.
+with Mr. Peeyoosh Kalra, Mr. C.A. Brijesh,
+Mr. Krisna Gambhir, Ms. Simranjot Kaur
+and Ms. Riya Kumar, Advs.
+versus
+WWW.ROYALENFIELDDEALERSHIPS.IN & ORS.
+..... Defendants
+Through: Ms. Shweta Sahu, Adv. with
+Mr. Alipak Banerjee and Mr. Brijesh
+Ujjainwal, Advs. for D-11/Godaddy.Com,
+LLC
+CORAM:
+HON'BLE MR. JUSTICE C. HARI SHANKAR
+O R D E R
+% 20.11.2023
+CS(COMM) 832/2023
+1. The plaintiff is aggrieved by the acts of Defendants 1 to 7 in
+holding themselves out as agents of the plaintiff who can provide
+franchise dealerships of the plaintiff, through the following domain
+names/websites:
+IMPUGNED DOMAIN NAME DOMAIN NAME
+REGISTRAR
+www.royalenfielddealerships.in Endurance Digital Domain
+Technology LLP
+(Defendant 1)
+(Defendant 8)
+www.royalenfieldindia.com Atak Domain Bilgi
+CS(COMM) 832/2023 Page 1 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:24
+Teknolojileri A.S.
+(Defendant 2)
+(Defendant 9)
+www.royalenfieldgroup.co.in NameCheap Inc.
+(Defendant 3) (Defendant 10)
+www.royal-enfield.in GoDaddy.com, LLC
+(Defendant 4) (Defendant 11)
+www.royalenfieldindia.org.in Hostinger, UAB
+(Defendant 5) (Defendant 12)
+www.royalenfielddealership.in Hosting Concepts B.V.
+d/b/a Open provider
+(Defendant 6) (Defendant 13)
+www.royalenfielddealership.co.in Hostinger, UAB
+(Defendant 7) (Defendant 12)
+2. The plaintiff is the proprietor of the registered word marks
+ENFIELD, ROYAL ENFIELD and ROYAL ENFIELD with added
+suffixes. It holds these registrations from as far back as 1983.
+3. Under the said marks, the plaintiff manufactures and markets
+motorcycles which have attained renown and fame, under the brands
+Royal Enfield, Bullet, Enfield, Royal Enfield, Thunderbird, Classic
+etc.
+4. The plaintiff claims to have over 1094 large format stores and
+922 studio format stores in major cities and towns across India and to
+be selling through about 691 multi-brand outlets. It has over 810
+authorised dealers in India alone.
+5. Defendants 1 to 7, the plaint asserts, are not dealers of the
+plaintiff and have no authorisation to invite persons to be the
+plaintiff’s franchisees.
+CS(COMM) 832/2023 Page 2 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:24
+6. By misrepresenting themselves as persons who are authorised to
+provide franchises for the plaintiff, the plaint alleges that Defendants 1
+to 7 have been collecting huge amounts from the public. Paras 28 to
+38 of the plaint set out the details of various persons who have been
+duped by Defendants 1 to 7 into investing huge amounts with the hope
+of acquiring dealership of the plaintiff.
+7. Para 39 of the plaint alleges that the plaintiff’s marks are
+impugned additionally by the following four imposter domain names:
+Imposter domain names Impleaded as
+www.royal-enfield.in Defendant 4
+www.royalenfieldindia.org.in Defendant 5
+www.royalenfielddealership.in Defendant 6
+www.royalenfielddealership.co.in Defendant 7
+8. Predicated on these assertions, the plaintiff has approached this
+Court for a decree of permanent injunction, restraining Defendants 1
+to 7 as well as other unidentified defendants who have been impleaded
+as John Doe (Defendant 22) as well as all others acting on their behalf
+from representing themselves as persons authorised to provide
+dealerships or franchises of the plaintiff and from using, in any
+manner, the trade marks which stand registered in favour of the
+plaintiff.
+9. Further, the plaintiff prays that
+CS(COMM) 832/2023 Page 3 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:24
+(i) Defendants 8 to 13, who are domain name registrar
+(DNRs) of the impugned domain names
+www.royalenfielddealerships.in, www.royalenfieldindia.com,
+www.royalenfieldgroup.co.in, www.royal-enfield.in,
+www.royalenfieldindia.org.in, www.royalenfielddealership.in
+and www.royalenfielddealership.co.in be directed to block
+access and permanently suspend the domain names and disclose
+the particulars and KYC details of the registrants of the said
+domain names,
+(ii) Defendants 14 and 15 be directed to block the mobile
+number +91-8961699500, +91-9800059995, +91-8981039010
+and +91-8961259125 of which the mobile number +91-
+8961699500 belongs to Defendant 1, +91-9800059995 and
++91-8961259125 belong to Defendant 2 and +91-8981039010
+belongs to Defendant 3.
+(iii) Defendants 16 to 18 be directed to seize the bank
+accounts mentioned in para 44 of the plaint, wherein the
+amounts illegally earned by representing themselves as persons
+who provide dealerships of the plaintiff have been deposited by
+Defendants 1 to 7 and to provide details of the said account
+holders and documents relating to the said accounts including
+bank statements, registration forms etc., available with the said
+banks,
+(iv) Defendant 19 (Department of Telecommunications) and
+Defendant 20 (MEITY) be directed to issue notifications,
+calling on the internet and telephone service providers to block
+access to the aforesaid domain names and
+CS(COMM) 832/2023 Page 4 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:24
+(v) Defendant 21 (NIXI) be directed not to permit opening of
+any domain name consisting of any mark ROYAL ENFIELD,
+where “Royal” and “Enfield”, appear together,
+apart from damages and costs and the like.
+10. Para 44 of the plaint enlists the following bank accounts:
+Account No. Respective Bank
+0050200100006633 Punjab National Bank
+50100594001260 HDFC Bank
+7883000100046245 Punjab National Banck
+110123873232 Canara Bank
+7586000100077254 Punjab National Banck
+110136084014 Canara Bank
+110140089960 Canara Bank
+110136674561 Canara Bank
+7. Let the plaint be registered as a suit.
+8. Issue summons in the suit.
+9. Summons are accepted, on behalf of Defendant 11, by Ms.
+Shweta Sahu.
+10. Let summons issue to the remaining defendants by all modes.
+11. Written statement, accompanied by affidavit of
+admission/denial of the documents filed by the plaintiff be filed within
+30 days with advance copy to learned Counsel for the plaintiff who
+may file replication thereto, accompanied by affidavit of
+admission/denial of the documents filed by the defendant within 30
+days thereof.
+12. List before the learned Joint Registrar (Judicial) for completion
+CS(COMM) 832/2023 Page 5 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:24
+of pleadings, admission and denial of the documents and marking of
+exhibits on 23 January 2024, whereafter the matter would be placed
+before the Court for case management hearing and further
+proceedings.
+IA 23016/2023 [under Order XXXIX Rules 1 & 2 of the CPC]
+13. This is an application under Order XXXIX Rules 1 and 2 of the
+CPC, seeking interlocutory injunctive reliefs.
+14. Inasmuch as the facts of the case indicate, prima facie, that
+Defendants 1 to 7 are illegally holding themselves out as persons who
+are providing franchises of the plaintiff, and, on that basis, have
+defalcated large amounts of money from gullible members of the
+public, immediate injunctive orders are required to be passed.
+15. Issue notice.
+16. Notice is accepted, on behalf of Defendant 11, by Ms. Shweta
+Sahu.
+17. Notice be served on the remaining defendants by all modes.
+18. Reply, if any, be filed within four weeks with advance copy to
+learned Counsel for the plaintiff who may file rejoinder thereto, if any,
+within four weeks thereof.
+19. Till the next date of hearing, the following directions are
+passed:
+CS(COMM) 832/2023 Page 6 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:24
+(i) Defendants 1 to 7 as well as all others acting on their
+behalf shall stand restrained from using the mark ROYAL
+ENFIELD or any other deceptively similar variant thereof, for
+any purpose whatsoever.
+(ii) Defendants 8 to 13 are directed to lock and suspend
+access to the domain names www.royalenfielddealerships.in,
+www.royalenfieldindia.com, www.royalenfieldgroup.co.in,
+www.royal-enfield.in, www.royalenfieldindia.org.in,
+www.royalenfielddealership.in and
+www.royalenfielddealership.co.in and to disclose, on affidavit,
+the contact particulars and KYC details of the registrants of the
+said domain names.
+(iii) Defendants 14 and 15 are directed to block access to the
+mobile numbers +91-8961699500, +91-9800059995, +91-
+8981039010 and +91-8961259125 and to provide, on affidavit,
+details of the owners of the said mobile numbers.
+(iv) Defendants 16 to 18 are directed to seize, forthwith, the
+following bank accounts and also to provide details of the holders
+of the said accounts and to place on record the bank statements
+and registration form whereunder the said accounts were opened.
+Account No. Respective Bank
+0050200100006633 Punjab National Bank
+50100594001260 HDFC Bank
+7883000100046245 Punjab National Banck
+110123873232 Canara Bank
+7586000100077254 Punjab National Banck
+110136084014 Canara Bank
+CS(COMM) 832/2023 Page 7 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:24
+110140089960 Canara Bank
+110136674561 Canara Bank
+(v) Defendants 19 and 20 are directed to issue notifications,
+forthwith, calling upon internet and telecom service provides to
+block access to the aforenoted impugned domain names.
+20. Let compliance with Order XXXIX Rule 3 of the CPC be
+effected qua all the defendants, except Defendant 11, within a period
+of one week from today.
+21. List this application before the Court on 27 February 2024.
+22. Dasti.
+IA 23017/2023 [exemption from advance service]
+23. In view of the facts of this case, there is no question of effecting
+any advance service on the Defendants 1 to 7.
+24. As such, the prayer for exemption from effecting advance
+service is granted.
+25. The application is allowed accordingly.
+IA 23018/2023 [exemption from filing original documents]
+26. Reserving liberty with the plaintiff to place original documents
+on record at an appropriate stage, liberty as prayed for is granted, for
+the present.
+CS(COMM) 832/2023 Page 8 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:24
+27. The application is allowed accordingly.
+IA 23019/2023 [exemption from legible copies of the documents]
+28. Subject to the plaintiff filing legible copies of any dim or
+illegible documents on which it may seek to place reliance within four
+weeks from today, exemption is granted for the present.
+29. The application is disposed of.
+I.A. 23020/2023 [under Section 12A of the Commercial Courts
+Act, 2015]
+30. The nature of the dispute in this case does not permit leave any
+scope for pre-institution mediation.
+31. Accordingly, the prayer for exemption from pre-institution
+mediation is granted.
+32. The application stands disposed of.
+IA 23021/2023 [under Section 151of the CPC]
+33. This application is not required.
+34. It is accordingly disposed of.
+IA 23022/2023 [under Order XI Rule 1(4) of the CPC]
+35. By this application, the plaintiff seeks permission to file
+additional documents.
+CS(COMM) 832/2023 Page 9 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:24
+36. The plaintiff is permitted to place additional documents on
+record in accordance with Order XI Rule 1(4) of the CPC as amended
+by the Commercial Courts Act, 2015 within 30 days from today.
+37. The application stands disposed of accordingly.
+I.A. 23023/2023 [under Section 80 of the CPC]
+38. For the reasons stated in this application, exemption from
+service of advance notice on the official defendants, as envisaged by
+Section 80 of the CPC, is allowed.
+39. The application stands disposed of accordingly.
+I.A. 23024/2023 [under Section 149 of the CPC]
+40. Mr. Sethi undertakes, on instructions, that the deficient court
+fees would be paid within a period of one week from today.
+41. This application stands disposed of accordingly.
+C. HARI SHANKAR, J.
+NOVEMBER 20, 2023
+dsn
+Click here to check corrigendum, if any
+CS(COMM) 832/2023 Page 10 of 10
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:24
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 832/2023
+EICHER MOTORS LIMITED
+..... Plaintiff
+Through: Mr. Krishna Gambhir, Adv.
+through VC.
+versus
+WWW.ROYALENFIELDDEALERSHIPS.IN & ORS.
+..... Defendant
+Through: Mr. Parva Khare, Adv. for
+D-11 through VC.
+Mr. Rahul Bajaj, Adv. for
+D-13.
+Ms. Dharna Baragi and Mr.
+Santosh Kumar, Advs. for
+D-16 through VC.
+Mr. Amol Sharma, Adv. for
+D-17 through VC.
+Mr. Ashish Mishra and Mr.
+Vishwjeet, Advs. for D -18
+through VC.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 23.01.2024
+Learned P.O is on half day leave today.
+Put up the matter on 19.02.2024 for purpose already
+fixed.
+Reader a/w
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 23, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:23
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 832/2023
+EICHER MOTORS LIMITED
+..... Plaintiff
+Through: Mr. Krishna Gambhir, Adv.
+(M-9899320646).
+versus
+WWW.ROYALENFIELDDEALERSHIPS.IN & ORS.
+..... Defendant
+Through: Mr. Parva Khare, Adv. for
+D-11 through VC.
+Mr. Shivansh Tiwari, Adv.
+for D-13.
+Mr. Santosh Kumar Rauth &
+Ms. Dharna Veragi, Advs.
+through VC for D-16/PNB.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 19.02.2024
+Learned P.O is on leave today.
+Put up the matter on 26.02.2024 for purpose already fixed.
+Reader a/w
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 19, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:23
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 832/2023
+EICHER MOTORS LIMITED
+..... Plaintiff
+Through: Ms. Simranjot Kaur, Adv.
+Mr. Krishna Gambhir, Adv.
+through VC.
+versus
+WWW.ROYALENFIELDDEALERSHIPS.IN & ORS.
+..... Defendant
+Through: Mr. Parva Khare, Adv. for
+D-11 through VC.
+Mr. Shivansh Tiwari, Adv.
+for D-13.
+Mr. Santish Kumar Rout &
+Ms. Dharna Veragi, Advs.
+for D-16/PNB.
+Mr. Amol Sharma, Adv. for
+D-17.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 26.02.2024
+Due to the untimely death in the immediate family today
+morning, the learned P.O. is on half day leave today to attend her
+last rites.
+List the matter before the Hon'ble Court on the date already
+fixed i.e. 27.02.2024.
+Reader a/w
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 26, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:22
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 832/2023, I.A. 23016/2023 & I.A. 1718/2024
+EICHER MOTORS LIMITED ..... Plaintiff
+Through: Mr. Peeyoosh Kalra, Mr. Krishna
+Gambhir and Mr. Simranjot Kaur,
+Advocates.
+versus
+WWW.ROYALENFIELDDEALERSHIPS.IN & ORS..... Defendants
+Through: Ms. Shweta Sahu and Mr. Parva
+Khare, Advocates for D-11.
+Ms. Aishwarya Kane, Advocate for
+D-13.
+Mr. Prafulla Kumar, Advocate for
+D-14 (through VC).
+Mr. Santosh Kumar Rout and Ms.
+Dharna Veragi, Advocates for
+D-16/PNB (through VC)
+Mr. Anmol Mehta, Advocate for
+D-17.
+Mr. Kumar Vishwjeet, Advocate for
+D-18/Canara Bank.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 27.02.2024
+1. This matter has been listed before the Court pursuant to order dated
+20th November, 2023 passed by this Court granting ex-parte ad interim
+injunction in favour of plaintiff. Mr. Peeyoosh Kalra, counsel for plaintiff,
+states that the matter is listed before the Joint Registrar for further
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:22
+proceedings including issue of service upon various defendants.
+2. It is noted that counsel for defendant nos. 11, 13, 14, 16, and 17
+appear before this Court today. While defendant no. 11 has filed written
+statement, defendant nos. 13, 14, and 16 have filed affidavits of compliance;
+counsel for defendant no.17 states that they have complied with the order
+but have not filed their affidavit in that regard.
+3. I.A. No.1718/2024 has been filed by defendant no.13 for deletion
+from the array of parties.
+4. Counsel for plaintiff has also pointed out that compliance of
+take-down in relation to defendant no.2 domain name has not been made by
+defendant no.9.
+5. List before the Joint Registrar on 14th March, 2024 and renotify before
+this Court on 15th May, 2024.
+6. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+FEBRUARY 27, 2024/kct/sc
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:22
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 832/2023
+EICHER MOTORS LIMITED .... Plaintiff
+Through: Ms. Simranjot Kaur (VC),
+Advocate
+versus
+WWW.ROYALENFIELDDEALERSHIPS.IN & ORS.
+..... Defendant
+Through: Mr. Santosh Kumar Rout,
+Ms. Dharna Veragi (VC),
+Advocates for D-16/PNB.
+Ms. Jagriti Ahuja (VC),
+Advocate for D-17.
+Mr. Alipak Banerjee, Mr. Nishith
+Desai, Advocates for D-11.
+Mr. Rahul Bajaj, Advocate for
+D-13/Housing Concepts B.V.
+Mr. Ashish Mishra, Advocate for
+D-18/ Canara Bank.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 14.03.2024
+I.A. No. 1718/2024 filed by defendant no. 13 for its deletion
+from the array of parties.
+Issue notice. Notice accepted by ld. Counsel for the
+plaintiff.
+Let reply be filed within two weeks, with an advance copy
+to the opposite side. Rejoinder, if any, be filed within a further
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:21
+period of one week from the date of receipt of an advance copy
+of the reply.
+Re-notify on the next date of hearing.
+CS(COMM) 832/2023:
+Written statement has been filed on behalf of defendant no.
+11. Copy of the same has been supplied to ld. Counsel for the
+plaintiff. Replication, if any, be filed within the period
+permissible.
+Affidavits of compliance have been filed by defendant nos.
+8, 11, 13, 14 & 16.
+Ld. Counsel for defendant no. 17 submits that though
+compliance has been carried out of the Hon’ble Court’s
+directions, the affidavit of compliance is yet to be filed and the
+same shall be filed within a week.
+Ld. Counsel for defendant no. 18 also submits that
+compliance has been done and affidavit in this regard has been
+filed on 19.01.2024.
+Ld. Counsel for the plaintiff submits that defendants no. 9,
+10, 15, 19 & 20 are yet to comply with the Hon’ble Courts order.
+All the defendants have either been served or have put in
+appearance except for D-22 which is a Johndoe.
+Put up for completion of pleadings on 10.05.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 14, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:21
+
+===== ORDER =====
+
+$~25
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 832/2023
+EICHER MOTORS LIMITED ..... Plaintiff
+Through: Mr. Peeyush Kalra, Mr. C.A Brijesh
+Mr. K. Gambhir and Ms. Simran Jot
+Kaur, Advocates.
+versus
+WWW.ROYALENFIELDDEALERSHIPS.IN & ORS.
+..... Defendant
+Through:
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 10.04.2024
+I.A. 8180/2024 (Exemption from service of advance copy to the defendant).
+1. This application has been filed for serving complete set of paper book
+upon the defendant nos. 22-25 in advance.
+2. Exemption is granted.
+3. Application stands disposed of.
+I.A. 8179/2024 (Application seeking interim injunction)
+1. This application has been filed on behalf of the plaintiff seeking to
+extend the ad interim injunction granted by this Court on 20th November,
+2023 to new defendants 22-25 from using the trademark ‘ROYAL ENFIELD’
+or any other deceptively similar variant.
+2. The suit has been filed by plaintiff to protect their trademark rights in
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:20
+marks ( plaintiff’s marks) used
+by plaintiff for motorcycles and related goods and services.
+3. At the time of instituting the suit, defendant nos. 1-7 were found to be
+missappropriating the plaintiff’s mark by incorporating the same in domain
+names and using the said domains / websites for doling out fake dealerships
+letters, communications, through imposter domain of a fake dealership in
+Royal Enfield, and collecting money consequently.
+4. In these cirucumstances, an order dated 20th November, 2023 was
+passed that narrates the background facts in para 1-10.
+5. An ex parte ad interim injunctions was passsed by this Court which is
+in the following terms:
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:20
+”
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:20
+6. The plaintiff now has brought to attention following subsequent events
+which have transpired since the said injunction order was passed:
+a) Enquiries on internet reveal that three new imposter domains being
+www.officalroyalenfielddeal.com (proposed to be defendant no.22);
+www.royalenfieldind.com (proposed to be defendant 23);
+www.royalenfieldindia.com (proposed to be defendant no. 24) and
+www.royalenfieldinfo.com ( proposed to be defendant no. 25) are
+misusing the plaintiff’s mark, labels, domain name and other
+proprietary information.
+b) Injunction was granted by the Court with respect to defendant no.2, the
+owner of the imposter domain name www.royalenfieldind.com who has
+been found to be still collecting monies from various innocent parties
+under the promise of providing dealership of the plaintiff company.
+This came to the knowledge of the plaintiff company, facts of which
+are noted in paras 3 (c) (d) (e) and (f) of the application. The persons
+duped have transferred monies in the range of Rs. 2,50,000/- each, to
+the defendant no.2. Defendant no. 2 is therefore continuing to run its
+infringing and fraudulent operation despite the injunction granted by
+this Court.
+c) Defendant no. 9 (Atak Domain Bilgi Teknolojileri A.S.) the Domain
+Name Registrar for the defendant no. 2’s domain name has not
+complied with directions passed by this Court.
+7. In view of this, Mr. Peeyush Kalra, counsel for plaintiff seeks the relief
+sought in the application.
+8. A sample screenshot of defendant no. 2 imposter domain is reproduced
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:20
+as under:
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:20
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:20
+9. A sample representation of the dealership being offered by defendant
+nos. 22-25 are as under:
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:20
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:20
+10. In these circumstances, considering that the proposed defendants are,
+with impunity, continuing to generate new domain names and dupe customers
+by making them pay monies through bogus franchises, it will be essential, in
+the opinion of this Court, that the ex parte ad interim injunction granted on
+20th November, 2023 is extended.
+11. In this view, the following directions are passed:
+a) Proposed defendant nos. 22-25 be arrayed as parties; amended memo
+of parties has been filed by plaintiff which shall be taken on record.
+b) Proposed defendant nos. 26-27 which are the Domain Name Registrars
+for defendant nos. 24-25 are also arrayed as new defendants; amended
+memo in this regard has been filed and be taken on record.
+c) Directions in para 19 (i) of order dated 28th November, 2023 are
+extended to defendant nos. 22-25 as well.
+d) Defendant nos. 26-27 and 9 & 11 are directed lock and suspend the four
+domain names viz. of defendant nos. 22-25; directions in para 19 (ii)
+order dated 28th November, 2023 are extended to them.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:20
+e) Defendant nos. 16 &18 (Canara Bank and Punjab National Bank) are
+directed, in the same terms as in para 19 (iv) of order dated 28th
+November, 2023, in respect of the account numbers 110146676809,
+5860000100097527 and 0142100100002658, details represented as
+under:
+f) Defendant nos. 19-20 (Ministry of Telecommunications and Ministry of
+Electronics and Information Technology) are directed to issue
+appropriate directions/notifications to various internet and telecom
+service providers to block access to the imposter domains of defendant
+nos. 2, 22,23,24 & 25.
+g) Directions to defendant no. 14 (Bharti Airtel Limited) in terms of para
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:20
+19(iii) of order dated 28th November, 2023 above to block the mobile
+numbers +91-9007559721 and +91-9007559757.
+12. Issue notice in the said application.
+13. Notice is accepted by counsel appearing for defendant no. 11
+(GoDaddy.com, LLC) & 13 (Hosting Concepts B.V. d/b/a Open provide).
+14. Notice be issued to other parties on steps being taken by the petitioner,
+reply if any, within four weeks and rejoinder thereafter, if necessary.
+15. Compliance with Order XXXIX Rule 3, CPC be effected within one
+week.
+16. List on 15th May, 2024.
+17. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+APRIL 10, 2024/RK/ig
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:20
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 832/2023
+EICHER MOTORS LIMITED ..... Plaintiff
+Through: Ms. Simranjot Kaur,
+Mr. Raghu Vinayak Sinha (VC),
+Advocates
+versus
+WWW.ROYALENFIELDDEALERSHIPS.IN & ORS.
+..... Defendant
+Through: Mr. Parva Khare (VC), Advocate
+for D-11.
+Mr. Rahul Bajaj (VC), Advocate
+for D-13.
+Mr. Santosh Kumar Rout,
+Ms. Dharna Veragi, Advocates
+for D-16/PNB.
+Mr. Amol Sharma, Advocate for
+D-17/HDFC Bank.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 10.05.2024
+I.A. No. 1718/2024 filed by defendant no. 13 for its deletion
+from the array of parties.
+Ld. Counsel for the plaintiff submits that plaintiff does not
+wish to file a reply. However, ld. Counsel requests that the
+application be placed before the Hon’ble Court since a statement
+is to be made on behalf of the plaintiff in regard to the present
+IA, before the Hon’ble Court.
+At request, put up before the Hon’ble Court.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:19
+CS(COMM)- 832/2023:
+No replication is required to be filed qua written statement
+of defendant no. 11.
+Ld. Counsel for defendant no. 17 submits that compliance
+affidavit has been filed on 23.03.2024.
+There is no appearance on behalf of defendant nos. 9, 10,
+15, 19 & 20. All of these are yet to comply with Hon’ble Court’s
+order. This was also observed in the order dated 14.03.2024.
+Matter is already listed before the Hon’ble Court for
+15.05.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 15.05.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 10, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:19
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 832/2023, I.A. 23016/2023, I.A. 1718/2024 & I.A.
+8179/2024
+EICHER MOTORS LIMITED ..... Plaintiff
+Through: Mr. Peeyoosh Kalra, Mr. Krisna
+Gambhir and Ms. Simranjot Kaur,
+Advs.
+versus
+WWW.ROYALENFIELDDEALERSHIPS.IN & ORS. .... Defendants
+Through: Mr. Rahul Bajaj, Adv. for D-13.
+Mr. Santosh Kumar Rout and Ms.
+Dharna Veragi, Advs. for D-16.
+Mr. Kumar Vishwajeet, Adv. for D-
+18.
+Mr. Ajay Gupta, Adv. for D-21.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 15.05.2024
+I.A. 1718/2024 (for deletion of defendant No.13 from array of parties)
+1. This application has been filed by defendant No.13 [Hosting Concepts
+B.V.] for deletion from the array of parties. An ex-parte ad interim injunction
+was passed by this Court on 20th November 2023 directing various defendants
+in para 19 of the said order. Directions in para 19(ii) were passed inter alia
+to defendant No.13 [Domain Name Registrar] to lock and suspend access to
+certain domain names. Counsel for defendant No.13 states that the same has
+been complied with and they have filed an affidavit of compliance in this
+regard.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:19
+2. Counsel for plaintiff has no objection to them being deleted from the
+array of parties, subject to continuing compliance with the injunction order of
+this Court, as and when communicated by the plaintiff.
+3. Accordingly, the application allowed.
+4. Defendant No.13 be deleted from the array of parties.
+5. Counsel for defendant No.16 [Punjab National Bank] appears through
+VC and states that they have frozen the two accounts with respect to directions
+passed on 10th April, 2024. Compliance affidavit with regard to one account
+has already been filed whereas the compliance affidavit with regard to the
+second account will be filed within the next four weeks.
+6. Counsel for defendant No.18 [Canara Bank] states that they have also
+complied with the order dated 10th April, 2024 and compliance affidavit will
+be filed within the next four weeks.
+7. Counsel appears on behalf of defendant No.21 [National Internet
+Exchange of India (NIXI)] and states that they have also complied with the
+order of this Court.
+8. List before the Joint Registrar on 18th July, 2024.
+9. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+MAY 15, 2024/MK/sc
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:19
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 832/2023
+EICHER MOTORS LIMITED ....Plaintiff
+Through: Mr. Krisna Gambhir, Advocate
+versus
+WWW.ROYALENFIELDDEALERSHIPS.IN & ORS.
+.....Defendant
+Through: Mr. Santosh Kumar Rout,
+Ms. Dharna Veragi (VC),
+Advocates for D-16
+Ms. Jagriti Ahuja, Advocate for
+D-17
+Mr. Rahul Kumar Singh,
+Ms. Dolly, Mr. Kumar
+Vishwajeet, Advocates for D-18
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 18.07.2024
+1. Defendants no. 16, 18 & 21 have filed their respective
+compliances since the last date of hearing which was 10.05.2024.
+2. Defendant no. 17 though had filed its compliance affidavit
+on 23.03.2024, copy of the same was inadvertently sent on the
+incorrect email of ld. Counsel for the plaintiff. Ld. Counsel
+submits that a copy of the compliance affidavit shall be sent on
+the correct email of ld. Counsel for the plaintiff today itself.
+3. Defendants no. 9, 10, 15, 19 & 20 are yet to file their
+compliance affidavits in terms of the directions of the Hon’ble
+Court contained in the order dated 20.11.2023.
+4. It needs a highlight that defendants no. 19 & 20 are DoT
+and MEITY whereas defendants no. 9 & 10 are the domain name
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:18
+registrars, and defendant no. 15 is BSNL. Ld counsel further
+submits that defendant no. 9 & 10 who are the DNRs have taken
+down the fake websites / domain names but have yet not filed
+their compliance affidavits, as already highlighted. Similarly,
+defendants no. 19 & 20 have issued notification in terms of the
+order dated 20.11.2023 i.e. directions contained in para 19
+thereof, but have yet not filed their compliance affidavit.
+5. Further, on 10.04.2024, defendants no. 22 to 25 which
+were fake websites were impleaded as defendants and defendants
+no. 26 & 27 which are the DNRs of defendants no. 24 & 25 were
+directed to lock and suspend the fake websites / domain names.
+6. Ld. counsel submits that though defendants no. 26 & 27
+have been served, they are yet to comply with the order passed
+by the Hon’ble Court on 10.04.2024 i.e. directions contained in
+para 11 (d).
+7. Put up for completion of pleadings on 05.09.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 18, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:18
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 832/2023
+EICHER MOTORS LIMITED .....Plaintiff
+Through: Mr. Krisna Gambhir, Advocate
+Versus
+WWW.ROYALENFIELDDEALERSHIPS.IN & ORS.
+.....Defendant
+Through: Mr. Sumeet Kapoor (VC),
+Advocate for D-8.
+Mr. Parva Khare (VC), Advocate
+for D-11.
+Mr. Santosh Kumar Rout,
+Ms. Dharna Veragi, Advocates
+for D-16.
+Mr. Amol Sharma (VC),
+Advocate for D-17.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 05.09.2024
+1. Ld. Counsel for the plaintiff submits that defendants no. 9,
+10, 15, 26 & 27 have still not filed their compliance affidavits. It
+needs a highlight that it was recorded on the last date that
+defendants no. 9 & 10 who are the DNRs have taken down fake
+websites / domain names in compliance of the directions of the
+Hon’ble Court.
+2. In view of the above, ld. Counsel for the plaintiff prays
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:17
+that the matter be placed before the Hon’ble Court. Put up before
+the Hon’ble Court on 18.10.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 5, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:17
+
+===== ORDER =====
+
+$~53
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 832/2023 & I.A. 39891/2024, I.A. 39892/2024, I.A.
+39893/2024
+EICHER MOTORS LIMITED .....Plaintiff
+Through: Mr. Peeyoosh Kalra, MR. C. A.
+Brijesh, Mr. Krisna Gambhir,
+Advocates (M:8506906111)
+versus
+WWW.ROYALENFIELDDEALERSHIPS.IN & ORS. .....Defendants
+Through: Mr. Parva Khare, Advocate for D-11
+(M:9987115749)
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 19.09.2024
+I.A. 39893/2024 (under Section 151 of CPC for exemption)
+1. The present is an application under Section 151 of CPC on behalf of
+the plaintiff, seeking exemption from serving an advance copy to the
+proposed defendant nos. 28-33.
+2. Learned counsel for the plaintiff submits that in view of the dishonest
+and fraudulent intentions and trade practice of the defendant nos. 28-33, the
+plaintiff/applicant apprehends that defendant nos. 28-33 would
+destroy/conceal all evidence of their wrongful acts, in case notice is given to
+them for grant of ex-parte relief. Thus, the present application has been filed
+seeking prayer to dispense with the advance service of defendant nos. 28-33.
+3. Considering the submissions made before this Court, application is
+allowed and the plaintiff is exempted from serving advance copy of the
+CS(COMM) 832/2023 Page 1 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:17
+present application, to the proposed defendant nos. 28-33.
+4. With the aforesaid directions, the present application is disposed of.
+I.A. 39891/2024 & I.A. 39892/2024
+5. I.A. 39891/2024 has been filed seeking to implead proposed defendant
+nos. 28-40 in the present proceedings.
+6. I.A. 39892/2024 has been filed seeking various interim orders against
+the new defendants, i.e., defendant nos. 28-40, as well as defendant no. 2.
+7. Learned counsel for the plaintiff submits that the present suit pertains
+to the plaintiff’s trade mark rights in the trademark ‘ROYAL ENFIELD’,
+, and their variations used by the
+plaintiff for motorcycles and related goods and services.
+8. Vide order dated 20th November, 2023, this Court had granted an ex-
+parte ad-interim injunction restraining the defendants at that point of time,
+as well as other acting on their behalf, from using the mark ‘ROYAL
+ENFIELD’ and any other deceptively similar variant thereof, for any
+purpose whatsoever, along with other directions.
+9. Furthermore, this Court vide order dated 10th April, 2024 granted an
+ex-parte ad-interim injunction restraining defendant nos. 2 and 22-25 as well
+as others acting on their behalf, from using the mark ‘ROYAL ENFIELD’ or
+any other deceptively similar variant thereof, for any purpose whatsoever,
+along with other directions, to the other defendants.
+10. The present applications have been filed seeking impleadment and
+interim directions to the proposed defendant nos. 28-40. It is submitted that
+CS(COMM) 832/2023 Page 2 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:17
+as per the plaintiff’s enquiries on the internet, the same revealed the various
+impostor domain names, which are using the plaintiff’s trademarks, labels,
+domain name and other proprietary information, details of which have been
+given in the application.
+11. It is further submitted that defendant no. 2 is updating its domain after
+the interim injunction had been passed on 20th November, 2023 and 10th
+April, 2024.
+12. It is submitted that defendant no. 2 is willfully flouting the orders of
+this Court. It is submitted that defendant no. 9, is the Domian Name
+Registrar (“DNR”) for the impostor domain name of defendant no. 2.
+However, defendant no. 2 has changed its DNR to defendant no. 34.
+13. It is further submitted that proposed defendant nos. 35 to 39, are the
+respective banks, wherein, the proposed defendant nos. 28-33 have their
+bank accounts. It is submitted that they are proposed to be impleaded as
+defendants, for the limited purpose of ensuring compliance with any orders
+of this Court. It is submitted that the proposed defendant nos. 35 to 39 are
+receiving funds in the bank account of defendant nos. 28-33, therefore, it is
+imperative that they are also impleaded before this Court.
+14. Accordingly, considering the submissions made before this Court, the
+proposed defendant nos. 28-40 are impleaded as defendants in the present
+suit. The amended memo of parties as filed along with the application, is
+taken on record.
+15. However, the plaintiff is directed to file fresh amended memo of
+parties, so that the same is placed accordingly in the Pleadings Folder.
+16. Considering the submissions made before this Court, it is directed as
+follows:
+CS(COMM) 832/2023 Page 3 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:17
+16.1 The interim injunction dated 20th November, 2023 and 10th April,
+2024 is extended to defendant nos. 28-33, their owners, proprietors,
+employees, partners, representatives and/or others acting for and on their
+behalf from using the trade mark ‘ROYAL ENFIELD’ or any deceptively
+similar variant thereof, or in any manner amounting to infringement and
+passing off.
+16.2 Directions are issued to defendant nos. 34 and 11 to suspend the
+impugned domain names www.royalenfieldindia.com;
+www.royalenfieldsdealers.com; www.royalefieldsdealers.com;
+www.royalenfieldsdealer.com; www.royalenfields.info;
+www.royalenfielddealers.com and www.royalenfielddealerindia.com
+16.3 Further defendant nos. 34 and 11 are also directed to disclose the
+contact particulars and KYC details of the registrants of the aforesaid
+domain names.
+16.4 Defendant no. 35, i.e., Bank of Maharashtra is directed to freeze the
+bank account bearing no. 60488033034. Further, details of the respective
+account holders and documents including bank statement, identity proof and
+registration form, etc., available with the bank, be filed before this Court.
+16.5 Defendant no. 36, i.e., RBL Bank is directed to freeze the bank
+account bearing account number 309026055606. Further, details of the
+respective account holders and documents including bank statement, identity
+proof and registration form, etc., available with the bank, be filed before this
+Court.
+16.6 Defendant no. 37, i.e., Utkarsh Small Finance Bank is directed to
+freeze the bank account bearing no. 1046018540094519. Further, details of
+the respective account holders and documents including bank statement,
+CS(COMM) 832/2023 Page 4 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:17
+identity proof and registration form, etc., available with the bank, be filed
+before this Court.
+16.7 Defendant no. 38, i.e., IDBI Bank is directed to freeze the bank
+accounts bearing no. 1374104000076890 and 0086104000279956. Further,
+details of the respective account holders and documents including bank
+statement, identity proof and registration form, etc., available with the bank,
+be filed before this Court.
+16.8 Defendant no. 39, i.e., Indian Bank is directed to freeze the bank
+account bearing no. 7834771497. Further, details of the respective account
+holders and documents including bank statement, identity proof and
+registration form, etc., available with the bank, be filed before this Court.
+16.9 Defendant no. 19, Department of Telecommunication (“DOT”) and
+Defendant no. 20, Ministry of Electronics and Information Technology
+(“MeitY”) are directed to block access to the impostor domain names of the
+following:
+Defendants Domain Names
+Defendant No. 2 www.royalenfieldindia.com
+Defendant No. 28 www.royalenfieldsdealers.com
+Defendant No. 29 www.royalefieldsdealers.com
+Defendant No. 30 www.royalenfieldsdealer.com
+Defendant No. 31 www.royalenfields.info
+Defendant No. 32 www.royalenfielddealers.com
+Defendant No. 33 www.royalenfielddealerindia.com
+17. Issue notice to the proposed defendants by all modes.
+CS(COMM) 832/2023 Page 5 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:17
+18. Let reply be filed within a period of four weeks. Rejoinder thereto, if
+any, be filed within a period of two weeks, thereafter.
+19. List before the Joint Registrar (Judicial) on 07th October, 2024.
+20. The next date of hearing of 18th October, 2024 is cancelled.
+MINI PUSHKARNA, J
+SEPTEMBER 19, 2024
+au
+CS(COMM) 832/2023 Page 6 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:17
+
+===== ORDER =====
+
+$~3
+* IN 
+
+[TRUNCATED — rights are established in the opening orders above]

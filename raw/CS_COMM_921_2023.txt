@@ -1,0 +1,863 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_921_2023
+case_status: DISPOSED
+n_orders: 11
+
+$~43
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 921/2023 and I.A. 25768-772/2023
+ZEE ENTERTAINMENT
+ENTERPRISES LIMITED ..... Plaintiff
+Through: Mr. Sidhartha Chopra,
+Mr.Yatinder Garg, Mr. Angad Singh
+Makkar, Mr. Manas Raghuvanshi and
+Mr.Vivek Kumar, Advocates.
+versus
+ALL ROUNDER TV AND ORS ..... Defendants
+Through: Ms. Mrinal Ojha, Mr. Debarshi
+Dutta, Mr. Anand Raja and Ms. Tanya
+Chaudhry, Advocates for defendant No. 7.
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 20.12.2023
+1. The Hon’ble Judge is not holding the Court today.
+2. Re-notify on 8 January 2024.
+BY ORDER
+COURT MASTER
+DECEMBER 20, 2023/kd
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:57
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 921/2023, I.A. 25768/2023, I.A. 25769/2023, I.A.
+25770/2023, I.A. 25771/2023 & I.A. 25772/2023.
+ZEE ENTERTAINMENT ENTERPRISES LIMITED ..... Plaintiff
+Through: Mr. Sidharth Chopra, Mr. Yatinder
+Garg, Mr. Angad Singh Makkar, Mr.
+Manas Raghuvanshi and Mr. Vivek
+Kumar, Advs.
+versus
+ALL ROUNDER TV AND ORS ..... Defendants
+Through: Mr. Mrinal Ojha, Mr. Debarshi Dutta,
+Ms. Tanya Chaudhry and Mr. Shivam
+Tiwari, Advs. for D-7.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 08.01.2024
+1. It is already 4:30 pm. No time left today.
+2. List on 12th January, 2024.
+3. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+JANUARY 8, 2024/MK
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:57
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 921/2023, I.A. 25768/2023, I.A. 25769/2023, I.A.
+25770/2023, I.A. 25771/2023 & I.A. 25772/2023
+ZEE ENTERTAINMENT ENTERPRISES LIMITED ..... Plaintiff
+Through: Mr. Sidharth Chopra, Mr. Yatinder
+Garg, Mr. Manas Raghuvanshi and
+Mr. Vivek Kumar, Advs.
+versus
+ALL ROUNDER TV AND ORS ..... Defendants
+Through: Mr. Debarshi Dutta, Mr. Mrinal Ojha,
+Mr. Anand Raja and Mr. Samyak
+Bilala, Advs. for D-7.
+Ms. Aishwarya Kane, Adv. for D-9.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 12.01.2024
+I.A. 25769/2023 (for additional documents)
+1. The present application has been filed on behalf of the plaintiff under
+Order XI Rule 1(4) of the Code of Civil Procedure, 1908 as applicable to
+commercial suits under the Commercial Courts Act, 2015 seeking to place on
+record additional documents.
+2. The plaintiff, if they wish to file additional documents at a later stage,
+shall do so strictly as per the provisions of the Commercial Courts Act, 2015
+and the DHC (Original Side) Rules, 2018.
+3. Accordingly, the present application is disposed of.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:56
+I.A. 25770/2023 (for clearer copies)
+1. Exemption is granted, subject to all just exceptions.
+2. Applicant shall file legible, clear, and original copies of the documents
+on which the applicant may seek to place reliance within four weeks from
+today or before the next date of hearing, whichever is earlier.
+3. Accordingly, the present application is disposed of.
+I.A. 25771/2023 (exemption from issuing notice)
+1. This is an application seeking exemption from serving notice under
+Section 80 CPC to defendant Nos.19, 20, 11 and 14.
+2. Exemption is granted.
+3. Application stands disposed of.
+I.A. 25772/2023 (exemption from filing court/process fees)
+1. This application has been filed under Section 149 and 151 of the Code
+of Civil Procedure, 1908 seeking exemption from filing court/process fee.
+2. The plaintiff is directed to file court/process fees, if not already filed,
+within the next one week.
+CS(COMM) 921/2023
+1. Let the plaint be registered as a suit.
+2. Upon filing of process fee, issue summons to the defendants through
+all permissible modes. Summons shall state that the written statement(s) be
+filed by the defendants within 30 days from the date of receipt of summons.
+Along with the written statement(s), the defendants shall also file affidavit(s)
+of admission/denial of the documents of the plaintiff, without which the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:56
+written statement shall not be taken on record. Liberty is given to the plaintiff
+to file a replication within 30 days of the receipt of the written statement(s).
+Along with the replication, if any, filed by the plaintiff, affidavit(s) of
+admission/denial of documents filed by the defendants, be filed by the
+plaintiff, without which the replication(s) shall not be taken on record. If any
+of the parties wish to seek inspection of any documents, the same shall be
+sought and given within the timelines.
+3. List before the Joint Registrar for marking of exhibits on 19th March,
+2024.
+4. It is made clear that any party unjustifiably denying documents would
+be liable to be burdened with costs.
+I.A. 25768/2023 (under Order XXXIX Rule 1 & 2 CPC)
+1. This application has been filed as part of the suit filed by the plaintiff
+seeking permanent injunction restraining infringement of its copyright and
+broadcast reproduction rights, under the Copyright Act, 1957 (“the Act”) on
+account of unlawful activities by defendant Nos. 1 to 4 in
+facilitating/enabling/authorising access to the public of the plaintiff’s
+exclusive copyright in content, inter alia including films, general
+entertainment, content, original web-series (“plaintiff’s content”).
+2. It is alleged that defendant Nos.1 to 4 are third party android based
+mobile applications that communicate, make available to, and provide access
+to the content of the plaintiff without any authorisation from various rights
+owners, including the plaintiff. The downloading and distribution of these
+mobile Apps (“infringing apps”) occurs through a site/URL (“infringing
+websites”) with a .apk format. “.apk” in the industry stands for “Android
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:56
+Package Kit” / “Android Application Package”.
+3. Counsel for the plaintiff has drawn attention to the process which is
+involved in accessing this infringing content. A URL with .apk application
+can be accessed through the browser on a mobile phone and its user interface
+allows the download of an app, which in this case is the infringing app. Once
+the infringing app is downloaded on the mobile phone, a user can access the
+plaintiff’s content through the said infringing apps, made available by the said
+infringing app. Infringing apps are generally not indexed with the popular
+authorised App stores operated by players like Google or Apple on their
+respective operating systems.
+4. Therefore, a user can potentially, by circumventing the subscription
+through an authorised app on say Google Play Store/Apple Store, can access
+an .apk site, download the infringing app, access the content on the infringing
+app, possibly without payment of any subscriptions.
+5. The content on these infringing apps could potentially not only having
+infringing content of various platforms but could also have non-infringing
+content. Considering the nature in which the access is made available in this
+surreptitious manner and by circumventing regular payment gateways and
+platforms, usually these infringing apps predominantly carry infringing
+content.
+6. Counsel for the plaintiff has drawn attention to the decision of this
+Court in UTV Software Communication v. 1337X.TO & Ors., 2019 SCC
+OnLine Del 8002 where a Single Judge of this Court has deliberated in detail
+relating to the issues involved around infringing websites, in that such
+infringing websites could contain infringing content, as well as content which
+was not showed. The Court has formulated certain illustrative guidelines for
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:56
+the Courts to assess while determining whether such an infringing website
+would be considered as promoting or offering pirated content. For the ease of
+reference, an extract from the decision is as under:
+“59. In the opinion of this Court, some of the factors to be
+considered for determining whether the website complained of is
+a FIOL/Rogue Website are:—
+a. whether the primary purpose of the website is to commit or
+facilitate copyright infringement;
+b. the flagrancy of the infringement, or the flagrancy of the
+facilitation of the infringement;
+c. Whether the detail of the registrant is masked and no
+personal or traceable detail is available either of the
+Registrant or of the user.
+d. Whether there is silence or inaction by such website after
+receipt of take down notices pertaining to copyright
+infringement.
+e. Whether the online location makes available or contains
+directories, indexes or categories of the means to infringe, or
+facilitate an infringement of, copyright;
+f. Whether the owner or operator of the online location
+demonstrates a disregard for copyright generally;
+g. Whether access to the online location has been disabled by
+orders from any court of another country or territory on the
+ground of or related to copyright infringement;
+h. whether the website contains guides or instructions to
+circumvent measures, or any order of any court, that disables
+access to the website on the ground of or related to copyright
+infringement; and i. the volume of traffic at or frequency of
+access to the website;
+j. Any other relevant matter.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:56
+60. This Court clarifies that the aforementioned factors are
+illustrative and not exhaustive and do not apply to intermediaries
+as they are governed by IT Act, having statutory immunity and
+function in a wholly different manner”.
+7. In the opinion of this Court, the said guidelines would mutatis mutandis
+be relevant for consideration of cases of infringing apps as well. The
+proliferation of Apps post 2019 when this decision in UTV Software
+Communication (supra) was delivered is a common knowledge. Apps on
+the mobile phone provide the most common portal for access to content by a
+user. Counsel for the plaintiff submits that most of these guidelines, if not
+all, stands satisfied as regards the case of the plaintiff. Keeping this in mind,
+the documents and pleadings of the plaintiff have been perused.
+8. Counsel for the plaintiff has made this Court traverse through the
+following aspects, each supported by documentation filed by them:
+(i) Screenshots showing streaming/making available of plaintiff’s
+content on the infringing apps of defendant Nos.1 to 4.
+(ii) The homepage of the URLs which contain the .apk website.
+(iii) The procedure for downloading the infringing apps.
+(iv) Homepage of the infringing apps.
+(v) Screenshots displaying contents of all the infringing apps.
+(vi) Screenshots displaying the plaintiff’s non-live content on the
+infringing apps.
+(vii) Screenshots displaying the plaintiff’s live content on the infringing
+apps.
+(viii) The user interface domain (“UID”) which links to the infringing
+apps.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:56
+(ix) URL of the websites with .apk extensions which provide the portal
+through which the infringing app can be accessed.
+9. It is evident from these documents which have been perused by the
+Court that prima facie the plaintiff’s content on its various channels and OTT
+platforms inter alia Zee5, ZeeTV, Zee Anmol, Zee ETC, Zee Tunnel, Zee
+Café (in all about 52 channels across 11 languages, which are claimed to have
+viewership of about 620 million odd viewers) has been hosted/carried on these
+infringing apps. The illustrative list of content to which the plaintiff claims its
+copyright and which is being made available through the infringing apps is
+tabulated under:
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:56
+10. The claim of the plaintiff to this content is of an exclusive right under
+Section 14(d) of the Act and a concomitant right of broadcast reproduction
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:56
+under Section 37 of the Act. The right to sue for infringement arises under
+Section 51 of the Act.
+11. The logos of the Defendant nos. 1 to 4, which are available on the user
+interface of the .apk sites for reference are provided as under:
+, , and
+12. Counsel for the plaintiff further points out that copyright infringement
+notices under the Digital Millennium Copy Right Act (“DMCA”) have been
+duly addressed and issued to each of the four defendants, and are placed on
+record. None of the defendants have responded to the same. Besides an
+infringement report made available pursuant to an internal investigation made
+has also been placed on record.
+13. In light of these facts and circumstances, the plaintiff in relation to the
+guidelines of UTV Software Communication (supra) claims as under:
+(i) It is evident from the overall content available on the infringing
+apps, of which screenshots have been place on record, that the
+primary purpose is to commit or facilitate copy right infringement.
+(ii) The flagrancy of the infringement and the facilitation thereof, is
+evident from the messages on the some of these .apk sites which
+detail a procedure to download the app, circumventing the known
+sources.
+(iii) As noted above, there has been silence and inaction by infringing
+apps/websites after the legal notices were sent.
+(iv) The infringing websites along with the infringing apps clearly make
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:56
+available indexes to the content to which the plaintiff claims
+copyright.
+(v) The access to the owners/operators of domain names which are used
+in the infringing websites have been masked as evident from the
+WHOIS registrant details.
+(vi) It is pointed out that one of the defendants viz. defendant No.2 has
+been a subject matter of another civil suit before this Court, namely,
+CS (COMM.) 214/2022 titled as “Star India Pvt. Ltd. & Anr. v.
+Ashar Nisar & Ors.” and an injunction order has been passed dated
+06th April, 2022.
+14. Defendant Nos. 5 to 9 have been arrayed, who are Domain Name
+Registrars (DNRs) for the infringing websites and the infringing apps as well.
+Counsel are present in Court for defendant Nos.7 and 9.
+15. Defendant Nos.10 to 18 are various Internet Service Providers (“ISPs”)
+available domestically in India who provide access to the internet in India.
+They control the access to the internet and are in a position to ensure that
+access to these infringing websites/infringing apps is not available.
+16. Defendant No. 19 is the Department of Telecommunication (DOT),
+while defendant No. 20 is Ministry of Electronics and Information
+Technology (MEITY), which represent the Government are the overall
+regulators of the internet environment in the country. They have been called
+upon for the purpose of ensuring that the ISPs are in compliance with any
+directions which may be passed by this Court.
+17. Defendant No. 21 has been arrayed as “Ashok Kumar” which is a
+generic name (as John Doe) to include all those who in the future may be
+discovered as using the plaintiff’s infringing content.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:56
+18. In light of these circumstances, the Court is of the view that plaintiff
+has made out a prima facie case for grant of an ex-parte ad interim injunction
+as also a dynamic injunction. Balance of convenience lies in favour of the
+plaintiff as irreparable loss would be caused if the same is not granted.
+19. Accordingly, till the next date of hearing the following directions are
+issued:-
+a) Defendant Nos.1 to 4 are restrained including their owners, partners,
+proprietors, officers, servants, affiliates, employees, and all others
+in capacity of principal or agent acting for and on its behalf, or
+anyone claiming through, by or under it, from in any manner
+communicating to the public, hosting, storing, reproducing,
+streaming, broadcasting, re-broadcasting, causing to be seen or
+heard by public on payment of charge and/or making available for
+viewing including plaintiff’s content through their websites or apps,
+including those listed as under:
+b) Defendant Nos.5 to 9 are directed to de-active/lock the
+abovementioned domains/sub-domains of the infringing websites
+and apps. In the event, the said defendants have any reservation,
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:56
+they shall address a written/email communication to the plaintiff
+stating the reasons for the same. The plaintiff is at liberty to
+approach this Court for any relief as they may seek pursuant to the
+same.
+c) Defendant Nos.5 to 9 are directed to disclose complete details (inter
+alia name, address, email, phone number and IP address) of
+defendant Nos.1-4, and mode of payment along with payment
+details used for registrations of the said domain names. The said
+disclosure shall be made by an affidavit and be filed before this
+Court within a period of four weeks.
+d) Defendant Nos.10 to 18 (ISPs) are directed to block access to these
+infringing websites/apps tabulated above, within 48 hours of receipt
+of this order.
+e) Defendant Nos.19 and 20 (DoT and MEITY) shall take steps to
+ensure that compliance is done by the said ISPs of directions issued
+above, through appropriate communications and notices sent to the
+said ISPs, including other ISPs as well which are registered with
+them.
+f) It is further directed that if defendant Nos.1 to 4 are found to be
+hosting on any website/app, directly or indirectly infringing the
+plaintiff’s rights, the plaintiff will be at liberty to communicate in
+writing/email to the DNRs, ISPs, DoT, MEITY. The said defendants
+shall ensure that the directions given above shall be extended to
+those websites/apps as well. If any of these defendants have a
+reservation they will be at liberty to address a written
+communication/email to the plaintiff stating the reasons for the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:56
+same. The plaintiff is at liberty to approach this Court for any relief
+as they may seek pursuant to the same. Plaintiff shall also file within
+24 hours of sending any such communication for future
+infringement by defendant Nos.1-4, an affidavit before this Court
+giving the list of those websites/apps of which that they have
+communicated to the said defendants, as well as the supporting
+documentation in relation to the same.
+20. Compliance with Order XXXIX Rule 3, CPC be done within a week.
+21. List before this Court on 13th May, 2024.
+22. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+JANUARY 12, 2024/MK
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:56
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 921/2023
+ZEE ENTERTAINMENT ENTERPRISES LIMITED
+..... Plaintiff
+Through: Mr. Angad Singh Makkar,
+Mr. Vivek Kumar, Advocates
+versus
+ALL ROUNDER TV AND ORS ..... Defendant
+Through: Mr. Mrinal Ojha, Mr. Debarshi
+Datta, Ms. Tanya Chaudhry,
+Advocates for D-7/
+GoDaddy.com LLC.
+Mr. Rahul Bajaj, Advocate for
+D-9/Pork Bun LLC.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 19.03.2024
+Defendant nos. 11, 14, 19, 20 have been served on
+09.02.2024 whereas defendant no. 12 has been served on
+29.02.2024, as per the report of Registry.
+Service report of remaining defendants is awaited.
+The defendant nos. 10 to 19 has been served either by way
+of speed post or courier and have been served on the alternative
+addresses in the month of February’2024, as per affidavit of
+service.
+Defendant nos. 1 to 9 have been served through email on
+13.02.2024. Therefore, all the defendants stands served.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:55
+Appearance has been put in on behalf of defendant nos. 7
+& 9.
+Ld. Counsel for defendant nos. 7 & 9 submit that
+compliance affidavits on their behalf have been filed. However,
+the same are not reflected on the Registry record.
+Put up for completion of pleadings on 10.05.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 19, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:55
+
+===== ORDER =====
+
+$~28
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 921/2023
+ZEE ENTERTAINMENT ENTERPRISES LIMITED
+..... Plaintiff
+Through: Mr. Vivek Kumar, Advocate
+versus
+ALL ROUNDER TV AND ORS ..... Defendant
+Through: Mr. Rahul Bajaj, Advocate for
+D-9
+Mr. Mrinal Ojha, Mr. Debarshi
+Dutta, Ms. Nikita Rathi,
+Advocates for D-7/Go Daddy.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 27.03.2024
+I.A. No. 6945/2024 filed by D-9 for exemption from filing
+apostilled affidavits.
+Issue notice. Notice accepted by the ld. Counsel for the
+plaintiff.
+In view of submissions of ld. Counsel and grounds
+mentioned in the application, the application is allowed subject to
+just exceptions.
+IA stands disposed off.
+I.A. No. 6949/2024 on behalf of defendant no. 9 for
+condonation of delay of 4 days in filing written statement.
+Issue notice. Notice accepted by the ld. Counsel for the
+plaintiff.
+Ld. Counsel for the plaintiff submits that he has no
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:55
+objection if the application is allowed.
+For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the plaintiff, application is
+allowed. Delay stands condoned. Written statement is taken on
+record. Replication be filed within the period permissible, as
+worked out from today.
+IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 27, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:55
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 921/2023
+ZEE ENTERTAINMENT ENTERPRISES LIMITED
+..... Plaintiff
+Through: Mr. Angad Singh Makkar,
+Mr. Vivek Kumar, Advocates
+versus
+ALL ROUNDER TV AND ORS ..... Defendant
+Through: Mr. Mrinal Ojha, Mr. Debarshi
+Dutta, Mr. Samyak Bilala,
+Advocates for D-7.
+Mr. Rahul Bajaj (VC), Advocate
+D-9.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 10.05.2024
+Compliance affidavits have been filed on behalf of
+defendant nos. 7 & 9. Same are on record.
+No replication is to be filed to the written statement qua
+defendant no. 9. None of the other defendants have put in
+appearance. All of them have been served in February’2020.
+Matter is already listed before the Hon’ble Court for
+13.05.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 13.05.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 10, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:54
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 921/2023, I.A. 25768/2023 & I.A. 25772/2023
+ZEE ENTERTAINMENT ENTERPRISES LIMITED ..... Plaintiff
+Through: Mr. Yatinder Garg, Mr. Angad ISngh
+Makkar and Mr. Vivek Kumar,
+Advocates.
+versus
+ALL ROUNDER TV AND ORS ..... Defendants
+Through: Mr. Rahul Bajaj, Advocate for D-9.
+Ms. Mrinal Ojha, Mr. Debarshi Datta
+and Ms. Tanya Chaudhary, Advocate
+for D-7.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 13.05.2024
+1. An ad interim injunction was passed on 12.01.2024 by this Court.
+Subsequent thereto, all defendants have been served. Only defendant no.7
+(GoDaddy.com, LLC) and defendant no.9 (Porkbun LLC) have entered
+appearance.
+2. It is stated by counsels for defendant nos.7 and 9 that the directions
+contained in paragraph 19 (b) and (c) of the said order have been duly
+complied with by them and the compliance affidavits have been placed on
+record; therefore, they seek to be deleted from the array of the parties.
+They undertake, on instructions, to comply with the directions of the Court,
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:53
+if any, passed in the future.
+3. Counsel for plaintiff states basis the said undertaking, he has no
+objection to the aforesaid defendants being deleted from the array of the
+parties.
+4. Based on this undertaking, defendant nos.7 and 9 are deleted from the
+array of the parties.
+5. If case any further directions are passed in relation to any domains
+which are registered by defendant nos.7 and 9, suitable directions will be
+passed by this Court at that stage and will be communicated to defendant
+nos.7 and 9 accordingly.
+6. List before the Joint Registrar on 22.05.2024.
+7. Order be uploaded on the website of the Court.
+ANISH DAYAL, J
+MAY 13, 2024/ssc/rj
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:53
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 921/2023
+ZEE ENTERTAINMENT ENTERPRISES LIMITED
+..... Plaintiff
+Through: Mr. Angad Singh Makkar,
+Mr. Vivek Kumar, Advocates
+versus
+ALL ROUNDER TV AND ORS ..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 22.05.2024
+Despite service of all the defendants in February‟2024, no
+written statement has been filed till date. Maximum permissible
+period to file a written statement has, however, not yet expired.
+Let written statement be filed as per rules.
+Put up for completion of pleadings on 09.08.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 22, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:53
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 921/2023
+ZEE ENTERTAINMENT ENTERPRISES LIMITED
+.....Plaintiff
+Through: Mr. Angad Singh Makkar,
+Mr. Vivek Kumar, Advocates
+versus
+ALL ROUNDER TV AND ORS. .....Defendant
+Through: D-21 is John Doe.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 09.08.2024
+1. Post the deletion of defendant no. 7 & 9 from the array,
+amended memo of parties has been filed and is on record. All the
+defendants have been served in the month of February’2024, the
+details of which are mentioned in the order dated 19.03.2024.
+Maximum permissible period of 120 days to file the written
+statement for all the defendants to file a written statement is over
+and consequently, their respective rights to file a written
+statement stand closed.
+2. In view of the above, put up before the Hon’ble Court on
+25.09.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 9, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:52
+
+===== ORDER =====
+
+$~29
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 921/2023, I.A. 25768/2023 & I.A. 25772/2023
+ZEE ENTERTAINMENT ENTERPRISES LIMITED.....Plaintiff
+Through: Mr. Manas Raghuvanshi and Angad
+Singh Makkar, Advocates.
+versus
+ALL ROUNDER TV AND ORS .....Defendants
+Through: None.
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 25.09.2024
+1. Hon’ble Judge is on leave today.
+2. Re-notify on 26th November, 2024.
+BY ORDER
+COURT MASTER
+SEPTEMBER 25, 2024
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:52
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 921/2023 & I.A. 25768/2023, I.A. 25772/2023
+ZEE ENTERTAINMENT ENTERPRISES LIMITED .....Plaintiff
+Through: Mr. Yatinder Garg, Mr. Angad Singh
+Makkar, Mr. Manas Raguvanshi, Mr.
+Vivek Kumar, Advocates (M:
+9667960678)
+versus
+ALL ROUNDER TV AND ORS .....Defendants
+Through: None.
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 26.11.2024
+1. The present suit has been filed for permanent injunction restraining
+the defendants from infringing the plaintiff’s exclusive rights by
+communicating, hosting, storing, reproducing, streaming, broadcasting the
+plaintiff’s work through their websites and revoke the domain name
+registrations and to block the access to various domain names, for damages
+and rendition of accounts, etc.
+2. The subject matter of the suit is the content on Zee5 and Zee Channels
+produced by the plaintiff. It is the case of the plaintiff that the defendants
+have no permission or authorization to reproduce, store, transit,
+communicate, make available for viewing, or provide access to any of the
+plaintiff’s content. It is the case of the plaintiff that rogue Apps actively and
+deliberately contribute to the infringement of the plaintiff’s copyrighted
+works. The rogue Apps provide an alternative to the legitimate sources, to
+CS(COMM)921/2023 Page1of3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:51
+the users without paying to enjoythe copyright protected works.
+3. Summons in the present suit were issued by this Court vide order
+dated 12th January, 2024. By the said order, interim orders were passed
+against the defendants, wherein, defendant nos. 1 to 4, i.e., main constituting
+parties, were restrained from, in any manner, communicating to the public,
+hosting, storing, reproducing, streaming, broadcasting, re-broadcasting,
+causing to be seen or heard by public on payment of charge and/or making
+available for viewing, including, plaintiff’s content through their websites or
+Apps.
+4. Except defendant no.9, no other defendant had filed their written
+statement.
+5. Defendant nos. 7 and 9 were deleted from array of parties vide order
+dated 13th May, 2024, after compliance with the directions, as passed by this
+Court vide order dated 12th January, 2024.
+6. The rights of the other defendants to file written statement were
+closed on 09th August, 2024, after the statutoryperiod expired.
+7. Learned counsel for the plaintiff submits that in view of the various
+directions passed bythis Court and in view of the various compliances being
+done by other defendants, the decree can be passed in favour of the plaintiff
+and the matter can be closed. He further submits that plaintiff is not pressing
+for anyCost and Damages.
+8. It is also noted that except defendant nos. 7 & 9, who have been
+deleted from the array of parties, no other defendant has ever put in an
+appearance, till date. Therefore, considering the submissions made before
+this Court, this Court is of the view that since no written statement has been
+filed by the defendants except defendant no.9, no useful purpose would be
+CS(COMM)921/2023 Page2of3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:51
+served in keeping the present suit pending and sending the same for trial.
+Thus, this Court in the case of Nirog Pharma Pvt. Ltd. Versus Umesh
+Gupta & Anr., 2016 SCC OnLine Del 5961, has held as follows:
+“xxxxxxxxx
+28.Thepresentsuitis alsoacommercialsuitwithinthedefinitionof
+the Commercial Courts, Commercial Division and Commercial
+Appellate Division of High Courts Act, 2015 and it was the clear
+intention of the legislature that such cases should be decided
+expeditiously and should not be allowed to linger on. Accordingly, if
+the defendant fails to pursue his case or does so in a lackadaisical
+manner by not filing his written statement, the courts should invoke
+theprovisionsofOrderVIIIRule10todecreesuchcases.
+xxxxxxxxx”
+(EmphasisSupplied)
+9. Thus, no plausible defence has been raised by the defendants and it is
+unlikelythat the defendants will succeed in the present proceedings.
+10. Accordingly, this Court invokes its authority under Order VIII
+Rule 10 of Code of Civil Procedure, 1908 (“CPC”) and proceeds to pass
+final directions in the present suit.
+11. Accordingly, the present suit is decreed in favour of the plaintiff and
+against the defendants in terms of Paragraph 68 (i), 68 (ii) (a), 68 (ii) (b) and
+68 (ii) (d).
+12. Decree sheet be drawn up.
+13. The present suit, along with pending applications, stands disposed of.
+MINI PUSHKARNA, J
+NOVEMBER 26, 2024
+au
+CS(COMM)921/2023 Page3of3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:51

@@ -1,0 +1,1008 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_909_2023
+case_status: PENDING
+n_orders: 14
+
+$~45 & 46
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 908/2023
+TEAM FRANCE 01 S A S .....Plaintiff
+Through: Mr Rajahekhar Rao, Senior Advocate
+with Mr Anandh Venkataramani, Mr
+Saket Satapathy, Mr Anubhav Dutta,
+Ms Mansi Tyagi, Ms Akshita Totla,
+Ms Vishakha Gupta, Mr J Shivam
+Kumar and Mr Rishit Vimadalal,
+Advocates
+versus
+SPICEJET LIMITED .....Defendant
+Through: Mr. Sandeep Sethi, Sr. Advocate with
+Mr. K.R. Sasiprabhu, Mr. Kartikeya
+Asthana and Ms. Sherya Sethi,
+Advocates
++ CS(COMM) 909/2023
+SUNBIRD FRANCE 02 S A S .....Plaintiff
+Through: Mr Rajahekhar Rao, Senior Advocate
+with Mr Anandh Venkataramani, Mr
+Saket Satapathy, Mr Anubhav Dutta,
+Ms Mansi Tyagi, Ms Akshita Totla,
+Ms Vishakha Gupta, Mr J Shivam
+Kumar and Mr Rishit Vimadalal,
+Advocates
+versus
+SPICEJET LIMITED .....Defendant
+Through: Mr. Sandeep Sethi, Sr. Advocate with
+Mr. K.R. Sasiprabhu, Mr. Kartikeya
+Asthana and Ms. Sherya Sethi,
+Advocates
+CS(COMM) 908/2023 & CS(COMM) 909/2023 Page 1 of 3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:12
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 15.07.2024
+I.A. 33280/2024 in CS(COMM) 908/2023
+I.A. 33281/2024 in CS(COMM) 909/2023
+1. These applications have been filed on behalf of plaintiff(s) placing on
+record the facts evidencing the non-compliance of the order dated
+29.05.2024 by the defendant.
+2. Learned senior counsel for the plaintiff(s) states that as is evident
+from paragraph ‘18’ of the applications, the defendant has defaulted in the
+schedule of payment recorded in the order dated 29.05.2024. He states that a
+sum of US$ 1,314,870.82 was outstanding as on 13.07.2024 and this status
+continues as on date.
+3. Issue notice. Learned counsel for the defendant accepts notice. Reply
+be filed by defendant within three weeks.
+3.1. Learned senior counsel for the defendant states that the facts set out in
+paragraph ‘18’ are correct and are a matter of record.
+3.2. He states, as on date, a sum of US$ 1,314,871 is outstanding. He has
+handed over the written instructions issued by the defendant to its banker
+dated 15.07.2024 for remitting a sum of US$ 4,80,000 to the plaintiff(s). He
+states that the amount shall be received by the plaintiff(s) either before the
+end of day today or tomorrow.
+4. He states on instructions that the balance outstanding amount of US$
+8,34,871 will be paid over to the plaintiff(s) on or before 26.07.2024. He
+states that in fact, the defendant will make an effort to remit the said amount
+CS(COMM) 908/2023 & CS(COMM) 909/2023 Page 2 of 3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:12
+even prior to 26.07.2024 and the extended period is being sought by way of
+abundant caution.
+4.1. He states further that the subsequent instalment for the period of 15-
+21.07.2024, which shall fall due on 21.07.2024 will be paid within the
+stipulated period as per the terms of the interim settlement recorded in the
+order dated 29.05.2024.
+5. In response, learned senior counsel for the plaintiff states that the
+aforesaid payments are being accepted without prejudice to the rights and
+contentions in the present application.
+6. List on 08.08.2024.
+MANMEET PRITAM SINGH ARORA, J
+JULY 15, 2024/
+rhc/sk
+CS(COMM) 908/2023 & CS(COMM) 909/2023 Page 3 of 3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:12
+
+===== ORDER =====
+
+$~36
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 909/2023
+SUNBIRD FRANCE 02 S A S .....Plaintiff
+Through: Mr. Anandh Venkataramani, Mr.
+Saket Satapathy, Mr. Anubhav Dutta,
+Ms. Mansi Tyagi, Ms. Akshita Totla,
+Ms. Vishakha Gupta and Mr.
+Devvrat, Advocates
+versus
+SPICEJET LIMITED .....Defendant
+Through: Mr. Sandeep Sethi, Senior Advocate
+with Mr. KR Sasiprabhu, Mr.
+Kartikeya Asthana, Advocates
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 31.07.2024
+I.A. 35008/2024 (under Section 151 CPC, 1908 seeking urgent orders
+and listing along with supporting affidavit)
+1. This is an application filed by the plaintiff for bringing on record the
+fact that the defendant has failed to comply with the statement made before
+this Court on 29.05.2024 and 15.07.2024.
+2. Plaintiff in this application seeks ad-interim ex-parte injunction
+restraining the defendant from operating engine having ESN 854096
+forthwith.
+3. Learned counsel for the applicant/plaintiff states that the Director of
+the defendant having made assurances to this Court must state on oath the
+reasons for the non-compliance of the same.
+4. Issue notice. Learned senior counsel for the defendant fairly states
+CS(COMM) 909/2023 Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:11
+that the facts set out in the application are true and correct.
+4.1. He states that there has been a default of the statements made before
+this Court and the contents of paragraph 22 and 23 are fairly accurate.
+4.2. He states that the defendant is currently raising funds and is hopeful
+that payments shall be made over to the plaintiff before the next date of
+hearing on 08.08.2024 failing which the defendant will file a reply of its
+responsible officer to this application on or before 07.08.2024.
+5. This Court has considered the submissions of the parties and in view
+of the admitted acts of liability and default, the Chief Financial Officer of
+the defendant is directed to file his affidavit in support of the reply to this
+application and remain present on the next date of hearing in case the
+payments are not regularised as per the schedule.
+6. List on 08.08.2024, the date already fixed.
+MANMEET PRITAM SINGH ARORA, J
+JULY 31, 2024/msh/sk/msh
+CS(COMM) 909/2023 Page 2 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:11
+
+===== ORDER =====
+
+$~5 & 6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 908/2023 & I.A. 33280/2024
+TEAM FRANCE 01 S A S .....Plaintiff
+Through: Mr Rajshekhar Rao, Sr. Advocate
+with Mr Anandh Venkataramani, Mr
+Saket Satapathy, Mr Anubhav Dutta,
+Ms Mansi Tyagi, Ms Akshita Totla,
+Mr Rishit Vimadalal and Mr Devvrat,
+Advocates
+versus
+SPICEJET LIMITED .....Defendant
+Through: Mr. Sandeep Sethi, Senior Advocate
+with Mr. KR Sasiprabhu, Mr.
+Kartikeya Asthana, Advocates
++ CS(COMM) 909/2023 & I.A. 33281/2024
+SUNBIRD FRANCE 02 S A S .....Plaintiff
+Through: Mr Rajshekhar Rao, Sr. Advocate
+with Mr Anandh Venkataramani, Mr
+Saket Satapathy, Mr Anubhav Dutta,
+Ms Mansi Tyagi, Ms Akshita Totla,
+Mr Rishit Vimadalal and Mr Devvrat,
+Advocates
+versus
+SPICEJET LIMITED .....Defendant
+Through: Mr. Sandeep Sethi, Senior Advocate
+with Mr. KR Sasiprabhu, Mr.
+Kartikeya Asthana, Advocates
+CS(COMM) 908/2023 & CS(COMM) 909/2023 Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:11
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 08.08.2024
+1. Learned senior counsel for the defendant has handed over an affidavit
+dated 08.08.2024 with a fresh proposal for making payments to the plaintiff.
+He states that the defendant is confident that it will be able to repay the dues
+of the plaintiff by September, 2024.
+2. Learned senior counsel for the defendant states that he will take
+instructions if the director of the defendant is willing to file his/her personal
+undertaking for the repayment of liability towards the plaintiff along with
+the disclosure of the assets owned by the said director for meeting the
+liability, in case of a default by the defendant Company.
+3. List on 12.08.2024 at 12:30 P.M.
+MANMEET PRITAM SINGH ARORA, J
+AUGUST 8, 2024/rhc/sk
+CS(COMM) 908/2023 & CS(COMM) 909/2023 Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:11
+
+===== ORDER =====
+
+$~43 & 44
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 908/2023 & I.A. 33280/2024
+TEAM FRANCE 01 S A S .....Plaintiff
+Through: Mr. Rajshekhar Rao, Sr. Advocate
+with Mr. Anandh Venkataramani, Mr.
+Saket Satapathy, Mr. Anubhav Dutta,
+Ms. Mansi Tyagi, Ms. Akshita Totla,
+Mr. Rishit Vimadalal and Mr.
+Devvrat, Advocates.
+versus
+SPICEJET LIMITED .....Defendant.
+Through: Mr. Sandeep Sethi, Senior Advocate
+with Mr. K. R. Sasiprabhu, Mr.
+Kartikeya Asthana, Advocates.
++ CS(COMM) 909/2023 & I.A. 33281/2024
+SUNBIRD FRANCE 02 S A S .....Plaintiff
+Through: Mr. Rajshekhar Rao, Sr. Advocate
+with Mr. Anandh Venkataramani, Mr.
+Saket Satapathy, Mr. Anubhav Dutta,
+Ms. Mansi Tyagi, Ms. Akshita Totla,
+Mr. Rishit Vimadalal and Mr.
+Devvrat, Advocates.
+versus
+SPICEJET LIMITED .....Defendant
+Through: Mr. Sandeep Sethi, Senior Advocate
+with Mr. KR Sasiprabhu, Mr.
+Kartikeya Asthana, Advocates.
+CS(COMM) 908/2023 Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:10
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 12.08.2024
+List for orders on 14.08.2024.
+MANMEET PRITAM SINGH ARORA, J
+AUGUST 12, 2024/Ni
+Click here to check corrigendum, if any
+CS(COMM) 908/2023 Page 2 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:10
+
+===== ORDER =====
+
+$~43 & 44
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 908/2023 & I.A. 36462/2024
+TEAM FRANCE 01 S A S .....Plaintiff
+Through: Mr. Rajshekhar Rao, Sr. Adv with Mr
+Anandh Venkataramani, Mr Saket
+Satapathy, Mr Anubhav Dutta, Ms
+Mansi Tyagi, Ms Akshita Totla, Ms
+Vishakha Gupta, Mr Rishit
+Vimadalal, Mr Devvrut, Advocates
+versus
+SPICEJET LIMITED .....Defendant
+Through: Mr. Sandeep Sethi, Sr. Advocate with
+Mr. K. R. Sasi Prabhu, Mr. Kartikeya
+Asthana and Mr. Manan Shishodia,
+Advocates
++ CS(COMM) 909/2023 & I.A. 36461/2024
+SUNBIRD FRANCE 02 S A S .....Plaintiff
+Through: Mr. Rajshekhar Rao, Sr. Adv with Mr
+Anandh Venkataramani, Mr Saket
+Satapathy, Mr Anubhav Dutta, Ms
+Mansi Tyagi, Ms Akshita Totla, Ms
+Vishakha Gupta, Mr Rishit
+Vimadalal, Mr Devvrut, Advocates
+versus
+SPICEJET LIMITED .....Defendant
+Through: Mr. Sandeep Sethi, Sr. Advocate with
+Mr. K. R. Sasi Prabhu, Mr. Kartikeya
+Asthana and Mr. Manan Shishodia,
+Advocates
+CS(COMM) 908/2023 & CS(COMM) 909/2023 Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:10
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 13.08.2024
+I.A. 36461/2024 in CS(COMM) 909/2023
+1. This application was mentioned earlier this morning for urgent listing.
+2. Arguments in I.A. No. 25664/2023, I.A. 33281/2024 and I.A. No.
+35008/2024 were reserved on 12.08.2024.
+3. Learned senior counsel for the defendant states that defendant seeks to
+make a revised offer of the methodology in which payments can be made to
+the plaintiff to comply with the terms of the order dated 29.05.2024. He
+relies upon the contents of the paragraph ‘4’ of the application. He states this
+offer is a supersession of the offer made on 12.08.2024.
+4. The plaintiff states on instructions that the aforesaid offer is not
+acceptable to the plaintiff and he states that the plaintiff is praying for the
+prayer of the return of the three Engines.
+5. The submissions of the respective partes are taken on record.
+6. The application stands disposed of.
+MANMEET PRITAM SINGH ARORA, J
+AUGUST 13, 2024/rhc
+CS(COMM) 908/2023 & CS(COMM) 909/2023 Page 2 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:10
+
+===== ORDER =====
+
+$~30 & 31
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 908/2023 & I.A. 33280/2024
+TEAM FRANCE 01 S A S .....Plaintiff
+Through: Mr. Rajshekhar Rao, Sr. Adv with Mr
+Anandh Venkataramani, Mr Saket
+Satapathy, Mr Anubhav Dutta, Ms
+Mansi Tyagi, Ms Akshita Totla, Ms
+Vishakha Gupta, Mr Rishit
+Vimadalal, Mr Devvrut, Advocates
+versus
+SPICEJET LIMITED .....Defendant
+Through: Mr. Sandeep Sethi, Sr. Advocate with
+Mr. K. R. Sasi Prabhu, Mr. Kartikeya
+Asthana and Mr. Manan Shishodia,
+Advocates
++ CS(COMM) 909/2023 & I.A. 33281/2024
+SUNBIRD FRANCE 02 S A S .....Plaintiff
+Through: Mr. Rajshekhar Rao, Sr. Adv with Mr
+Anandh Venkataramani, Mr Saket
+Satapathy, Mr Anubhav Dutta, Ms
+Mansi Tyagi, Ms Akshita Totla, Ms
+Vishakha Gupta, Mr Rishit
+Vimadalal, Mr Devvrut, Advocates
+versus
+SPICEJET LIMITED .....Defendant
+Through: Mr. Sandeep Sethi, Sr. Advocate with
+Mr. K. R. Sasi Prabhu, Mr. Kartikeya
+Asthana and Mr. Manan Shishodia,
+Advocates
+CS(COMM) 908/2023 and CS(COMM) 909/2023 Page 1 of 21
+% Date of Decision: 14th August, 2024
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+J U D G M E N T(ORAL)
+Brief Facts
+1. CS(COMM) 908/2023 has been filed by the plaintiff for seeking a
+direction to the defendant to handover possession of Engines ESN 602805
+and ESN 602776 in view of the fact that the two (2) separate Lease
+Agreements executed on 14.12.2018 (‘Lease Agreement’) have since been
+terminated by the plaintiff vide termination notice dated 16.05.2023 issued
+by the plaintiff under Clause 20 of the Lease Agreement.
+1.1 It is stated that following the termination the plaintiff had directed the
+defendant to ground and re-deliver the Engines and pay all the outstanding
+dues.
+1.2 It is stated that on 29.11.2023 plaintiff issued a notice to the defendant
+for inspection, grounding and re-delivery of the Engines directing the latter
+to immediately cease, halt all operations and ground the Engines on or
+before 30.11.2023.
+1.3 It is stated that since the defendant failed to comply with the aforesaid
+notices of termination, the plaintiff was constrained to file the present suit
+for seeking specific performance of the defendant’s post termination
+obligations and for seeking repossession of the two (2) Engines.
+2. CS(COMM) 909/2023 has been filed by the plaintiff with respect to
+Engine ESN 854096 leased out to the defendant under the Engine Lease
+Agreement entered on 29.03.2018 (‘Lease Agreement’), as novated by the
+CS(COMM) 908/2023 and CS(COMM) 909/2023 Page 2 of 21
+Engine Novation Agreement dated 26.11.2020. The said agreement was
+terminated vide notice dated 16.05.2023 issued by the plaintiff under Clause
+20 of the Lease Agreement following the persistent defaults by the defendant
+in payment of rent reserved under the said agreement.
+3. It is stated that on 29.11.2023 the plaintiff had issued a notice for
+inspection, grounding and re-delivery of the said Engine to the defendant
+directing the latter to immediately cease, halt all operations and ground the
+Engine on or before 30.11.2023. However, since the defendant failed to
+comply with the said notices of termination and re-delivery, the plaintiff had
+filed the present suit for seeking specific performance of the defendant’s
+post termination obligations and for seeking re-possession of the said
+Engine.
+4. The subject matter of both the suits is therefore grounding and re-
+delivery of ESN 602805, ESN 602776 and ESN 854096 (‘three Engines’ or
+‘Engines’) as per the terms of the respective lease agreements i.e. Lease
+Agreement.
+5. Learned senior counsel for the plaintiff stated that after the institution
+of the present suit the defendant undertook to this Court on 29.05.2024 to re-
+pay the outstanding lease amounts along with the weekly payments for the
+current use of the Engines and in view of the said undertaking the defendant
+was permitted to continue the use of the Engines under the aegis of this
+Court despite the notices of termination.
+5.1 He stated, however, since the defendant had failed to comply with the
+undertaking given to this Court on 29.05.2024, the defendant is obliged to
+ground the three (3) Engines and return them forthwith as per paragraph
+4(iii) of the order dated 29.05.2024.
+CS(COMM) 908/2023 and CS(COMM) 909/2023 Page 3 of 21
+5.2 He stated that as on 12.08.2024 USD 17,771,764.03 (USD 17.7
+million approx.) has become due and recoverable from the defendant under
+the Lease Agreements. He stated that defendant has paid a sum of USD
+8,360,384.93 (USD 8.36 million) since the filing of this suit and therefore,
+the total outstanding as on date is USD 9,411,379.1 (USD 9.41 million).
+6. In reply, learned senior counsel for the defendant stated that in terms
+of the fiscal obligations assumed under order dated 29.05.2024 there has
+been a default by the defendant in making payments and an amount of USD
+2,674,871 is overdue as on date.
+6.1 He however, stated that the defendant will endeavour to repay the said
+overdue payments by 30.09.2024 along with the payments falling due during
+the intervening period of 19.08.2024 to 30.09.2024 as per the order dated
+29.05.2024.
+7. In view of the admitted position as regards outstanding dues towards
+the plaintiff and breach of the timeline set out in order dated 29.05.2024,
+more specifically the undertaking of the defendant agreeing to grounding of
+the Engines upon such breach as per paragraph 4(iii) of the order dated
+29.05.2024, the present suits are hereby directed to be registered.
+8. Mr. R.S. Prabhu, Advocate appearing on behalf of the defendant
+accepts summons. He confirms the receipt of the suit paperbook and waives
+the right of formal service of summons.
+9. Written statement shall be filed within thirty (30) days commencing
+from today. Along with the written statement, the defendant shall also file
+affidavit of admission/denial of the documents of the plaintiff, without
+which the written statement shall not be taken on record.
+CS(COMM) 908/2023 and CS(COMM) 909/2023 Page 4 of 21
+10. Liberty is given to the Plaintiff to file replication within 15 days of the
+receipt of the written statement. Along with the replication, if any, filed by
+the Plaintiff, affidavit of admission/denial of documents of the Defendant, be
+filed by the Plaintiff, without which the replication shall not be taken on
+record.
+11. It is made clear that any party unjustifiably denying documents would
+be liable to be burdened with costs.
+12. If any of the parties wish to seek inspection of any documents, the
+same shall be sought and given within the timelines.
+13. List before the learned Joint Registrar (J) for completion of pleadings
+on 16.10.2024.
+14. List before the Court on 28.01.2025.
+I.A. No. 25662/2023, I.A. No. 33280/2024 and I.A. No. 35024/2024 in
+CS(COMM) 908/2023
+I.A. No. 25664/2023, I.A. No. 33281/2024 and I.A. No. 35008/2024 in
+CS(COMM) 909/2023
+15. In the initial applications filed under Order XXXIX Rules 1 and 2
+Code of Civil Procedure, 1908 (‘CPC’) the plaintiff seeks common relief of
+restraining the defendant from operating Engines having ESN 602805, ESN
+602776 and ESN 854096. The plaintiff also seeks a direction to the
+defendant to ground the said three (3) Engines and not to use or operate the
+said Engines. The plaintiff seeks a further direction to the defendant to re-
+deliver the Engines to the re-delivery location provided in the Lease
+Agreements at its own costs as contemplated in the Clauses 20.1.(c) of
+Lease Agreements.
+15.1 In the subsequent applications, the plaintiff has referred to the breach
+of undertaking given by the defendant to this Court on 29.05.2024 with
+CS(COMM) 908/2023 and CS(COMM) 909/2023 Page 5 of 21
+respect to timely payments for liquidating the outstanding and making
+payments towards the concurrent usage charges of the Engines to enable the
+defendant to continue the use of the Engines despite the termination of lease.
+15.2 The plaintiff in these subsequent applications has sought the similar
+relief of restraint against the defendant from operating the Engines and a
+direction to the defendant to ground the said Engines to facilitate re-delivery
+of the Engines to the plaintiff after granting the plaintiff inspection of the
+said Engines and records pertaining thereto.
+Arguments of the plaintiff
+16. Learned senior counsel for the plaintiff stated that the Lease
+Agreements qua the three (3) Engines were terminated in May, 2023. He
+stated that the lease agreements were terminated after the defendant
+defaulted in payment of outstanding dues.
+16.1 He stated that two (2) prior notices of default of payments were issued
+to the defendant and since the defendant failed to cure the default the
+plaintiff was constrained to terminate the lease agreements.
+16.2 He stated that the defendant despite service of the notice of
+termination dated 16.05.2023 continued to use the three (3) Engines.
+16.3 He stated that on the date of filing the present suits in December, 2023
+a sum of USD 12,969,409 (USD 12.96 million) had become due and
+outstanding. He stated that after accounting for the payments made by the
+defendant during the pendency of these proceedings between December,
+2023 and August, 2024 a sum of USD 9,411,379 (USD 9.41 million) is
+outstanding as on 12.08.2024.
+16.4 He stated that a perusal of the orders dated 29.01.2024, 29.04.2024,
+01.05.2024, 03.05.2024 and 29.05.2024 would evidence that the defendant
+CS(COMM) 908/2023 and CS(COMM) 909/2023 Page 6 of 21
+on each of the said date has held out assurances to this Court and the
+plaintiff that it will liquidate the outstanding and the concurrent usage
+charges within the time sought from the Court. He stated that, however, a
+perusal of the orders dated 15.07.2024, 31.07.2024 and 08.08.2024 would
+evidence that the defendant has defaulted on all the assurances held out
+before this Court.
+16.5 He stated that on 29.05.2024 this Court had recorded the interim
+arrangement between the parties to enable the defendant to continue the use
+of the three (3) Engines. He stated that the defendant has defaulted in the
+said payment schedule and as on date the defendant is in default of payment
+of USD 2,674,870.82 (USD 2.67 million) as per the order dated 29.05.2024.
+He stated that these defaults of the admitted amounts due and payable by the
+defendant, as the Court on 29.05.2024 had excluded the disputed amounts
+from the scope of the schedule of payments.
+16.6 He stated that the defendant’s offer at paragraph 17 in its affidavit
+dated 08.08.2024 for re-scheduling the payment schedule agreed on
+29.05.2024 and the offer to accept settlement of a portion of the outstanding
+amount through issuance of equity shares of the Managing Director
+Mr. Ajay Singh in the defendant company is not acceptable to the plaintiff.
+He stated that the offer made by the defendant to pledge the shares owned
+by the Managing Director Mr. Ajay Singh in the defendant company to
+secure the outstanding payments is not acceptable as the said security is not
+reliable due to the volatility of the said shares on the stock exchange.
+16.7 He stated in addition, the plaintiff is of the view that the defendant has
+acted in wilful default of the undertaking given to this Court on 29.05.2024
+with respect to making timely payments and, therefore, the plaintiff has no
+CS(COMM) 908/2023 and CS(COMM) 909/2023 Page 7 of 21
+confidence in the assurances held out by the defendant in the affidavit dated
+08.08.2024. He stated, therefore, that the plaintiff is entitled to strict
+compliance of the undertaking given by the defendant to this Court on
+29.05.2024 under para 4(iii) as regards immediate grounding of the Engines.
+16.8 He stated that the defendant’s actions are not bona fide. He stated that
+the defendant has made sporadic payments after 29.05.2024 only when the
+plaintiff filed applications pointing out the defaults by the defendant to this
+Court. He stated that this conduct of making payment each time when it
+appears to the defendant that the Court will issue directions for grounding
+shows that the defendant despite having means is wilfully withholding
+payments due to the plaintiff.
+16.9 He stated that defendant’s plea with respect to irreparable loss is
+without merits. He stated that earlier in December, 2023, the defendant had
+urged before this Court that interim orders be deferred due to the Holiday
+season as the passengers would be inconvenienced and persuaded this Court
+to extend the time. He stated that however in the order dated 29.05.2024 the
+defendant undertook before this Court at para 4 (iii) that in case of any
+default in payments as per the schedule recorded in the said order, the
+defendant would ground the three (3) Engines and return them within fifteen
+(15) calendar days without specific Court order to that effect. He stated that,
+therefore, the defendant ought not to have booked flight tickets with respect
+to the aircrafts flying with the three (3) Engines being fully aware that it has
+defaulted in the due payments.
+16.10 He stated that it is the plaintiff who is suffering irreparable loss as the
+Engines are depreciating asset and with the defendant continuing to use the
+Engines regularly for 12-14 hours a day, the Engines are wearing out and the
+CS(COMM) 908/2023 and CS(COMM) 909/2023 Page 8 of 21
+plaintiff herein is not even being paid the amounts due to it towards the
+concurrent user charges; in addition to the admitted outstanding.
+Arguments of the defendant
+17. In reply, learned senior counsel for the defendant stated that after the
+filing of the present suit the defendant has made a payment of USD
+7,185,256 (USD 7.18 million) between 14.12.2023 and 24.05.2024.
+17.1 He stated that after the settlement terms were recorded before this
+Court on 29.05.2024 the defendant has made a payment of USD 1,485,129
+(USD 1.48 million). He stated that as on 12.08.2024 there is an admitted
+default to the extent of USD 2,674,871 (USD 2.67 million) towards the
+outstanding as per order dated 29.05.2024.
+17.2 He stated that while the defendant admits that there has been default,
+however, the defendant is making its best endeavour to regularise these
+defaults. He stated that the defendant seeks extension of time until
+30.09.2024 to clear the outstanding payments.
+17.3 He stated that the defendant remains willing to secure the outstanding
+amount of USD 2,674,871 (USD 2.67 million) by making a payment of
+USD 1 million on or before 16.08.2024 and securing USD 1.67 million by
+mortgaging one of its unencumbered aircraft or by pledging the
+unencumbered shares of equal value owned by Mr. Ajay Singh, the
+Managing Director in the defendant company or by furnishing his personal
+guarantee.
+17.4 He stated that, in addition, the defendant is willing to continue to pay
+the weekly installment of USD 160,000 falling due on each Friday until
+30.09.2024 apart from the monthly installment as per the timelines agreed in
+the order dated 29.05.2024. The aforesaid offer has also been reduced in
+CS(COMM) 908/2023 and CS(COMM) 909/2023 Page 9 of 21
+writing in I.A. No. 36461/2024 which stands disposed of vide order dated
+13.08.2024.
+17.5 He stated that Mr. Ajay Singh is willing to secure the plaintiff against
+the volatility in the share values by undertaking to top-up the pledge if such
+an event occurs prior to 30.09.2024.
+17.6 He stated that the defendant is expecting to raise fresh equity of
+approximately USD 350 million through Qualified Institutional Placement
+(‘QIP’) within the period ending 30.09.2024 and, therefore, it is seeking
+additional time to make payment of the outstanding dues of USD 2.67
+million which has fallen due as on date.
+17.7 He stated that if a direction is issued by this Court for grounding the
+three (3) Engines it shall cause grave loss to the defendant. He stated that the
+defendant has a fleet of 21 aircrafts. He stated that two (2) Engines are
+required for each plane and if three (3) Engines are grounded the defendant
+will have to ground two (2) aircrafts. He stated that this will cause grave
+inconvenience to the flyers since flights have been booked weeks in
+advance. He stated that the flying schedule will be put to disarray.
+17.8 He stated that though the defendant has admitted to its liability in the
+orders passed by this Court including 29.05.2024, in case the plaintiff insists
+on grounding of the Engines, the defendant reserves its rights to raise
+objections to the territorial jurisdiction of this Court to entertain the present
+suit in view of the exclusive jurisdictional clause to the Courts of England
+under the Lease Agreements.
+Analysis and Findings
+18. This Court has considered the submission of the parties and perused
+the record.
+CS(COMM) 908/2023 and CS(COMM) 909/2023 Page 10 of 21
+19. Before dealing with the submissions of the parties, it would be
+relevant to note the admissions of the defendant qua its liability recorded in
+the Court proceedings. The first relevant order is of 29.01.2024, when the
+Court deferred the orders for grounding the Engine on the assurance held out
+by the defendant undertaking to make payment of USD 4 million by
+15.02.2024. The relevant portion of the order reads as under:
+“4. The Court has heard the parties. In terms of the order dated 19th
+December, 2023, it is submitted by ld. Senior Counsel that the amount of
+450,000 USD has been paid. However, no further amounts have been paid.
+It is noticed that the Defendant has also received some substantial funding
+and after having seen the settlement proposals which were exchanged
+between the parties, the Court is inclined to direct the Defendant to make a
+payment of 4 million USD by 15th February, 2024 to the Plaintiff in both
+the matters. Ordered accordingly.
+5. If the said payment is not made, the Court would be constrained to pass
+orders in respect of the engines which are being used as the admitted dues,
+are stated to be more than 20 million USD.
+6. List on 22nd February, 2024.”
+(Emphasis supplied)
+19.1 It is a matter of record that the payment of USD 4 million was paid
+albeit with delay, which led to the Court passing an order dated 28.03.2024,
+which recorded that the defendant shall make current payment for the use of
+three (3) Engines for the month of March, 2024 pending a mutual resolution
+between the parties for the payment of the outstanding amount. However,
+the defendant defaulted in making the payment towards the current use of
+the Engines for the month of March, 2024 as per the said order and this
+default was recorded in the subsequent order dated 29.04.2024. The relevant
+portion of the order reads as under:
+“5. As per the last order, payments for the three engines for the previous
+month i.e., March, 2024 were to be made. According to Mr. Sandeep Sethi,
+Id. Sr. Counsel appearing for Spice Jet a sum of 160,000 US Dollars has
+been made in compliance of the order passed by this Court on 28th March,
+2024, on the same day, i.e., 28th March, 2024 itself. This is refuted on behalf
+CS(COMM) 908/2023 and CS(COMM) 909/2023 Page 11 of 21
+of the Plaintiff who submits that there was a settlement proposal which was
+made by Spice Jet for payment of 160,000 US Dollars per week. Ld. Counsel
+for the Plaintiffs further submits that only for three weeks, the said
+payment the said payment of 160,000 US Dollars has been made and no
+payment has been made for the month of March 2024 for either the basic
+rental or the usage charges.
+6. Mr. Om Kumar, General Manager, Legal, of the Defendant is unable to
+confirm if any payment for usage charges has been made for the month of
+March for all the three engines. It is submitted that one engine is grounded.
+Even then the usage charges for two engines ought to have been made
+which could not have been the amount of 160,000 US Dollars as the usage
+charges are completely different for the engines. Clearly, there has been
+noncompliance of the order passed by this Court on 28th March, 2024.
+7. Mr. Sethi, Id. Senior Counsel submits that he would file an affidavit by
+tomorrow i.e., 30th April, 2024 confirming as to how the payment for the
+month of March, 2024 has in fact being made.
+8. If the Defendant has not made the payment for the month March,
+clearly, the three engines would be liable to be grounded.
+9. An authorised representative of SpiceJet, who is well versed with the
+financial transactions being undertaken with the Plaintiffs shall be present in
+Court on the next date of hearing, in person, so that if required, the statement
+of the authorised representative of SpiceJet can be recorded.
+10. List on 1st May, 2024.”
+(Emphasis supplied)
+19.2 Thereafter, this Court vide order dated 01.05.2024 took note of the
+non-compliance by the defendant of the statements made before the Court
+on 28.03.2024 and 29.04.2024 with respect to the payments due to the
+plaintiff. The Court reiterated that the plaintiff’s prayer for grounding of
+Engines is liable to be allowed in view of the admitted defaults. However,
+by way of last opportunity, the defendant was granted indulgence to take
+instructions for making payments of an amount of INR 50 crores. The
+relevant portion of the order reads as under:
+“4. Today, Mr. Kartikeya Asthana, ld. Counsel with instructions from Mr.
+Devjeet Ghosh and Mr. Om Kumar submits that the Defendant has all
+intentions to make the payments to the Plaintiffs in accordance to the orders
+of this Court dated 28th March, 2024 and 29th April, 2024. The ld. Counsel
+further submits that grounding of the engines would cause irreparable
+CS(COMM) 908/2023 and CS(COMM) 909/2023 Page 12 of 21
+injuries to the Airline and also cut out further resources of revenue as two
+aircrafts would have to be grounded by the Defendant.
+5. It is submitted by Mr. Kartikeya Asthana, Id. Counsel that payment for
+the month of March, 2024 has been made as a sum of 160,000 US Dollars
+has been paid on 1st March, 2024, 15th March, 2024, 28th March, 2024
+and 23rd April, 2024. Thus, a total of 680,000 US Dollars is paid. This itself
+establishes the bonafide of the Defendant. The ld. Counsel further submits
+that the Defendant has been actively negotiating with the Plaintiffs and has
+agreed for certain proposals as well.
+6. A perusal of the chart which has been handed over by the Plaintiffs today
+would show that the total dues including the past dues and the current dues is
+in the range of 10.84 million dollar i.e. approximately Rs. 90 crores.
+7. Considering the past conduct of the Defendant where there has been
+default on payment of even the monthly engine use charges, however,
+bearing in mind the recent payments of approximately 680,000/- US
+Dollars, the Court is inclined to give one last opportunity to the Defendant
+to pay a sum of Rs.50 crores within a reasonable time. If the said amount
+cannot be paid by the Defendant, the Court would have no option but to
+ground the three engines which belong to the Plaintiffs. In addition, it is
+recorded that out of the three engines, one engine has already been grounded
+by the Defendant.
+8. Ld. Counsel for the Defendant may, accordingly, take instructions on the
+following:-
+i) Time period for depositing Rs.50 crores.
+ii) Whether the one grounded engine can be returned to the Plaintiffs and if
+so, by when.
+9. List on 3rd May, 2024.”
+(Emphasis supplied)
+19.3 In the aforesaid background when the Court had made it amply clear
+to the defendant that the three (3) Engines are liable to be grounded, the
+defendant entered into an interim arrangement with the plaintiff to pay the
+undisputed and admitted amount in a time bound manner with the first date
+of payment starting on 08.06.2024 and with the last payment falling due on
+30.09.2024. The detailed terms of the agreement arrived between the parties
+was recorded by the Court and in view of the said undertaking given by the
+defendant, this Court was persuaded to permit the defendant to continue the
+CS(COMM) 908/2023 and CS(COMM) 909/2023 Page 13 of 21
+use of the three (3) Engines. The relevant portion of the order dated
+29.05.2024 read as under:
+“4. Thereafter, the proposals which were handed over by the Plaintiff have
+been considered by the Defendant. There is some objection to the text of the
+proposals. Accordingly, the Court broadly records the terms on which the
+parties have agreed as an interim arrangement. The said terms are set out
+below:-
+i) The Plaintiff is willing to accept a payment of US$ 4.8 million as an
+interim arrangement amount to allow the Defendant to continue to use the
+three engines. This is acceptable to the Defendant, who has agreed to pay
+the same in four separate instalments of US$ 1.2 million as per the
+following payment schedule:-
+a) USD 1.2 M (Rs.9,96,70,500) by 30th June, 2024
+b) USD 1.2 M (Rs.9,96,70,500) by 31st July, 2024
+c) USD 1.2 M (Rs.9,96,70,500) by 31st August, 2024
+d) USD 1.2 M (Rs.9,96,70,500) by 30th September, 2024
+ii) In addition, the Defendant has also agreed to start making weekly
+payments of US $160,000 per week, which would include both the basic
+rent and maintenance accrual (usage charges) commencing from 8th June,
+2024 on a weekly basis till 30th September, 2024.
+iii) If any of the payments set out above is missed by the Defendant, the
+Defendant would be liable to ground the three engines and return them
+within fifteen calendar days without the specific Court order to this effect,
+so long as there is no order to the contrary.
+iv) The payments in terms of Clause 1 and Clause 2 are mutually exclusive
+to each other.
+v) In the event that the Engine ESN 854096 becomes unserviceable, the
+Defendant would be required to immediately return the said Engine to the
+Plaintiff without any delay.
+vi) If the said engine is returned, the proportionate adjustment in the weekly
+payments shall accordingly be given to the Defendant.
+5. According to the Plaintiff, after the above payments are made, there would
+be outstanding US$ 3,633,255.09, which as per the Defendant would be
+subject to reconciliation. Parties shall discuss the payment plan in respect of
+the outstanding rent subject to reconciliation.
+6. The above interim arrangements shall continue to operate till September,
+2024 subject to compliance of which, the Defendant is free to continue using
+the Aircraft and engines.
+7. List on 8th August, 2024.”
+(Emphasis supplied)
+CS(COMM) 908/2023 and CS(COMM) 909/2023 Page 14 of 21
+19.4 From the aforesaid orders dated 29.01.2024, 28.03.2024, 29.04.2024,
+01.05.2024, 03.05.2024 and 29.05.2024, it is clear that the Court was
+persuaded to defer the orders of the grounding of three (3) Engines on the
+assurances held out by the defendant that it shall clear the admitted
+outstanding dues. In view of the said assurances, the objection now sought
+to be raised by the defendant qua the lack of territorial jurisdiction of this
+Court to entertain this suit is not bona fide. The defendant has expressly
+submitted to the jurisdiction of this Court as is evidenced from the aforesaid
+orders and has obtained favourable orders for itself by representing to the
+Court that it shall make good the outstanding to the plaintiff. The objection
+to the jurisdiction of this Court is therefore without any merit and the said
+objection is hereby rejected. In fact, the defendant as late as on 13.08.2024
+has filed I.A. No. 34641/2024 duly supported by an affidavit placing on
+record its undertaking to make payments in accordance with the schedule of
+payment recorded in order dated 29.05.2024 and praying for deferment of
+orders of grounding the three (3) Engines. The defendant cannot be thus
+permitted to approbate and reprobate from its assurances and undertakings
+to this Court.
+20. The defendant repeatedly defaulted in making payments of the
+installment leading the plaintiff to file I.A. Nos. 35024/2024 and
+33280/2024 in CS(COMM) 908/2023 and I.A. Nos. 33281/2024 and
+35008/2024 in CS(COMM) 909/2023 to bring the said fact on record. The
+said applications were listed before this Court on 15.07.2024 and 31.07.2024
+respectively. The defendant sought time to regularize the payments on these
+dates and sought an adjournment until 08.08.2024, however, the defendant
+has been unable to regularize these payments.
+CS(COMM) 908/2023 and CS(COMM) 909/2023 Page 15 of 21
+21. Initially, on 12.08.2024 during the course of arguments the defendant
+prayed for deferment of all installments falling due between 12.08.2024 to
+30.09.2024, until 30.09.2024. The defendant also sought deferment of the
+payment of the outstanding amount of USD 2.67 million as on date until
+30.09.2024. The orders were reserved in these applications on 12.08.2024,
+thereafter, the defendant filed an application I.A. No. 36461/2024 on
+13.08.2024 with a revised offer to make the payments in the following
+manner:
+“4. It is now submitted that, under the interim arrangement, the amount
+outstanding is USD 2,674,871 after considering the payment of USD
+160,000 paid on 12 Aug 2024. SpiceJet will make a further payment of
+USD 1,000,000 on or before 16 Aug 2024 and for the balance USD
+1,674,871, SpiceJet is willing to either mortgage one Q400 aircraft, or
+pledge shares owned by Mr. Ajay Singh or his personal guarantee. SpiceJet
+will also continue to pay the weekly instalment of USD 160,000 each
+Friday from 23 Aug 2024 onwards (inclusive) until 30 Sep 2024 and apart
+from the monthly instalment as per the previous agreed timelines.”
+(Emphasis supplied)
+The abovesaid offer at the outset was rejected by the plaintiff. The
+plaintiff’s rejection of the said proposal for security offered by the defendant
+in lieu of the outstanding payments cannot be faulted. The said security has
+been offered as a substitution for the payment obligations undertaken by the
+defendant in the order dated 29.05.2024. The terms of the order dated
+29.05.2024 were based on mutual consent and the said terms cannot be
+unilaterally altered by the defendant. Moreover, the plaintiff has rented out
+the Engines in lieu of payment of rent and therefore rejection of any further
+deferment of payment is the prerogative of the plaintiff. The Lease
+Agreement stood terminated in May 2023 and the plaintiff cannot be
+CS(COMM) 908/2023 and CS(COMM) 909/2023 Page 16 of 21
+compelled to permit the defendant to use the Engine without complying with
+the agreed terms of the order dated 29.05.2024.
+22. Upon a perusal of the orders passed in these proceedings, this Court is
+of the considered opinion that defendant has been extremely erratic in
+making payments to the plaintiff for its admitted dues. In fact, a perusal of
+the intermittent payments made by the defendant after 29.05.2024 shows
+that effectively the defendant has only made payments towards the
+concurrent usage charges for three (3) Engines and the original outstanding
+has still not been liquidated. The table filed by the defendant with I.A. No.
+33280/2024 enumerating the payments made by it after 29.05.2024 is
+reproduced here under and it amply evidences the default of the defendant:
+Due Amt. Amount Paid Net Payable Date of Cumulative
+Date Payable as Payment Payable
+per Interim
+Settlement
+03-Jun- $ 160,000 $ 160,000 - 05-Jun-24
+24
+10-Jun- $ 160,000 $ 160,000 - 25-Jun-24
+24
+17-Jun- $ 160,000 - $ 160,000 $ 160,000
+24
+24-Jun- $ 160,000 - $ 160,000 $ 320,000
+24
+30-Jun- $1,200,000 - $1,200,000 $ 1,520,000
+24
+01-Jul-24 $ 160,000 $525,129 $ (365,129) 1-Jul-24 $ 1154,871
+08-Jul- $ 160,000 - $ 160,000 $ 1,314,871
+24
+15-Jul-24 $ 160,000 $ 480,000 $ (320,000) 19-Jul-24 $ 994,871
+CS(COMM) 908/2023 and CS(COMM) 909/2023 Page 17 of 21
+22-Jul- $ 160,000 - $ 160,000 $ 1154,871
+24
+29-Jul- $ 160,000 - $ 160,000 $ 1,314,871
+24
+31-Jul- $1,200,000 - $1,200,000 $ 2,514,871
+24
+05-Aug- $ 160,000 - $ 160,000 $ 2,674,871
+24
+12-Aug- $ 160,000 $ 160,000 - 12-Aug-24 $ 2,674,871
+24
+19-Aug- $ 160,000 - $ 160,000 $ 2,834,871
+24
+26-Aug- $ 160,000 - $ 160,000 $ 2,994,871
+24
+31-Aug- $1,200,000 - $1,200,000 $ 4,194,871
+24
+02-Sep- $ 160,000 - $ 160,000 $ 4,354,871
+24
+09-Sep- $ 160,000 - $ 160,000 $ 4,514,871
+24
+16-Sep- $ 160,000 - $ 160,000 $ 4,674,871
+24
+30-Sep- $1,200,000 - $1,200,000 $ 5,874,871
+24
+Total $ 7,360,000 $ 1,485,129 $ 5,874,871
+(Emphasis supplied)
+23. The directions for grounding of the Engines have been recorded by
+this Court in order dated 29.04.2024, 01.05.2024 and with the consent of the
+defendant on 29.05.2024. The statement of the defendant conceding that the
+Engines would be liable to be grounded in case of any default has been
+CS(COMM) 908/2023 and CS(COMM) 909/2023 Page 18 of 21
+expressly recorded in paragraph 4 (iii) of the order dated 29.05.2024, which
+reads as under:
+iii) If any of the payments set out above is missed by the Defendant, the
+Defendant would be liable to ground the three engines and return them
+within fifteen calendar days without the specific Court order to this effect,
+so long as there is no order to the contrary.
+(Emphasis supplied)
+24. The defendant having conceded to the said consequence on default of
+payments is estopped from raising the plea of irreparable injury to its
+business or inconvenience to its passengers. The plaintiff is right in
+contending that the defendant was conscious of the consequences of the
+default of the payments and would therefore have been well-advised to stop
+accepting bookings for the aircrafts flying the three (3) Engines.
+25. The plaintiff contends that a sum of USD 9.41 million is outstanding
+as on 12.08.2024. The defendant admits that a sum of USD 2.67 million is
+outstanding towards the plaintiff as on 12.08.2024 and an amount of USD
+5.87 million will become due and payable on 30.09.2024, if the defendant is
+permitted to continue the use of the Engines.
+26. In view of the unequivocal admissions of the defendant qua its
+liability towards the plaintiff recorded in the orders and also in its last
+affidavit dated 08.08.2024 and 13.08.2024, the plaintiff has made out more
+than a prima facie case for grant of reliefs sought in captioned interim
+applications for restraining the defendant from operating the three (3)
+Engines and issuing direction to the defendant to remove the Engines from
+the aircrafts and ground the same for it to be redelivered to the plaintiff.
+CS(COMM) 908/2023 and CS(COMM) 909/2023 Page 19 of 21
+27. This Court also finds favour in the submission of the plaintiff that it is
+suffering irreparable loss due to continuing use of Engines by the defendant
+as engines are a depreciating asset which suffer wear and tear.
+28. The defendant is a defaulter and has no legal and contractual right to
+continue the use of the Engines. The inability of the defendant to pay the
+admitted outstanding dues is writ large on the face of the record and infact
+permitting the defendant to continue the use of the Engines without payment
+would only cause the financial distress to the plaintiff and therefore, the
+balance of convenience is against the defendant and in favour of the
+plaintiff.
+29. In view of the aforesaid findings, this Court has no option but to direct
+the defendant to ground the three (3) Engines with effect from 16.08.2024.
+29.1 The defendant will take steps to ensure that the Engines are re-
+delivered to plaintiff within fifteen (15) days from today.
+29.2 To this effect, the defendant is directed to offer prior inspect
+
+[TRUNCATED — rights are established in the opening orders above]

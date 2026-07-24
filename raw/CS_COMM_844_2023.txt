@@ -1,0 +1,533 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_844_2023
+case_status: DISPOSED
+n_orders: 2
+
+$~68
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 844/2023 & I.A. 23488-92/2023
+HIMALAYA WELLNESS COMPANY & ORS. ..... Plaintiff
+Through: Mr. Pravin Anand, Prachi Agarwal &
+Ms. Ridhie Bajaj, Advs.
+versus
+PRK PRODUCTIONS LLP ..... Defendant
+Through: None.
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 24.11.2023
+1. This hearing has been done through hybrid mode.
+I.A.23492/2023 (for exemption)
+2. This is an application filed by the Plaintiffs seeking exemption from
+filing Original/certified/translated copies of documents with proper margins,
+etc. Original documents shall be produced/filed at the time of
+Admission/Denial, if sought, strictly as per the provisions of the
+Commercial Courts Act, 2015 and the DHC (Original Side) Rules, 2018.
+3. Exemption is allowed, subject to all just exceptions. Accordingly, the
+application is disposed of.
+I.A. 23490/2023 (u/s 12A of the Commercial Courts Act)
+4. This is an application filed by the Plaintiffs seeking exemption from
+instituting pre-litigation mediation under Section 12A of the Commercial
+Courts Act, 2015. Considering the facts and circumstances of the case,
+which involves pharmaceutical products, the Court is satisfied that in terms
+CS(COMM)844/2023 Page1of7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:47
+of the judgment of the Hon’ble Supreme Court in Yamini Manohar v.
+T.K.D Keerthi, SLP(C) 023488/2023, that the present suit contemplates
+urgent interim relief. Considering that these are medicinal products, the
+exemption is granted to the Plaintiffs. Accordingly, the application is
+disposed of.
+I.A.23489/2023(for additional documents)
+5. This is an application filed by the Plaintiffs seeking leave to file
+additional documents under the Commercial Courts, Commercial Division
+and Commercial Appellate Division of High Courts Act, 2015 (hereinafter,
+‘Commercial Courts Act’). The Plaintiffs, if it wishes to file additional
+documents at a later stage, shall do so strictly as per the provisions of the
+Commercial Courts Act and the DHC (Original Side) Rules, 2018.
+6. The application is disposed of.
+I.A. 23491/2023(for court fee)
+7. This is an application seeking extension of time to file court fee. Let
+the court fee be deposited within a week. Application is disposed of.
+CS(COMM) 844/2023
+8. Let the plaint be registered as a suit.
+9. Issue summons to the Defendant through all modes upon filing of
+Process Fee.
+10. The summons to the Defendant shall indicate that the written
+statement to the plaint shall be positively filed within 30 days from date of
+receipt of summons. Along with the written statement, the Defendant shall
+also file an affidavit of admission/denial of the documents of the Plaintiffs,
+without which the written statement shall not be taken on record.
+CS(COMM)844/2023 Page2of7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:47
+11. Liberty is given to the Plaintiffs to file the replication within 15 days
+of the receipt of the written statement. Along with the replication, if any,
+filed by the Plaintiffs, an affidavit of admission/denial of documents of the
+Defendant, be filed by the Plaintiffs, without which the replication shall not
+be taken on record. If any of the parties wish to seek inspection of any
+documents, the same shall be sought and given within the timelines.
+12. List before the Joint Registrar for marking of exhibits on 16th January,
+2024. It is made clear that any party unjustifiably denying documents would
+be liable to be burdened with costs.
+13. List before Court on 15th December, 2023.
+I.A. 23488/2023 (u/O XXXIX Rules 1 & 2 CPC)
+14. Issue notice in the application.
+15. The present suit has been filed by the Plaintiffs-Himalaya Wellness
+Company and two group companies who are aggrieved by the depiction of
+the mark ‘VIMALAYA’ along with various other products of the Plaintiff in
+the Kannada feature film ‘Aachar & Co’ (hereinafter, the film).
+16. It is stated that the Plaintiffs have been involved in the manufacture
+and distribution of ayurvedic medicaments since 1930. The Plaintiffs
+operate under the umbrella brand Himalaya, since 1930. Over the years the
+Plaintiffs offer a diverse range of health and wellness products, cosmetics
+etc., under the Himalaya name. Some of the products of the Plaintiffs sold
+under the Himalaya brand include ‘Liv.52’, ‘GERIFORTE’, ‘EVECARE’
+etc. The product ‘Liv.52’, is stated to be a flagship brand of the Plaintiffs
+and a top selling herbal medicine synonymous with the Plaintiffs’ Himalaya
+brand.
+CS(COMM)844/2023 Page3of7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:47
+17. It is averred that the products of the Plaintiffs sell a range of products
+including ‘Liv.52’, ‘GERIFORTE’ and ‘EVECARE’ and its associate and
+formative marks along with the trademark Himalaya and several label
+marks. It pertinent to note that the trade marks ‘Liv.52’, ‘GERIFORTE’ and
+‘EVECARE’ (including its associate and formative marks) of the Plaintiffs
+is associated exclusively with the ‘HIMALAYA’ brand. It is also averred,
+the artwork involved in the various stylistic representations of the Plaintiffs’
+mark ‘HIMALAYA’, ‘Liv .52’, ‘GERIFORTE’, ‘EVECARE’ trade marks
+as well as the associated trade dress, as aforesaid constitute original artistic
+works within the meaning of Section 2( c) of the Copyright Act, 1957. The
+Plaintiffs claim that they are the first owner of the copyright in each of the
+said artwork/label/logo therein by virtue of Section 17 of the Copyright Act,
+1957. The Plaintiffs are the owners of several trade mark and copyright
+registrations in the name HIMALAYA as well as the marks and product
+names.
+18. The grievance of the Plaintiff is that in the movie ‘Aachar & Co.’, the
+protagonist who is posing as a sales representative is going house to house
+and attempting to sell products to the customers. In the movie, the
+protagonist uses dialogues/script/contents using similar/identical names to
+the Plaintiffs’ registered ‘HIMALAYA’, ‘Liv.52’, ‘GERIFORTE’,
+‘EVECARE’. The name ‘VIMALAYA’ is employed in lieu of
+‘HIMALAYA’, and the brands of the Plaintiff depicted in the film are also
+not accurately represented in terms of the product packaging.
+19. Ld. Counsel for the Plaintiffs submits that there is a complete
+distortion of the Plaintiffs’ name ‘HIMALAYA’ to ‘VIMALAYA’, and the
+said products of the Plaintiffs are incorrectly shown. There is a misleading
+CS(COMM)844/2023 Page4of7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:47
+representation in the film, to the effect that the products displayed under the
+mark ‘Liv.52’, ‘GERIFORTE’ & ‘EVECARE’ are emanating from
+‘VIMALAYA’ and while, in fact, all the said brands are registered trade
+marks of the Plaintiffs.
+20. Heard. The film ‘Aachar & Co.’ was released in July, 2023 and upon
+realizing the incorrect usage of the Plaintiffs’ house mark, trade marks and
+brands, the Plaintiffs issued a notice to the Defendant, who is the producer
+of the film. A legal notice was issued on 29th August, 2023 calling upon the
+Defendant to remove the references and scenes featuring the products of the
+Plaintiffs from all media platforms. As the movie is available on Amazon
+Prime, the notice was also sent to Amazon Sellers Services Pvt. Ltd.
+(hereinafter ASSPL) and to PRK Productions LLP- the producers of the
+film.
+21. A reply was received from ASSPL to the effect on 5th September,
+2023 stating that Amazon in the present case is merely a licensee of the film
+from the producer. Accordingly, the producer’s details were furnished.
+ASSPL asserted that any grievances and remedies should be directed toward
+the licensor, as ASSPL merely exercises its rights based on the agreement
+with PRK Productions LLP. It was also stated that ASSPL promptly
+informed the Defendant of the Plaintiff’s claims.
+22. On behalf of the producer vide reply dated 21st September, 2023, it
+was alleged that neither ‘Liv.52’, nor ‘GERIFORTE’& nor ‘EVECARE’ are
+registered trademark of the Plaintiffs. The Defendant merely relied upon a
+disclaimer which appears in the film to justify its conduct.
+CS(COMM)844/2023 Page5of7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:47
+23. It is submitted by ld. Counsel for the Plaintiff that this denial is
+completely contrary to the record inasmuch as the Plaintiff has registered
+trademark for all the said brands. The same is set out below:
+S.No. TradeMark Reg.No. UserDate Date of Class
+Appl.
+1. THE 1940877 01/01/1975 24/ 03/2010 1
+HIMALAYA
+DRUG
+COMPANY
+2. HIMALAYA 973355 01/01/1930 27/ 11/2000 5
+DRUGS
+3. HIMALAYA 1004753 1930 20/04/2001 5
+4. THE 1940878 1975 24/03/2010 3
+HIMALAYA
+DRUG
+5. LIV.52 180564 Proposed to 10/ 07/1957 5
+beUsed
+6. GERIFORTE 302174 Proposed to 17/01/1975 5
+beUsed
+7. EVECARE 780581 Proposed to 02/ 12/ 1997 5
+beUsed
+24. A perusal of the screenshots of the film, leaves no manner of doubt
+that the entire allusion in the film is to the Plaintiffs and its products. There
+is very little difference between the word ‘HIMALAYA’ and
+‘VIMALAYA’, and thus the similarity between the two is noteworthy.
+Moreover, the trademark registrations of the Plaintiffs for all these marks
+have also been placed on record.
+25. Under such circumstances, the denial by the Defendant is not
+justified. However, considering the mandatory nature of relief which is
+being sought, i.e., to remove references to the Plaintiff’s name and brands or
+at least to blur the same, and the fact that the film itself has been released in
+July, 2023, it is deemed appropriate to issue summons and notice to the
+CS(COMM)844/2023 Page6of7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:47
+Defendant in order to enable the Defendant to appear and place its stand
+before the Court.
+26. Accordingly, let the Defendant be served through email at the email
+address- ashwiniadva@yahoo.co.in both by the Plaintiff and by the
+Registry. Advance copy has already been served. If there is no appearance
+on the next date of hearing, the Court would proceed to pass orders.
+27. List on the dates fixed above.
+PRATHIBA M. SINGH, J.
+NOVEMBER 24, 2023
+dj/bh
+CS(COMM)844/2023 Page7of7
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:27:47
+
+===== ORDER =====
+
+$~45
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+Date of Decision: 15th December, 2023
++ CS(COMM) 844/2023 & I.A. 23488/2023
+HIMALAYA WELLNESS COMPANY & ORS. ..... Plaintiffs
+Through: Mr. Pravin Anand, Ms. Prachi
+Agarwal, Mr. Ridhie Bajaj & Ms.
+Kanupriya Chawla, Advs. (M:
+9958045858)
+versus
+PRK PRODUCTIONS LLP ..... Defendant
+Through: Ms. Samapika Biswal, Ms. Nidhisha
+Garg & Mr. Aman Kumar Yadav,
+Advs. (M:8104694675)
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+Prathiba M. Singh, J. (Oral)
+1. This hearing has been done through hybrid mode.
+2. The present suit has been filed by the Plaintiffs-Himalaya Wellness
+Company and two group companies who are aggrieved by the depiction of
+the mark ‘VIMALAYA’ along with various other products of the Plaintiffs
+in the Kannada feature film titled ‘Aachar & Co’ (hereinafter, the film).
+3. The Plaintiffs are stated to have been involved in the manufacture and
+distribution of ayurvedic medicaments since 1930. The Plaintiffs operate
+under the umbrella brand Himalaya, since 1930. Over the years, the
+Plaintiffs offer a diverse range of health and wellness products, cosmetics
+etc., under the name ‘Himalaya’.
+CS(COMM)844/2023 Page1of9
+4. Some of the products of the Plaintiffs sold under the Himalaya brand
+include ‘Liv.52’, ‘GERIFORTE’, ‘EVECARE’ etc. The product ‘Liv.52’, is
+stated to be the flagship brand of the Plaintiffs and a top selling herbal
+medicine synonymous with the Plaintiffs’ Himalaya brand.
+5. It is averred that the Plaintiffs sell a range of products, including
+‘Liv.52’, ‘GERIFORTE’ and ‘EVECARE’ and its formative marks along
+with the mark Himalaya and other several label marks. It pertinent to note
+that the marks ‘Liv.52’, ‘GERIFORTE’ and ‘EVECARE’ (including its
+associate and formative marks) of the Plaintiffs is exclusively associated
+with the ‘HIMALAYA’ brand.
+6. It is also averred that the artwork underlying various stylistic
+representations of the Plaintiffs’ mark ‘HIMALAYA’, ‘Liv .52’,
+‘GERIFORTE’, ‘EVECARE’ trade marks as well as the associated trade
+dress, constitute original artistic works within the meaning of Section 2(c) of
+the Copyright Act, 1957. The Plaintiffs claim to be the first owner of the
+copyright in each of the said artwork/label/logo by virtue of Section 17 of
+the Copyright Act, 1957.
+7. The Plaintiffs are the owners of several trade mark and copyright
+registrations in the name HIMALAYA as well as the marks and product
+names.
+8. The Plaintiffs’ grievance is that in the film, the protagonist posing as a
+sales representative, is going door-to-door, attempting to sell products to the
+customers. In the film, the protagonist uses dialogues/script/contents using
+similar/identical names to the Plaintiffs’ registered ‘HIMALAYA’, ‘Liv.52’,
+‘GERIFORTE’, ‘EVECARE’. The name ‘VIMALAYA’ is employed in lieu
+of ‘HIMALAYA’, and the Plaintiffs’ brands depicted in the film are also not
+CS(COMM)844/2023 Page2of9
+accurately represented in terms of the product packaging. Some of the
+photographs displaying the manner of use by the Defendant are as follows:
+CS(COMM)844/2023 Page3of9
+9. Ld. Counsel for the Plaintiffs submits that there is a complete
+distortion of the Plaintiffs’ name ‘HIMALAYA’ to ‘VIMALAYA’ in the
+film, and the Plaintiffs’ products are incorrectly depicted. The film
+misleadingly represents that the products displayed under the mark ‘Liv.52’,
+‘GERIFORTE’ & ‘EVECARE’ are emanating from ‘VIMALAYA’ and
+whereas, in fact, all the said brands are registered trade marks of the
+Plaintiffs.
+CS(COMM)844/2023 Page4of9
+10. Heard. The film - ‘Aachar & Co.’ was released in July, 2023 and
+upon realizing the incorrect usage of the Plaintiffs’ house mark
+‘HIMALAYA’, trade marks and brands, the Plaintiffs issued a notice to the
+Defendant, who is the producer of the film. A legal notice dated 29th
+August, 2023 was issued calling upon the Defendant to remove the
+references and scenes featuring the products of the Plaintiffs from all media
+platforms. As the film is available on Amazon Prime, the notice was also
+sent to Amazon Sellers Services Pvt. Ltd. (hereinafter ASSPL) and to PRK
+Productions LLP- the producers of the film.
+11. Subsequently, a reply was received from ASSPL, dated 5th
+September, 2023, stating that, in the present case, Amazon is simply a
+licensee of the film from the producer. Accordingly, the details of the
+producer were furnished. ASSPL asserted that any grievances and remedies
+should be directed toward the licensor, as ASSPL is only exercising its
+rights based on the agreement with PRK Productions LLP. It was also
+mentioned that ASSPL promptly informed the Defendant about the
+Plaintiff’s claims.
+12. On behalf of the producer, vide reply dated 21st September, 2023, it
+was alleged that neither ‘Liv.52’, nor ‘GERIFORTE’& nor ‘EVECARE’ are
+registered trade marks of the Plaintiffs. The Defendant merely relied upon a
+disclaimer, which appears in the film to justify its conduct.
+13. It is submitted by ld. Counsel for the Plaintiff that such denial is
+completely contrary to the record, as the Plaintiff has registered trade marks
+for all the said brands. The same is set out below:
+CS(COMM)844/2023 Page5of9
+S.No. TradeMark Reg.No. UserDate Date of Class
+Appl.
+1. THE 1940877 01/01/1975 24/ 03/2010 1
+HIMALAYA
+DRUG
+COMPANY
+2. HIMALAYA 973355 01/01/1930 27/ 11/2000 5
+DRUGS
+3. HIMALAYA 1004753 1930 20/04/2001 5
+4. THE 1940878 1975 24/03/2010 3
+HIMALAYA
+DRUG
+5. LIV.52 180564 Proposed to 10/ 07/1957 5
+beUsed
+6. GERIFORTE 302174 Proposed to 17/01/1975 5
+beUsed
+7. EVECARE 780581 Proposed to 02/ 12/ 1997 5
+beUsed
+14. Vide order dated 24th November, 2023, this Court issued summons to
+the Defendant in the suit. The relevant extract of the said order is as follows:
+“…
+24. A perusal of the screenshots of the film placed
+on record, leaves no manner of doubt that the entire
+allusion in the film is to the Plaintiffs and its products.
+There is very little difference between the word
+‘HIMALAYA’ and ‘VIMALAYA’, and thus the
+similarity between the two is noteworthy. Moreover,
+the trade mark registrations of the Plaintiffs for all
+these products have also been placed on record.
+25. Under such circumstances, the denial
+by the Defendant is not justified. However, considering
+the mandatory nature of relief which is being sought,
+i.e., to remove references to the Plaintiff’s name and
+brands or at least to blur the same, and the fact that
+the film itself has been released in July, 2023, it is
+deemed appropriate to issue summons and notice to the
+Defendant in order to enable the Defendant to appear
+and place its stand before the Court. ”
+CS(COMM)844/2023 Page6of9
+15. Today, the Defendant has entered appearance. Ms. Biswal, ld.
+Counsel submits that the Defendant is willing to carry out changes in the
+feature film so that the Plaintiffs’ grievances are adequately addressed.
+Without prejudice to its rights, the Defendant proposes as under:
+S. Timestamp Description Proposal
+No. (Amazon
+Video)
+1. 42.33–43.30 A survey agent is seen wearing a Computer Graphics will be
+cap and carrying a bag with the deployed to make sure the
+(57seconds)
+name ‘Vimalaya’printed thereon. Vimalaya logo is not
+visible.
+2. 43.40-.43.50 A writing pad with the name Computer Graphics will be
+‘Vimalaya’printed is shown. deployed to make sure the
+(10 seconds)
+Vimalaya logo is not
+visible.
+3. 44.07:44.20 The protagonist is seen wearing Computer Graphics will be
+the cap and holding the writing deployed to make sure the
+(13 seconds)
+pad with the name ‘Vimalaya’ Vimalaya logo is not
+printed. visible.
+4. 47.08-48.12 The protagonist is seen wearing Computer Graphics will be
+the cap and holding the writing deployed to make sure the
+(64 seconds)
+pad with the name ‘Vimalaya’ Vimalaya logo is not
+printed. visible.
+5. 48.14-48.28 The protagonist displays the Scene will be deleted.
+product range bearing the labels
+(14 seconds)
+‘Geriforte’, ‘Liv 52’ and
+‘Evecare’.
+6. 48.50-49.30 The protagonist is seen with the Computer Graphics will be
+writing pad with the name deployed to make sure the
+(40 seconds)
+‘Vimalaya’printed. Vimalaya logo is not
+visible.
+CS(COMM)844/2023 Page7of9
+16. As is evident from the above table, there are six instances in the said
+film where the name ‘VIMALAYA’, along with the Plaintiffs’ products have
+been used. The Defendant’s position is as follows:
+ Regarding serial nos.1 to 4 and 6, the Defendant has undertaken to
+deploy computer graphics to ensure that the ‘VIMALAYA’ logo is not
+visible.
+ For serial no.5 is concerned, since three other products of the Plaintiffs
+are being displayed in the said scene, the Defendant has agreed to delete
+it.
+17. The above proposal made by the Defendant is acceptable to the
+Plaintiffs.
+18. Accordingly, let the Defendant implement the proposed changes within
+15 days, and provide a pen-drive containing the edited version of the film to the
+ld. Counsel for the Plaintiffs for confirmation. The ld. Counsel for the Plaintiff
+submits that if the proposal recorded above is given effect to, no further reliefs
+are pressed against the Defendant in the present suit.
+19. Ms. Biswal, ld. Counsel, submits that after 15 days, the edited film shall
+be submitted to the Censor Board of Film Certification (‘CBFC’) for its
+approval in accordance with the Cinematograph Act, 1952 and the
+Cinematograph (Censorship) Rules, 1958. Furthermore, immediately upon
+receiving approval, the version of the film currently broadcasted on Amazon
+Prime shall also be replaced with the new version featuring the agreed deletions
+and the blurring of images.
+20. The CBFC shall consider the approval of the proposed alterations of the
+Defendant’s film- ‘Aachar & Co.’ bearing certification no. Central Board of
+Film Certification: DIL/1/12/2023-BAN.’ under Cinematograph Act, 1952 and
+the Cinematograph (Censorship) Rules, 1958 on an urgent basis. The
+CS(COMM)844/2023 Page8of9
+proposed changes are being carried considering the fact that the Defendant
+has agreed to give effect to this Court’s order and implement the proposed
+changes. In any case, it is directed that the alterations proposed by the
+Defendant in the said film ‘Aachar & Co.’ shall be approved by 15th March,
+2024 and thereafter only the duly CBFC certified modified version shall be
+carried on the OTT platform or any other platforms post 15th March 2024.
+21. If either of the parties has any outstanding grievances, they are free to
+move an application before the Court. In view of the fact that the suit is
+being resolved on the second date of hearing, full court fee is refunded to the
+Plaintiffs in terms of the provisions of the Court Fees Act, 1870.
+22. Let the decree sheet be drawn up. The suit is decreed in the above
+terms. All pending applications are disposed of.
+PRATHIBA M. SINGH
+JUDGE
+DECEMBER 15, 2023
+dj/dn
+CS(COMM)844/2023 Page9of9

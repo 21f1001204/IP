@@ -1,0 +1,954 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_820_2023
+case_status: DISPOSED
+n_orders: 19
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 820/2023 & I.A. 22615/2023
+ANIL PITTI ..... Plaintiff
+Through: Mr. Kushagra Bansal, Advocate.
+versus
+M/S ERA INTERNATIONAL ..... Defendant
+Through:
+O R D E R
+% 10.11.2023
+1. Hon’ble Mr. Justice Sanjeev Narula is not holding Court today.
+2. Re-notify on 17th November, 2023.
+BY ORDER
+(COURT MASTER)
+NOVEMBER 10, 2023
+as
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:51
+
+===== ORDER =====
+
+$~69
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 820/2023
+ANIL PITTI ..... Plaintiff
+Through: Mr. Kushagra Bansal, Advocate.
+versus
+M/S ERA INTERNATIONAL ..... Defendant
+Through: None.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 17.11.2023
+I.A. 22615/2023(seeking exemption)
+1. Exemption is granted, subject to all just exceptions.
+2. Plaintiff shall file legible and clearer copies of exempted documents,
+compliant with practice rules, before the next date of hearing.
+3. Disposed of.
+CS(COMM) 820/2023
+4. Plaintiff is the proprietor of M/s Pitti Coal Company – a company
+engaged in the trade of Refined Petroleum Products and other allied
+products. Plaintiff was approached by the Defendant for the purchase of
+certain coal-related items, pursuant to which a series of transactions were
+entered into. Mr. Kushagra Bansal, counsel for Plaintiff, submits that the
+Defendant subsequently derelicted from its contractual obligations, as there
+were numerous lapses on the Defendant’s part in making regular payments.
+Further, although invoices have been issued by the Plaintiff, no response has
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:51
+been received on behalf of the Defendant. In these circumstances, the
+Plaintiff has filed the present suit seeking recovery of the amount due from
+the Defendant, being INR 6,69,92,706/-, which includes the principal
+amount due along with interest and damages.
+5. Let the plaint be registered as a suit.
+6. Upon filing of process fee, issue summons to Defendant by all
+permissible modes. Summons shall state that the written statement shall be
+filed by Defendant within 30 days from the date of receipt of summons.
+Along with the written statement, Defendant shall also file an affidavit of
+admission/ denial of the documents of Plaintiff, without which the written
+statement shall not be taken on record.
+7. Liberty is given to Plaintiff to file a replication within 15 days of the
+receipt of the written statement. Along with the replication, if any, filed by
+Plaintiff, an affidavit of admission/denial of documents of Defendant, be
+filed by Plaintiff, without which the replication shall not be taken on record.
+If any of the parties wish to seek inspection of any documents, the same
+shall be sought and given within the timelines.
+8. List before the Joint Registrar for completion of service and pleadings
+on 05th January, 2024. It is made clear that any party unjustifiably denying
+documents would be liable to be burdened with costs.
+9. List before the Court for framing of issues thereafter.
+SANJEEV NARULA, J
+NOVEMBER 17, 2023
+d.negi
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:51
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 820/2023
+ANIL PITTI ..... Plaintiff
+Through: Mr. Kushagra Bansal, Adv. (M:
+9999448797)
+versus
+M/S ERA INTERNATIONAL ..... Defendant
+Through: None
+CORAM:
+Dr. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 05.01.2024
+Summons of the suit has already been issued in compliance of Order
+dated 17.11.2023 of the Hon’ble Court.
+As per office noting, service report through all modes is still awaited.
+Affidavit of service has been filed on behalf of the plaintiff.
+Put up for awaiting report / appearance on behalf of the defendants, if
+served for completion of pleadings in accordance with law on 22.04.2024.
+Dr. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 5, 2024/sms
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:50
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 820/2023
+ANIL PITTI ..... Plaintiff
+Through: Mr. Ashish Chauhan, Adv.
+versus
+M/S ERA INTERNATIONAL ..... Defendant
+Through: Mr. S.K. Pandey, Mr. Rajan Panwar,
+Advs.
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 22.04.2024
+Learned counsel appeared on behalf of the defendant who stated that
+he had not received any summons of the present suit but he is appearing on
+instructions from the client.
+Learned counsel for plaintiff submitted that he will supply the
+documents and copy of the plaint within one week. Let same be supplied to
+the opposite party within one week through online / offline mode on sharing
+the necessary particulars.
+Put up for completion of pleadings on 29.08.2024.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+APRIL 22, 2024/sms
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:50
+
+===== ORDER =====
+
+$~2
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 820/2023
+ANIL PITTI
+.....Plaintiff
+Through: Mr. Kushagra Bansal, Adv.
+versus
+M/S ERA INTERNATIONAL
+.....Defendant
+Through: Mr. S.K. Pandey, Mr. Rajan Parmar,
+Advs. (M: 9717931119, Email:
+skpandey@dla.net.in)
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 29.08.2024
+1. Learned counsel for defendant stated that he had already filed the
+written statement along with application u/O VII R 11 but same are lying
+under objections. Learned opposite counsel has already received the copy.
+2. Let appropriate steps be taken to place the same on record.
+3. Put up for completion of pleadings in accordance with law for
+08.01.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 29, 2024/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:49
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 820/2023
+ANIL PITTI .....Plaintiff
+Through: Mr. Ashish Chauhan, Adv.
+versus
+M/S ERA INTERNATIONAL .....Defendant
+Through: Mr. Sanket S. Ambali, Adv. (Through
+VC) with Mr. S.K. Pandey, Adv.
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 05.09.2024
+I.A. 38457/2024(application under Order VII Rule 11)
+1. This is an application filed by the defendant under Order VII Rule 11
+CPC for rejection of plaint. The defendant has raised an objection with
+respect to the alleged non-compliance of Section 12-A of the Commercial
+Courts Act, 2015.
+2. Learned counsel for the defendant states on instructions that the
+defendant is ready and willing to have a mediation with plaintiff with
+respect to the claim, which is the subject matter of the present suit. The
+plaintiff is also agreeable to the said suggestion.
+3. Accordingly, the parties are hereby referred to mediation before the
+Delhi High Court Mediation and Conciliation Centre (‘Samadhan’) on
+12.09.2024 at 03:00 PM.
+4. List before the Court on 04.11.2024.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:49
+CS(COMM) 820/2023
+5. In the meantime, the plaintiff is at liberty to file his replication in
+accordance with the Delhi High Court (Original Side) Rules, 2018.
+MANMEET PRITAM SINGH ARORA, J
+SEPTEMBER 5, 2024/hp/AKT
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:49
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 820/2023
+ANIL PITTI .....Plaintiff
+Through: Mr. Ashish Chauhan and Mr.
+Kushagra Bansal, Advocates
+versus
+M/S ERA INTERNATIONAL .....Defendant
+Through: Mr. S.K. Pandey and Mr. Rajan
+Parmar, Advocates
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 04.11.2024
+1. Learned counsel for the parties jointly state that the matter is pending
+before the learned mediator and the next date of hearing before the learned
+Mediator is 08.11.2024 and accordingly, seek an adjournment.
+2. List before the learned Joint Registrar (J) for reporting the outcome of
+the mediation on 07.02.2025.
+MANMEET PRITAM SINGH ARORA, J
+NOVEMBER 4, 2024/msh/AKT
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:48
+
+===== ORDER =====
+
+$~1
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 820/2023
+ANIL PITTI
+.....Plaintiff
+Through: Mr. Manu Garg, Advocate (Through
+VC)
+versus
+M/S ERA INTERNATIONAL
+.....Defendant
+Through: Mr. S.K. Pandey, Mr. Rajan Parmar,
+Advocates
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 08.01.2025
+1. Matter is listed for reporting the outcome of Mediation.
+2. It is submitted by both parties that matter could not be settled at
+Mediation.
+3. Written statement is lying under objections.
+I.A. No. 38457/2024(u/O VII R 11 CPC)
+4. Issue notice. Learned counsel for plaintiff accepted the notice and
+submitted that he had already received the copy of the application.
+5. Put up for filing reply within two weeks, with advance copy to the
+opposite party and rejoinder thereto, if any, may also be filed within one
+week thereafter so that pleadings may be completed in this IA before the
+next date of hearing.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:48
+6. Put up for completion of pleadings in accordance with law on the date
+already fixed i.e. 07.02.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 8, 2025/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:48
+
+===== ORDER =====
+
+$~1
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 820/2023
+ANIL PITTI
+.....Plaintiff
+Through: Mr. Manu Garg, Advocate.
+versus
+M/S ERA INTERNATIONAL
+.....Defendant
+Through: Mr. S.K. Pandey & Mr. Ranjan
+Parmar, Advocates.
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 07.02.2025
+I.A. 38457/2024-By Deft. U/O 7 R 11 CPC
+Reply not filed. At request of the learned counsel for the plaintiff, let
+the reply be filed within two weeks with an advance copy to the opposite
+party and rejoinder thereto may be filed thereafter within two weeks.
+CS(COMM) 820/2023
+Written statement is still under objection. Learned counsel for
+defendant submitted that he will do the needful during the course of the day.
+Put up for completion of pleadings in accordance with law on 01.05.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 7, 2025/pr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:47
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 820/2023
+ANIL PITTI .....Plaintiff
+Through:
+versus
+M/S ERA INTERNATIONAL .....Defendant
+Through: Mr. Shiv Kumar Pandey and Mr.
+Rajan Parmar, Advs.
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 24.04.2025
+I.A. 10287/2025 (filed by defendant seeking condonation of delay in
+re-filing the WS and documents)
+1. Heard.
+2. Let notice be issued to the opposite party through counsel for the date
+already fixed i.e. 01.05.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+APRIL 24, 2025/tp
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:47
+
+===== ORDER =====
+
+$~2
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 820/2023
+ANIL PITTI .....Plaintiff
+Through: None
+versus
+M/S ERA INTERNATIONAL .....Defendant
+Through: Mr. Rajan Parmar, Adv.
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 01.05.2025
+I.A. 10287/2025 (filed by defendant seeking condonation of 161 days
+delay in filing written statement and documents)
+1. No one is appearing on behalf of the plaintiff. As per learned counsel
+for defendant, he had already served copy of the application to learned
+opposite counsel.
+2. Let reply be filed within four weeks, with advance copy to the
+opposite party and rejoinder thereto, if any, may also be filed within two
+weeks thereafter so that pleadings may be completed in this IA before the
+next date of hearing.
+I.A. 38457/2024 (filed by defendant under Order VII Rule 11 CPC for
+rejection of plaint)
+3. Reply not filed on behalf of plaintiff.
+4. Last opportunity is granted to file reply. Let reply be filed within four
+weeks, with advance copy to the opposite party and rejoinder thereto, if any,
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:46
+may also be filed within two weeks thereafter so that pleadings may be
+completed in this IA before the next date of hearing.
+CS(COMM) 820/2023
+5. Put up for completion of pleadings in accordance with law on
+28.08.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+MAY 1, 2025/tp
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:46
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 820/2023
+ANIL PITTI .....Plaintiff
+Through: Mr. Kushagra Bansal, Adv.
+versus
+M/S ERA INTERNATIONAL .....Defendant
+Through: Mr. Shiv Kumar Pandey and
+Mr.Rajan Parmar, Advs.
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 23.07.2025
+I.A. 17414/2025 (filed by plaintiff seeking condonation of delay in filing
+reply to I.A. 10287/2024)
+&
+I.A. 17415/2025 filed by plaintiff seeking condonation of delay in filing
+reply to I.A. 38457/2024)
+1. Issue notice. Learned counsel for defendant accepted the notice. At
+request, by learned counsel for defendant, let copy of reply as well as
+application be send to him through e-mail on sharing the same.
+2. Let reply be filed within two weeks from the date of service, with
+advance copy to the opposite party and rejoinder thereto, if any, may also be
+filed within two weeks thereafter so that pleadings may be completed in this
+IA before the next date of hearing.
+3. Put up for completion of pleadings 25.09.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JULY 23, 2025/tp
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:46
+
+===== ORDER =====
+
+$~188
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 820/2023
+ANIL PITTI
+.....Plaintiff
+Through: None
+versus
+M/S ERA INTERNATIONAL
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 04.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared on behalf of the parties.
+Let this matter be sent back to the Hon’ble Court for further
+directions.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 04, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:45
+
+===== ORDER =====
+
+$~2
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 820/2023
+ANIL PITTI .....Plaintiff
+Through: Mr. Kushagra Bansal and Mr.
+Ashish Chauhan, Advs.
+versus
+M/S ERA INTERNATIONAL .....Defendant
+Through: Mr. Shiv Kumar Pandey and
+Mr. Ranjan Parmar, Advs.
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 28.08.2025
+I.A. 38457/2024 (filed by defendant under Order VII Rule 11
+CPC)
+1. Reply is taken on record. Copy supplied. Let rejoinder thereto,
+if any, may also be filed within two weeks with copy to opposite
+party.
+I.A. 10287/2025 (filed by defendant seeking condonation of 161
+days delay in filing written statement and documents)
+2. Reply is taken on record. Copy supplied. Let rejoinder thereto,
+if any, may also be filed within two weeks with copy to opposite
+party.
+I.A. 17414/2025 (filed by plaintiff seeking condonation of 43 days
+delay in filing reply to IA 10287/2024)
+&
+I.A. 17415/2025 (filed by plaintiff seeking condonation of 43 days
+delay in filing reply to IA 38457/2024)
+3. Learned counsel for plaintiff raised no objection to this
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:45
+application. Hence, in view of the facts and circumstances, the
+captioned I.A. stands allowed and disposed of.
+4. Replies in both applications be taken on record.
+5. At request, let copy of replies filed on behalf of plaintiff be
+supplied to learned counsel for defendant through e-mail on sharing
+the same.
+CS(COMM) 820/2023
+6. Put up for completion of pleadings in accordance with law on
+the date already fixed i.e. 25.09.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 28, 2025/tp
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:45
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 820/2023
+ANIL PITTI .....Plaintiff
+Through: Mr. Kushagra Bansal, Adv.
+versus
+M/S ERA INTERNATIONAL .....Defendant
+Through: Mr. S.K. Pandey and Mr. RAjan
+Parmar, Advs.
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 25.09.2025
+I.A. 38457/2024 (filed by defendant under Order VII Rule 11 CPC)
+1. Reply already filed. Learned counsel for defendant submitted that
+he has already filed the rejoinder but same is still not come on record.
+Copy received by learned opposite counsel. Let appropriate steps be
+taken on behalf of defendant to get the rejoinder placed on record.
+2. Put up for completion of pleadings on next date of hearing.
+I.A. 10287/2025 (filed by defendant seeking condonation of 161 days
+delay in filing written statement and documents)
+3. Reply already filed. Learned counsel for defendant submitted that
+he has already filed the rejoinder but same is still not come on record.
+Copy received by learned opposite counsel. Let appropriate steps be
+taken on behalf of defendant to get the rejoinder placed on record.
+4. Put up for completion of pleadings on next date of hearing.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:44
+CS(COMM) 820/2023
+5. Put up for completion of pleadings in accordance with law on
+18.11.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 25, 2025/tp
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:44
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 820/2023
+ANIL PITTI .....Plaintiff
+Through: Mr. Kushagra Bansal, Adv.
+versus
+M/S ERA INTERNATIONAL .....Defendant
+Through: Mr. Shiv Kumar Pandey and Mr.
+Rajan Parmar, Advs.
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 27.10.2025
+I.A. 26464/2025 (filed by defendant seeking condonation of 13 days
+delay in filing rejoinder to reply of plaintiff to I.A. 38457/2024)
+&
+I.A. 26465/2025 (filed by defendant seeking condonation of 13 days
+delay in filing rejoinder to reply of plaintiff to IA 10287/2024)
+1. Learned counsel for plaintiff stated that he is having no objection if
+the applications are allowed.
+2. In view of the facts and circumstances, the delay in filing the
+rejoinders condoned. The captioned I.As. accordingly stand allowed and
+disposed of.
+3. The rejoinder to reply of plaintiff to I.A. No. 38457/2024 and
+rejoinder to reply of I.A. 10287/2024 be taken on record.
+4. Copy of the rejoinder has already been received by the learned
+opposite counsel.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:44
+CS(COMM) 820/2023
+5. Put up on the date already fixed i.e. 18.11.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+OCTOBER 27, 2025/tp
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:44
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 820/2023
+ANIL PITTI .....Plaintiff
+Through:
+versus
+M/S ERA INTERNATIONAL .....Defendant
+Through: Mr. Rajan Parmar, Adv.
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 07.11.2025
+I.A. 27637/2025 (filed by defendant seeking condonation of 76 days
+delay in filing written statement)
+Issue notice to the plaintiff through counsel, on taking necessary
+steps on behalf of the defendant for the date already fixed i.e.
+18.11.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 7, 2025/tp
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:43
+
+===== ORDER =====
+
+$~1
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 820/2023
+ANIL PITTI .....Plaintiff
+Through: Mr. Kushagra Bansal, Adv.
+versus
+M/S ERA INTERNATIONAL .....Defendant
+Through: Mr. Shiv Kumar Pandey and Mr.
+Ranjan Parmar, Advs.
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 18.11.2025
+I.A. 38457/2024 (filed by defendant under Order VII Rule 11 CPC)
+1. Pleadings complete.
+I.A. 27637/2025 (filed by defendant seeking condonation of 76 days
+delay in filing written statement)
+2. No reply has been filed. It is agreed by learned counsels for both
+parties that they will straightway argue on this application along with I.A.
+No. 10287/2025.
+&
+I.A. 10287/2025 (filed by defendant seeking condonation of 161 days
+delay in filing written statement and documents)
+3. Pleadings complete.
+4. Arguments heard on both the applications i.e. I.A. 27637/2025 and
+I.A. 10287/2025.
+5. It is submitted by learned counsel for defendant that there is a delay of
+CS(COMM) 820/2023 Page 1 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:42
+about 76 days in filing the written statement and about 161 days in re-filing
+the written statement. He further submitted that the written statement with
+documents was filed on 28.08.2024 along with application under Order VII
+Rule 11 CPC. The defect was marked on 04.09.2024. Thereafter, the matter
+was referred to Mediation Centre on 05.09.2024 for 12.09.2024. Thereafter
+matter continued before the Mediation but was failed in the month of
+November, 2024. After winter vacation, the matter was listed on 08.01.2025
+and on that date, it was pointed out that the written statement was still lying
+under objection. Thereafter, the written statement was re-filed after curing
+the defect on 19.02.2025. Same was again marked as defective on
+27.03.2025 as it was not having the application for condonation of delay.
+Thereafter, he had filed the application. There is no any deliberate delay in
+re-filing the written statement.
+6. Learned counsel for defendant further argued that earlier he had filed
+the written statement with a delay of about 76 days but had filed the same
+within the extendable period of 120 days from the date of service. The
+effective service is of dated 14.05.2024 and written statement was to be filed
+within the statutory period of 30 days i.e. upto 13.06.2024 but on
+13.06.2024, one of the partners of the defendant met with an accident and
+sustained multiple grievous injuries. Then he remained under treatment and
+could not properly coordinate with his counsel. Thereafter, he had filed the
+written statement on 28.08.2024. The defendant had not committed any
+delay willingly but it was caused because of the reasons beyond his control.
+He further submitted that the delay in filing and re-filing the written
+statement may be condoned and both the captioned I.As may be allowed.
+7. Learned counsel for defendant also referred the case laws i.e.
+CS(COMM) 820/2023 Page 2 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:42
+(i) Sheo Raj Singh (Deceased) through Legal Representatives and
+Others vs. Union of India and Another (2023) 10 SCC 531
+(ii) Commissioner of Income Tax (Central)-III vs. M/s Surya
+Vinayaka Industries Ltd. in SLP (C) No. 30213/2017 dated
+24.07.2023.
+(iii) Dr. Narender Kumar Sharma and Others vs. Maharana Pratap
+Education Center & Another 2018 SCC OnLine Del 13146.
+8. On the other hand, learned counsel for plaintiff opposed the
+application. Reply has also been filed opposing the same. He submitted that
+although he had already served the defendant through e-mail on 03.01.2024.
+However, the defendant had made wrong submissions that he had not
+received the complete paper book with the summons. Therefore, subject to
+the rights and the remedies available to the plaintiff he had again served
+copy of the plaint with documents to the defendant through e-mail on
+14.05.2024. Even from 14.05.2024, the written statement was not filed
+within the statutory period but same was filed on 28.08.2024. Thereafter, the
+objection was raised by the Registry but no steps was taken on behalf of the
+defendant to cure the defects and same were not cured within the maximum
+period of 30 days as per Delhi High Court (Original Side) Rules, 2018.
+9. He further submitted that the application for condonation of delay in
+filing the written statement was neither filed along with the written statement
+nor filed within the maximum extendable period of 120 days. Therefore, as
+application for condonation of delay was not filed within the outer limit of
+120 days, the delay in filing the written statement cannot be condoned and
+the written statement cannot be taken on record. Learned counsel for
+CS(COMM) 820/2023 Page 3 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:42
+plaintiff submitted that both the applications moved on behalf of the
+defendant are without any merit and are liable to be dismissed.
+10. Learned counsel for plaintiff has relied upon the case laws i.e.
+(i) Friends Motel Pvt. Limited vs. Shreeved Consultancy LLP and
+Ors. in CS(COMM) 140/2019 decided on 15.01.2020.
+(ii) Intiyaz Sheikh vs. Puma Se in CM(M) 225/2021 & CM No.
+10177/2021 decided on 12.10.2021.
+11. I have considered the submissions of both the parties and perused the
+record. Ordersheet dated 22.04.2024 reveals that on that date defendant
+appeared through counsel first time and submitted that he had not received
+the summons but is appearing on instructions from his client. Thereafter,
+submission was made on behalf of plaintiff that he will supply the
+documents and copy of the plaint within one week and accordingly ordered.
+After that the documents were supplied through e-mail dated 14.05.2024.
+Thereafter, effective and proper service is considered as 14.05.2024 and
+written statement was to be filed within the period of 30 days i.e. till
+14.06.2024. However, on 13.06.2024, one of the partners of defendant met
+with an accident and sustained multiple injuries. Medical documents are also
+annexed with the application which shows that he had sustained several
+injuries. Therefore, this reason for delay can be accepted as a sufficient
+reason.
+12. Admittedly, the written statement was not filed within the initial
+period of 30 days but has been filed within the extendable period of further
+90 days. The written statement was filed without accompanying the
+application for condonation of delay. The contention on behalf of plaintiff is
+CS(COMM) 820/2023 Page 4 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:42
+not acceptable that if the delayed written statement is not accompanying the
+application for condonation of delay and same has not been filed within the
+extendable period of 120 days, then the written statement cannot be
+considered as filed within 120 days. The facts and circumstances of the case
+Friends Motel (Supra) are different from the present case as in that case
+there was no application filed with the delayed written statement but in the
+present case, the application has already been filed seeking condonation of
+delay. Further in that case, it is not held that if the delayed written statement
+filed within 120 days is not accompanying the condonation of delay
+application which was filed after the outer limit of 120 days, then the written
+statement itself will be considered as filed after the outer limit of 120 days
+and will not be taken on record.
+13. In the present case, there is admitted delay in curing the defects and
+re-filing of the written statement which is beyond the period of 30 days
+prescribed for curing the defects. Perusal of record reflects that after the
+defects were raised by the Registry, the matter was also referred to
+Mediation which it remain for about 2 months and thereafter, again the
+defects were not cured within the 30 days but cured after a long delay. It has
+been held by Hon’ble High Court of Delhi in case Dr. Narender Kumar
+Sharma and Ors. vs. Maharana Pratap Educational Centre and Anr. 2018
+SCC OnLine DEL 13146 as well as by Hon’ble Supreme Court of India in
+Commissioner of Income Tax (Central)-III vs. M/s Surya Vinayaka
+Industries Ltd. that delay in re-filing has to be considered on different
+footing than the delay in original filing. Therefore, keeping in view the
+entire facts and circumstances, the delay in filing the written statement with
+affidavit of admission/denial as well as its re-filing stands condoned, subject
+CS(COMM) 820/2023 Page 5 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:42
+to cost of Rs.10,000/- to be given to opposite party.
+14. Both captioned I.As i.e. I.A. 10287/2025 and I.A. 27637/2025 are
+allowed and disposed of accordingly.
+CS(COMM) 820/2023
+15. Written statement with affidavit of admission/denial on behalf of
+defendant be taken on record accordingly.
+16. Put up for completion of pleadings in accordance with law and
+thereafter for completion of process of filing of Joint Document
+Schedule in terms of Rule 7A of Chapter VII of The Delhi High Court
+(Original Side) Rules, 2018 physically by plaintiff after getting it signed
+from defendants, admission / denial of documents and marking of
+Exhibits in accordance with law on 31.01.2026.
+17. Documents, if e-filed be filed physically by parties so as to mark
+the Exhibits.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 18, 2025/tp
+CS(COMM) 820/2023 Page 6 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:42
+
+===== ORDER =====
+
+$~44
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+I.A. 31803/2025 & O.A. 237/2025
+IN
++ CS(COMM) 820/2023
+ANIL PITTI .....Plaintiff
+Through: Mr. Kushagra Bansal, Mr. Ashish
+Chauhan & Mr. Manu Garg,
+Advocates.
+versus
+M/S ERA INTERNATIONAL .....Defendant
+Through:
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 18.12.2025
+I.A. 31803/2025 (seeking condonation of delay in filing the chamber
+appeal)
+1. The present application has been filed on behalf of the plaintiff
+seeking condonation of delay of six days in filing the accompanying
+chamber appeal being O.A. 237/2025.
+2. For the reasons stated and taking into consideration the period of
+delay involved, the delay of six days in filing the accompanying chamber
+appeal being O.A. 237/2025 is condoned.
+3. The application stands disposed of.
+O.A. 237/2025 (under Rule 5 Chapter II of the Delhi High Court
+(Original Side) Rules, 2018)
+4. The present chamber appeal has been filed on behalf of the plaintiff
+CS(COMM)820/2023 Page1of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:42
+against the order passed by the Joint Registrar on 18th November, 2025 in
+terms of which the written statement filed on behalf of the defendant has
+been permitted to be taken on record.
+5. It is the contention of the plaintiff that since the application seeking
+condonation of delay in filing the written statement was filed by the
+defendant beyond the permissible condonable period of 120 days, the
+written statement cannot be taken on record.
+6. Issue notice to the defendant through counsel.
+7. List 2nd March, 2026.
+8. In the aforesaid circumstances, since the issue with regard to the
+written statement of the defendant to be taken on record is pending, the
+requirement of the plaintiff to file replication to the written statement is
+dispensed with at this stage.
+AMIT BANSAL, J
+DECEMBER 18, 2025
+at
+CS(COMM)820/2023 Page2of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:42

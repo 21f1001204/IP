@@ -1,0 +1,1299 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_812_2023
+case_status: PENDING
+n_orders: 21
+
+$~33 to 36
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 811/2023, I.A. 22357/2023, I.A. 22358/2023, I.A.
+22359/2023, I.A. 22360/2023, I.A. 22361/2023 & I.A.
+22362/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Ankur Sangal, Mr. Tejveer
+Singh Bhatia, Ms. Sucheta Roy, Mr. Raghu
+Vinayak Sinha and Mr. Shaurya Pandey,
+Advs.
+versus
+PREMIUM LIFESTYLE AND FASHION INDIA PRIVATE
+LIMITED & ORS. ..... Defendants
+Through:
++ CS(COMM) 812/2023, I.A. 22363/2023, I.A. 22364/2023, I.A.
+22365/2023, I.A. 22366/2023, I.A. 22367/2023 & I.A.
+22368/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Ankur Sangal, Mr. Tejveer
+Singh Bhatia, Ms. Sucheta Roy, Mr. Raghu
+Vinayak Sinha and Mr. Shaurya Pandey,
+Advs.
+versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED & ORS.
+..... Defendants
+Through:
++ CS(COMM) 813/2023, I.A. 22369/2023, I.A. 22370/2023, I.A.
+22371/2023, I.A. 22372/2023, I.A. 22373/2023 & I.A.
+22374/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Ankur Sangal, Mr. Tejveer
+Singh Bhatia, Ms. Sucheta Roy, Mr. Raghu
+Vinayak Sinha and Mr. Shaurya Pandey,
+Advs.
+versus
+CS(COMM) 811/2023 and other connected matters Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:40
+STR8UP HOSPITALITY PRIVATE LIMITED & ORS.
+..... Defendants
+Through:
++ CS(COMM) 814/2023, I.A. 22375/2023, I.A. 22376/2023, I.A.
+22377/2023, I.A. 22378/2023, I.A. 22379/2023 & I.A.
+22380/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Ankur Sangal, Mr. Tejveer
+Singh Bhatia, Ms. Sucheta Roy, Mr. Raghu
+Vinayak Sinha and Mr. Shaurya Pandey,
+Advs.
+versus
+CORNERSTONE SPORT AND ENTERTAINMENT
+PRIVATE LIMITED & ORS. ..... Defendants
+Through:
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 08.11.2023
+1. The Hon’ble Judge is not holding Court today.
+2. Re-notify on 9 November 2023.
+BY ORDER
+(COURT MASTER)
+NOVEMBER 8, 2023
+ar
+Click here to check corrigendum, if any
+CS(COMM) 811/2023 and other connected matters Page 2 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:40
+
+===== ORDER =====
+
+$~57 to 60
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 811/2023 & I.As. 22357-22362/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Ankur Sangal, Mr. Tejveer
+Singh Bhatia, Ms. Sucheta Roy, Mr. Raghav
+Vinayak Sinha and Mr. Shaurya Pandey,
+Advs.
+versus
+PREMIUM LIFESTYLE AND FASHION INDIA
+PRIVATE LIMITED & ORS. ..... Defendants
+Through: None
++ CS(COMM) 812/2023 & I.As. 22363-22368/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Ankur Sangal, Mr. Tejveer
+Singh Bhatia, Ms. Sucheta Roy, Mr. Raghav
+Vinayak Sinha and Mr. Shaurya Pandey,
+Advs.
+versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED & ORS.
+..... Defendants
+Through: None
++ CS(COMM) 813/2023 & I.As. 22369-22374/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Akhil Sibal, Sr. Adv. with
+Mr. Ankur Sangal, Mr. Tejveer Singh
+Bhatia, Ms. Sucheta Roy, Mr. Raghav
+Vinayak Sinha and Mr. Shaurya Pandey,
+Advs.
+versus
+STR8UP HOSPITALITY PRIVATE LIMITED & ORS.
+CS(COMM) 811/2023, CS(COMM) 812/2023,
+CS(COMM) 813/2023 & CS(COMM) 814/2023 Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:39
+..... Defendants
+Through: None
++ CS(COMM) 814/2023 & I.As. 22375-22380/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Ankur Sangal, Mr. Tejveer
+Singh Bhatia, Ms. Sucheta Roy, Mr. Raghav
+Vinayak Sinha and Mr. Shaurya Pandey,
+Advs.
+versus
+CORNERSTONE SPORT AND ENTERTAINMENT
+PRIVATE LIMITED & ORS. ..... Defendants
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE C. HARI SHANKAR
+O R D E R
+% 09.11.2023
+As Courts are sitting today only for half an hour in view of
+elevation of Hon’ble the Chief Justice as a Judge of the Supreme
+Court of India, re-notify these matters on 10 November 2023 for
+preliminary hearing.
+C. HARI SHANKAR, J.
+NOVEMBER 9, 2023
+dsn
+Click here to check corrigendum, if any
+CS(COMM) 811/2023, CS(COMM) 812/2023,
+CS(COMM) 813/2023 & CS(COMM) 814/2023 Page 2 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:39
+
+===== ORDER =====
+
+$~17 to 19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 811/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Ankur Sangal, Mr. Tejveer
+Singh Bhatia, Ms. Sucheta Roy, Mr. Raghu
+Vinayak Sinha and Mr. Shaurya Pandey,
+Advs.
+versus
+PREMIUM LIFESTYLE AND FASHION
+INDIA PRIVATE LIMITED & ORS. ..... Defendants
+Through:
++ CS(COMM) 812/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Ankur Sangal, Ms. Sucheta
+Roy, Mr. Raghu Vinayak Sinha and Mr.
+Shaurya Pandey, Advs.
+versus
+UNICORN INFOSOLUTIONS
+PRIAVTE LIMITED & ORS. ..... Defendants
+Through:
++ CS(COMM) 813/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Akhil Sibal, Sr. Advocate
+with Mr. Ankur Sangal, Ms. Sucheta Roy,
+Mr. Raghu Vinayak Sinha, Mr. Shaurya
+Pandey and Ms. Asavari Jain, Advs.
+versus
+STR8UP HOSPITALITY
+PRIVATE LIMITED & ORS. ..... Defendants
+Through:
+CS(COMM) 811/2023 & cont. matters Page 1 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:38
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 10.11.2023
+CS (COMM) 811/2023
+CS (COMM) 812/2023
+CS (COMM) 813/2023
+1. The issue in controversy in these suits as well as in the
+connected suit CS (Comm) 814/2023 is the same.
+2. Mr. Sahil Solanki, learned Counsel appears on behalf of
+Defendant 4 in CS (Comm) 814/2023 and submits that Defendant 4,
+which has been impleaded as “One8 Commune”, is actually a café
+which operates under the name ONE8 COMMUNE, but is owned by
+True Palate Café Pvt Ltd. The learned Counsel for the plaintiff
+undertakes to file an amended memo of parties properly impleading
+Defendant 4.
+3. In all these matters, the grievance of the plaintiff is that song
+and other recordings, in which the plaintiff holds copyright, are being
+played in the outlets of the defendants without obtaining a license
+from the plaintiff. The documents evidencing the copyright held by
+the plaintiff in the said records have been placed on record.
+4. The plaintiff claims that the repertoire of the recordings in
+which the plaintiff holds copyright is available on its website
+CS(COMM) 811/2023 & cont. matters Page 2 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:38
+https://www.pplindia.org/songs. The plaint also provides the tariffs at
+which the plaintiff permits playing of the said recordings, which is
+dependent on the area over which the recordings would be played.
+The tariffs read thus:
+Transnational Brands Stores
+Area Annual Fee/Per Outlet (₹)
+Up to 200 Sq. Ft ₹ 10,500
+201 – 500 Sq. Ft. ₹ 10,500 Plus Rs 21 per sq. ft. p.a for
+every sq. ft. more than 200 Sq. Ft.
+501 – 1000 Sq. Ft. ₹ 16,800 Plus Rs 17 per sq. ft. p.a for
+every sq. ft. more than 500 Sq. Ft.
+1001 – 5000 Sq. Ft. ₹ 25,300 Plus Rs 15 per sq. ft.
+p.a for every sq. ft. more than 1000 Sq.
+Ft.
+More than 5000 Sq. Ft. ₹ 85,300 Plus Rs 13 per sq. ft. p.a for
+every sq. ft. more than 5000 Sq. Ft.
+5. In each of these cases, except CS (Comm) 813/2023, the plaint
+avers that the plaintiff has addressed notices to the defendants, calling
+upon them to desist from playing the copyrighted recordings of the
+plaintiff without obtaining a license from the plaintiff. However,
+despite the notices, the defendants continued to play the copyrighted
+recordings. In some cases, these recordings have been played for
+nearly two years as on date.
+6. In such circumstances, Mr. Sibal submits that there would be no
+purpose in relegating the plaintiff to the exercise of pre-institution
+mediation either.
+7. Learned Senior Counsel for the plaintiff has pointed out that
+this Court has already held in its judgment in CS (Comm) 671/2021
+(Phonographic Performance Limited v. Canvas Communicationt)
+CS(COMM) 811/2023 & cont. matters Page 3 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:38
+that, before playing recordings in which the plaintiff holds copyright,
+any third party would necessarily have to obtain a license from the
+plaintiff and the requirement of the plaintiff being a copyright society
+would not apply in such case.
+8. The position in law is prima facie clear. The plaintiff being the
+owner of copyright in the recordings, which form the part of its
+repertoire and which find place on the website
+https://www.pplindia.org/songs, it would not permissible to anyone to
+play the said recordings without obtaining a prior license from the
+plaintiff, especially where the recordings are being played for
+commercial benefit.
+9. In view thereof, let the plaints be registered as suits. Issue
+summons in the suits. Summons be served on the defendants in these
+suits by all modes.
+10. Written statements, accompanied by affidavit of admission and
+denial of the documents filed by the plaintiff be filed within 30 days
+with advance copy to learned Counsel for the plaintiff who may file
+replication thereto, accompanied by affidavit of admission and denial
+of the documents filed by the defendants within 30 days thereof.
+11. List before the learned Joint Registrar (Judicial) for completion
+of pleadings, admission and denial of documents and marking of
+exhibits on 15 January 2024, whereafter the matters would be placed
+before the Court for case management hearing and further
+proceedings.
+CS(COMM) 811/2023 & cont. matters Page 4 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:38
+I.A. 22357/2023 (Order XXXIX Rules 1 and 2 of the CPC) in CS
+(COMM) 811/2023
+I.A. 22363/2023 (Order XXXIX Rules 1 and 2 of the CPC) in CS
+(COMM) 812/2023
+I.A. 22369/2023 (Order XXXIX Rules 1 and 2 of the CPC) in CS
+(COMM) 813/2023
+12. Inasmuch as the allegations in these plaints are of violation of
+the plaintiff’s copyright, by the exploitation, by the defendants, of
+recordings in which copyright is held by the plaintiff without
+obtaining a license in that regard, and as the exercise of such
+infringement in copyright has been continuing for some time, a clear
+prima facie case for grant of interlocutory injunction is made out.
+Failure to grant such injunction is bound to result in continued
+infringement of copyright. Accordingly, the principles of balance of
+convenience and irreparable loss would also justify grant of interim
+injunction as sought.
+13. As such, issue notice, returnable before the Court on 7 February
+2024.
+14. Notice be served on the defendants in these applications by all
+modes.
+15. Till the next date of hearing, the defendants as well as all other
+acting on their behalf shall stand restrained from playing any of the
+recordings forming subject matter of the plaintiff’s copyright and
+figuring on the website https://www.pplindia.org/songs, without
+obtaining a prior license from the plaintiff.
+CS(COMM) 811/2023 & cont. matters Page 5 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:38
+16. The compliance with Order XXXIX Rule 3 of the CPC be
+effected within a period of ten days from today.
+I.A. 22358/2023 (Section 12A of the Commercial Courts Act, 2015)
+in CS (COMM) 811/2023
+I.A. 22364/2023 (Section 12A of the Commercial Courts Act, 2015)
+in CS (COMM) 812/2023
+I.A. 22370/2023 (Section 12A of the Commercial Courts Act, 2015)
+in CS (COMM) 813/2023
+17. The allegation against the defendants is of continued
+infringement of the plaintiff’s copyright by exploiting recordings in
+which such copyright is held, without obtaining a license from the
+plaintiff. Unlike cases of infringement of trade mark, copyright held
+in music recordings is infringed by playing such recordings in closed
+spaces, so that it would not normally be possible for the plaintiff to
+acquire knowledge of such infringement, unless it is brought to its
+notice. Notably, in some cases, such infringement has continued by
+almost two years as on date.
+18. As such, relegating the plaintiff to the remedy of pre-litigation
+mediation, in my view, would serve no purpose. Clearly, the plaintiff
+is entitled to urgent reliefs as sought in the plaints, in order to ensure
+that continued infringement of copyright does not take place. A clear
+case for exemption from pre-litigation mediation under Section 12A of
+the Commercial Courts Act, 2015 is, therefore, made out.
+19. The applications stand allowed.
+CS(COMM) 811/2023 & cont. matters Page 6 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:38
+I.A. 22359/2023 (Order XI Rule 1(4) of the CPC) in CS (COMM)
+811/2023
+I.A. 22365/2023 (Order XI Rule 1(4) of the CPC) in CS (COMM)
+812/2023
+I.A. 22371/2023 (Order XI Rule 1(4) of the CPC) in CS (COMM)
+813/2023
+20. These applications seek permission to file additional
+documents. The plaintiff is permitted to place additional documents on
+record in accordance with Order XI Rule 1(4) of the CPC as amended
+by the Commercial Courts Act within four weeks from today.
+21. The applications stand disposed of accordingly.
+I.A. 22360/2023 (Section 149 of the CPC) in CS (COMM) 811/2023
+I.A. 22366/2023 (Section 149 of the CPC) in CS (COMM) 812/2023
+I.A. 22372/2023 (Section 149 of the CPC) in CS (COMM) 813/2023
+22. The plaintiff is permitted to make the deficient court fee, if any,
+good within two weeks from today.
+23. The applications stand allowed.
+I.A. 22361/2023 (Exemption) in CS (COMM) 811/2023
+I.A. 22367/2023 (Exemption) in CS (COMM) 812/2023
+I.A. 22373/2023 (Exemption) in CS (COMM) 813/2023
+24. Subject to the plaintiff filing legible copies of any dim or
+illegible documents within 30 days, exemption is granted for the
+present.
+CS(COMM) 811/2023 & cont. matters Page 7 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:38
+25. The applications stand disposed of.
+I.A. 22362/2023 (Permission to file a CD) in CS (COMM) 811/2023
+I.A. 22368/2023 (Permission to file a CD) in CS (COMM) 812/2023
+I.A. 22374/2023 (Permission to file a CD) in CS (COMM) 813/2023
+26. Permission to file compact disc/pen drive is granted, subject to
+provide a copy thereof to the opposite sides.
+27. The applications are disposed of.
+C.HARI SHANKAR, J
+NOVEMBER 10, 2023/ rb
+Click here to check corrigendum, if any
+CS(COMM) 811/2023 & cont. matters Page 8 of 8
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:38
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 812/2023
+PHONOGRAPHIC PERFORMANCE LIMITED
+..... Plaintiff
+Through: Mr. Shaurya Pandey, Adv.
+versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED &
+ORS.
+..... Defendant
+Through: Mr. Rohan Rohatgi, Adv.
+through VC.
+(M- 9811867909).
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 15.01.2024
+The defendants were served via ordinary means on
+20.12.2023. They are yet to file their written statements.
+List the matter for completion of pleadings on 22.03.2024.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 15, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:38
+
+===== ORDER =====
+
+$~67
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 812/2023
+PHONOGRAPHIC PERFORMANCE LIMITED
+..... Plaintiff
+Through: Mr. Raghu Vinayak Sinha,
+Advocate
+versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED &
+ORS.
+..... Defendant
+Through: Mr. Rohan Rohatgi (VC),
+Ms. Ansu Tulsyan, Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 22.03.2024
+Appearance has been put in on behalf of the defendants.
+Let the written statement be filed as per rules with an
+advance copy of the same to the opposite side. Replication
+thereto be filed as per rules thereafter.
+Put up for completion of pleadings on 17.05.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 22, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:37
+
+===== ORDER =====
+
+$~28
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 812/2023
+PHONOGRAPHIC PERFORMANCE LIMITED ..... Plaintiff
+Through: Mr. Ankur Sangal, Mr. Raghu
+Vinayak Sinha & Mr. Shaurya
+Pandey, Advs.
+versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED & ORS.
+..... Defendants
+Through: Mr. Rohan Rohatgi, Advocate
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 01.04.2024
+I.A. 7188/2024 (under Order XXXIX Rule 4 CPC)
+1. This application has been filed by the defendants for setting aside ex
+parte order dated 10th November, 2023.
+2. Issue notice.
+3. Counsel for plaintiff accepts notice and seeks time to file response.
+4. Reply be filed within 6 weeks with copy to the opposing counsel who
+may file rejoinder thereto, if any, before the next date of hearing.
+5. List on 2nd August, 2024.
+6. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+APRIL 1, 2024/sm
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:37
+
+===== ORDER =====
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 812/2023
+PHONOGRAPHIC PERFORMANCE LIMITED
+..... Plaintiff
+Through: Mr. Raghu Vinayak Sinha (VC),
+Advocate
+versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED &
+ORS. ..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 04.04.2024
+I.A. No. 7516/2024 filed on behalf of the defendants for
+condonation of delay of 66 days in filing written statement.
+&
+I.A. No. 7517/2024 on behalf of defendant no. 2/Applicant for
+striking out the name of defendant no. 2.
+&
+I.A. 7518/2024 on behalf of defendant no. 3/Applicant for
+striking out the name of defendant no. 3.
+Notice has been accepted by ld. Counsel for the plaintiff in
+all the above IAs and he wishes to file reply/s.
+Let replies be filed within three weeks, with an advance
+copy to the opposite side. Rejoinders thereto, if any, be filed
+thereafter within a week of receiving the advance copy of the
+reply.
+Put up for completion of pleadings on 17.05.2024, the
+date already fixed.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 4, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:36
+
+===== ORDER =====
+
+$~4
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 812/2023
+PHONOGRAPHIC PERFORMANCE LIMITED
+..... Plaintiff
+Through: Mr. Raghu Vinayak Sinha,
+Mr. Shaurya Pandey, Advocates
+versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED &
+ORS. ..... Defendant
+Through: Mr. Rohan Rohatgi (VC),
+Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 17.05.2024
+I.A. No. 7516/2024 filed on behalf of the defendants for
+seeking condonation of delay of 66 days in filing the written
+statement.
+Ld. Counsel for the plaintiff submits that he has no
+objection if the application is allowed.
+For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the plaintiff, application is
+allowed. Delay stands condoned. Written statement is taken on
+record. Replication be filed within the period permissible, as
+worked out from today.
+IA stands disposed off.
+I.A. No. 7517/2024 on behalf of defendant no. 2/Applicant for
+striking out the name of defendant no. 2.
+&
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:36
+I.A. 7518/2024 on behalf of defendant no. 3/Applicant for
+striking out the name of defendant no. 3.
+Ld. Counsel for the plaintiff seeks some more time to file
+reply to both the IA’s.
+Let the replies be filed within four weeks, with an advance
+copy of the same to the opposite side. Rejoinder thereto, if any,
+be filed thereafter within two weeks of receiving an advance
+copy of the reply/ies.
+CS(COMM) 812/2023
+Ld. Counsel for the defendants submits that though he was
+present in the Court on the last date, inadvertently he could not
+mark his presence. This stands noted for records.
+In view of above IA’s, re-notify on 26.07.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 17, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:36
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 812/2023
+PHONOGRAPHIC PERFORMANCE LIMITED
+.....Plaintiff
+Through: Mr. Shaurya Pandey, Advocate
+versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED &
+ORS. .....Defendant
+Through: Mr. Rohan Rohatgi, Ms. Anshu
+Tulsyan (VC), Advocates for D-1
+to D-3.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 26.07.2024
+I.A. No. 34541/2024 filed by the plaintiff seeking condonation
+of delay of 41 days in filing replies to I.A. 7517/2024 and I.A.
+7518/2024 filed by defendant nos. 2 and 3 respectively,
+seeking their deletion.
+1. Issue notice. Notice accepted by ld. Counsel for the
+defendants. Ld. Counsel for the defendants submits that she has
+no objection if the application is allowed.
+2. For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the plaintiff, application is
+allowed. Replies are taken on record. IA stands disposed off.
+I.A. No. 7517/2024 on behalf of defendant no. 2/Applicant for
+striking out the name of defendant no. 2.
+3. Reply on behalf of the plaintiff has been taken on record
+today. Ld. Counsel for defendant no. 2 prays for some time to
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:35
+address arguments since a copy of the reply has been supplied
+two days back. Put up on the next date.
+I.A. No. 7518/2024 on behalf of defendant no. 3/Applicant for
+striking out the name of defendant no. 3.
+4. Reply on behalf of the plaintiff has been taken on record
+today. Ld. Counsel for defendant no. 3 prays for some time to
+address arguments since a copy of the reply has been supplied
+two days back. Put up on the next date.
+CS(COMM)-812/2023:
+5. On 17.05.2024 written statement of defendants was taken
+on record and replication thereto has also been filed.
+6. Matter is already listed before the Hon’ble Court for
+02.08.2024. Put up before the Hon’ble Court on the date already
+fixed i.e. 02.08.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 26, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:35
+
+===== ORDER =====
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 812/2023 & I.A. 22363/2023, I.A. 7188/2024, I.A.
+35322/2024
+PHONOGRAPHIC PERFORMANCE LIMITED .....Plaintiff
+Through: Mr. Gopal Jain, Sr. Adv. with Mr.
+Ankur Sangal, Mr. Ragu Vinayak
+Sinha, Mr. Shaurya Pandey, Mr. Rizul
+Uppal, Advocates (M:7761895769)
+versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED & ORS.
+.....Defendants
+Through: Mr. Rohan Rohatgi, Ms. Anshu
+Tulsyan, Advocates for D-1 to 3
+(M:9811867909)
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 02.08.2024
+I.A. 35322/2024 (under Order XXXIX Rule 2A read with Section 151 of
+Code of Civil Procedure, 1908 (“CPC”))
+1. The present application has been filed on behalf of the plaintiff under
+Order XXXIX Rule 2A, read with Section 151 CPC.
+2. Learned Senior Counsel appearing of the plaintiff has drawn the
+attention of this Court to the order dated 10th November, 2023, in particular,
+to Paragraphs 12 and 15 of the said order.
+3. It is submitted that despite the aforesaid order dated 10th November,
+2023 passed in favour of the plaintiff, to the complete shock and surprise of
+the plaintiff, a representative of the plaintiff found that the Plaintiff’s sound
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:34
+recordings continued to be exploited, without an appropriate license, at one
+of the outlets/stores of the Defendants, at Airia Mall, Sector 68, Gurugram –
+122101, Haryana. Thus, it is submitted that the said use is completely
+illegal, as it is in clear contravention to the interim order passed by this
+Court, on 10th November, 2023.
+4. Learned Senior Counsel for the plaintiff submits that the continued
+exploitation of sound recordings, which form a part of the repertoire of the
+Plaintiff by the Defendants, at any of their outlets/stores, without a valid
+license, not only amounts to infringement of copyright, but is also in
+violation of the injunction order passed by this Court.
+5. Issue notice. Notice is accepted by learned counsel appearing for the
+defendants.
+6. Learned counsel for the defendants submits that defendant no.1 does
+not have any speaker in any of its stores, across the country. It is submitted
+that whenever any song is played, it is only for the purposes of product
+demonstration, played bythe customers.
+7. It is further submitted that there is no possibility of any background
+music being played by defendant no.1, and it is only when the music is
+played in the mall, that the same music can be heard, within the store of the
+defendant no.1.
+8. Per contra, learned Senior Counsel for the plaintiff draws the attention
+of this Court to Section 51(ii) of the Copyright Act, 1957, to submit that
+copyright shall be deemed to have been infringed, when any person, permits
+for profit, any place to be used, for the communication of the work to the
+public, where such communication constitutes an infringement of the
+copyright in the work.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:34
+9. Let reply be filed within a period of four weeks. Rejoinder thereto, if
+any, be filed within a period of two weeks, thereafter.
+10. List before the Joint Registrar (Judicial) for completion of pleadings,
+on 18th September, 2024.
+CS(COMM) 812/2023
+11. Learned counsel for defendant no.1 submits that he may be granted
+time to file a rejoinder to the reply filed by the plaintiff, to the application of
+the defendant, being I.A. 7188/2024. Liberty is granted.
+12. Let the same be filed within a period of four weeks, from today.
+13. List before the Joint Registrar (Judicial), on 18th September, 2024.
+14. It is directed that defendant no.1 shall continue to comply with the
+directions, as issued vide order dated 10th November, 2023.
+MINI PUSHKARNA, J
+AUGUST 2, 2024
+au
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:34
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 812/2023
+PHONOGRAPHIC PERFORMANCE LIMITED
+.....Plaintiff
+Through: Mr. Shaurya Pandey (VC),
+Ms. Amira Dhawan, Advocates
+Versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED &
+ORS. .....Defendant
+Through: Mr. Rohan Rohatgi, Ms. Anshu
+Tulsyan, Advocates for D-1 to 3.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 18.09.2024
+I.A. 35322/2024 (under Order XXXIX Rule 2A r/w Section
+151 CPC.
+1. Reply has been filed on behalf of the contemnors /
+defendants. Ld. Counsel for the plaintiff prays for some more
+time to file a rejoinder. Let the same be filed within a week
+failing which the right to file a rejoinder shall stand closed
+without any further orders.
+I.A. No. 7188/2024 filed by defendant no. 1 for setting aside
+ex-parte order dated 10th November, 2023.
+2. Pleadings are complete as rejoinder has been filed by
+defendant no. 1.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:34
+IA No. 7517/2024 and IA No. 7518/2024 for deletion of
+defendant nos. 2 & 3 respectively.
+3. Put up for the arguments on the next date.
+CS(COMM) 812/2023:
+4. Pleadings are complete. Parties are now directed to file
+their documents in physical form alongwith Joint document
+schedule, also in physical form, within four weeks.
+5. Put up for arguments in IA No. 7517/2024 and IA No.
+7518/2024 / completion of pleadings / further proceedings on
+13.11.2024.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 18, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:34
+
+===== ORDER =====
+
+$~49
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 812/2023 & I.A. 43301/2024
+PHONOGRAPHIC PERFORMANCE LIMITED .....Plaintiff
+Through: Mr. Ankur Sangal and Mr. Raghu
+Sinha, Advs.
+M: 9051263570
+Email: raghu.sinha@khaitanco.com
+versus
+UNICORN INFOSOLUTIONS PRIVATE LIMITED
+& ORS. .....Defendants
+Through: Mr. Rohan Rohatgi, Ms. Shubhangini
+Rohatgi and Ms. Anshu Tulsyan,
+Advs. for D-1 to 3.
+M: 9811867909
+Email: rohanr@rsrlegal.in
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 25.10.2024
+I.A. 43301/2024 (Application seeking leave to file a Compact Disc
+(“CD”))
+1. The present application has been filed under Section 151 of Code of
+Civil Procedure, 1908 (“CPC”) on behalf of the defendants seeking leave to
+file a CD containing videos in support of defendants’ reply to the plaintiff’s
+application, under Order XXXIX Rule 2A of CPC.
+2. Learned counsel appearing for the defendants submits that the CD
+contains the videos in MP4 formats, which supports the defendants’
+submissions and averments made in the reply to the plaintiff’s application
+under Order XXXIX Rule 2A of CPC.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:33
+3. Learned counsel appearing for the defendants has handed over copy
+of the CD to learned counsel appearing for the plaintiff.
+4. Issue notice. Notice is accepted by learned counsel appearing for the
+plaintiff.
+5. He submits that he has no objection to the present application.
+6. In terms of Rule 24 of Chapter-XI of the Delhi High Court (Original
+Side) Rules, 2018, it is made clear that electronic records can be received in
+a CD/DVD/Medium, encrypted with a hash value. The said Rule is extracted
+as below:
+“24. Reception of electronic evidence - A party seeking to tender
+any electronic record shall do so in a CD/ DVD/ Medium,
+encrypted with a hash value, the details of which shall be disclosed
+in a separate memorandum, signed by the party in the form of an
+affidavit. This will be tendered along with the encrypted CD/ DVD/
+Medium in the Registry. The electronic record in the encrypted
+CD/ DVD/ Medium will be uploaded on the server of the Court by
+the Computer Section and kept in an electronic folder which shall
+be labeled with the cause title, case number and the date of
+document uploaded on the server. Thereafter, the encrypted CD/
+DVD/ Medium will be returned to the party on the condition that it
+shall be produced at the time of admission/denial of the documents
+and as and when directed by the Court/ Registrar. The
+memorandum disclosing the hash value shall be separately kept by
+the Registry on the file. The compliance with this rule will not be
+construed as dispensing with the compliance with any other law
+for the time being in force including Section 65B of the Indian
+Evidence Act, 1872.”
+7. Considering the submissions made before this Court, the present
+application is allowed and the defendants are granted liberty to file a CD
+containing the videos in MP4 format.
+8. Accordingly, Registry may receive electronic record in a CD, so long
+as it is encrypted with a hash value or in any other non-editable format. The
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:33
+CD containing the videos, be placed in the electronic record of the present
+suit.
+9. With the aforesaid directions the present application is disposed of.
+MINI PUSHKARNA, J
+OCTOBER 25, 2024/kr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:33
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 812/2023
+PHONOGRAPHIC PERFORMANCE LIMITED
+.....Plaintiff
+Through: Mr. Shaurya Pandey, Advocate
+versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED &
+ORS. ....Defendant
+Through: Mr. Rohan Rohatgi,
+Ms. Shubhangini Rohatgi,
+Ms. Anshu Tulsyan, Advocates
+for D-1 to 3.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 13.11.2024
+I.A. No. 35322/2024 (under Order XXXIX Rule 2A r/w
+Section 151 CPC.
+&
+I.A. No. 7188/2024 filed by defendant no. 1 for setting aside
+ex-parte order dated 10th November, 2023.
+1. Pleadings are complete in both the above captioned IA’s.
+IA No. 7517/2024 and IA No. 7518/2024 for deletion of
+defendant nos. 2 & 3 respectively.
+2. These applications have been listed today for addressing
+arguments. However, ld. Counsel for the plaintiff prays for some
+time to address arguments.
+3. Arguments have been addressed on behalf of ld. Counsel
+for defendants no. 2 & 3.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:33
+CS(COMM)- 812/2023
+4. Pleadings are complete in the suit.
+5. Documents on behalf of the plaintiff and defendants have
+been filed and are on record.
+6. Put up for arguments on behalf of the plaintiff in IAs No.
+7517/2024 and 7518/2024, on 28.01.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 13, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:33
+
+===== ORDER =====
+
+$~10
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 812/2023
+PHONOGRAPHIC PERFORMANCE LIMITED
+.....Plaintiff
+Through: Mr. Raghu Vinayak Sinha,
+Mr. Shaurya Pandey, Advocates
+Versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED &
+ORS. ....Defendant
+Through: Mr. Rohan Rohatgi (VC),
+Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 28.01.2025
+I.A. No. 35322/2024 (under Order XXXIX Rule 2A r/w
+Section 151 CPC.
+&
+I.A. No. 7188/2024 filed by defendant no. 1 for setting aside
+ex-parte order dated 10th November, 2023.
+1. Pleadings are complete.
+IA No. 7517/2024 and IA No. 7518/2024 for deletion of
+defendant nos. 2 & 3 respectively.
+2. Arguments heard on behalf of the plaintiff. Since an
+application u/o XXXIX Rule 2A is pending against all the
+defendants and a reply therein has been filed on behalf of
+defendant nos. 2 & 3 as well, the present IA is kept pending to
+await the outcome of IA No. 35322/2024 u/o XXXIX Rule 2A.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:32
+CS(COMM)- 812/2023
+3. Pleadings in the suit are complete. In view of the
+completion of pleadings in IA No. 35322/2024 and IA No.
+7188/2024, put up before the Hon’ble Court on 12.02.2025, for
+further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 28, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:32
+
+===== ORDER =====
+
+$~29
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 812/2023 & I.A. 22363/2023, I.A. 7188/2024, I.A.
+7517/2024, I.A. 7518/2024, I.A. 35322/2024
+PHONOGRAPHIC PERFORMANCE LIMITED .....Plaintiff
+Through: Mr. Ankur Sangal, Mr. Raghu
+Vinayak Sinha, Mr. Shaurya Pandey,
+Advocates (M:7761895769)
+versus
+UNICORN INFOSOLUTIONS PRIVATE LIMITED & ORS.
+.....Defendants
+Through: Mr. Rohan Rohatgi, Advocate
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 12.02.2025
+1. Learned counsel for the plaintiff submits that the plaintiff is already
+undergoing mediation with a similarly placed party and requests that the
+present matter be also referred for mediation.
+2. Learned counsel for the defendants submits that he has no objection if
+the matter is referred for mediation.
+3. The present suit has been filed seeking permanent injunction
+restraining the defendants from exploiting and using the plaintiff’s copyright
+works in the repertoire available on the plaintiff’s website,
+https://www.pplindia.org/songs, at any of its premises, including, but not
+limited to list of outlets which have been made a part of the present suit,
+which amounts to infringement of the plaintiff’s copyright.
+4. Accordingly, with the consent of the parties, the matter is referred to
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:31
+Delhi High Court Mediation and Conciliation Centre, to be listed before the
+learned Mediator, on 20th February, 2025.
+5. List before the Court on 28th March, 2025.
+6. In case parties do not arrive at a settlement, the Court will proceed for
+framing of issues on the next date of hearing.
+7. Interim orders to continue.
+8. A copy of this order shall be sent to Delhi High Court Mediation and
+Conciliation Centre, forthwith.
+MINI PUSHKARNA, J
+FEBRUARY 12, 2025
+au
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:31
+
+===== ORDER =====
+
+$~31
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 812/2023, I.A. 22363/2023-Stay, I.A. 7188/2024-O 39
+R 4, I.A. 7517/2024-BY D-2 for striking out the name of D-2 as a
+party, I.A. 7518/2024, I.A. 35322/2024-O 39 R 2A
+PHONOGRAPHIC PERFORMANCE LIMITED .....Plaintiff
+Through: Mr. Shaurya Pandey, Advocate
+versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED
+& ORS. .....Defendants
+Through: Mr. Rohan Rohatgi, Advocate
+through VC
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 28.03.2025
+1. Learned counsel for the parties seek adjournment on the ground that
+the parties are in the midst of negotiation talks for settling the lis amicably
+before the Delhi High Court Mediation and Conciliation Centre
+(DHCMCC).
+2. List the matter before the learned Joint Registrar for carrying out
+admission/ denial of the documents on 06.05.2025.
+SAURABH BANERJEE, J
+MARCH 28, 2025/So
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:31
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 812/2023
+PHONOGRAPHIC PERFORMANCE LIMITED
+.....Plaintiff
+Through: Mr. Raghu Vinayk Sinha,
+Advocate
+versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED &
+ORS.
+.....Defendant
+Through: Mr. Rohan Rohatgi, Ms. Muthu
+Praba. S, Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 06.05.2025
+1. The matter has been listed today for carrying out
+admission / denial of documents.
+2. It needs a highlight that as per the Mediation report, matter
+could not be settled. Report is placed on record.
+3. Documents filed alongwith the plaint have been filed in
+physical form but are lying under objections. Ld. Counsel for the
+plaintiff is directed to take steps to bring the documents on record
+before the next date.
+4. Documents of the defendants are on record in physical
+form.
+5. Put up again for admission / denial of documents on
+28.08.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 6, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:30
+
+===== ORDER =====
+
+$~195
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 812/2023
+PHONOGRAPHIC PERFORMANCE LIMITED
+.....Plaintiff
+Through: None
+versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED & ORS.
+.....Defendant
+Through: Ms. Muthu Praba, Counsel for the
+Defendants. (VC)
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the plaintiff when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:30
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 812/2023
+PHONOGRAPHIC PERFORMANCE LIMITED
+.....Plaintiff
+Through: Ms. Amrit Sharma, Advocate
+versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED &
+ORS.
+.....Defendant
+Through: Mr. Rohan Rohatgi, Ms. Muthu
+Praba. S, Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 28.08.2025
+1. The matter has been listed today for carrying out
+admission / denial of documents.
+2. Ld. Counsel for the plaintiff admits only one document
+filed by the defendants which has been identified as Ex. D-1.
+Rest of the documents have been denied by the plaintiff.
+3. As per report of the Registry, documents of the plaintiff
+are still lying under objections. Ld. Counsel for the plaintiff is
+again directed to take steps to bring the documents on record
+before the next date failing which heavy cost shall be imposed.
+4. Put up again for admission / denial of documents on
+10.11.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 28, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:29
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 812/2023
+PHONOGRAPHIC PERFORMANCE LIMITED
+.....Plaintiff
+Through: Mr. Shaurya Pandey, Advocate
+versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED &
+ORS. .....Defendant
+Through: Mr. Rohan Rohtagi, Ms. Muthu
+Prabha, Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 10.11.2025
+1. The matter has been listed today for carrying out
+admission / denial of documents. Admission / denial is to be
+carried out of plaintiff’s documents. However, the same are still
+not on record. Ld. Counsel for the plaintiff has inquired from the
+Registry and he has been verbally informed that documents are
+not traceable today. Consequently, plaintiff is at liberty to once
+again file documents in physical form within two weeks. The
+dealing assistant is directed to provide an acknowledgement of
+receipt of physical documents to ld. Counsel for the plaintiff. A
+copy of this order may be shown to the dealing assistant at Filing
+Counter for the aforesaid purpose.
+2. Admission / denial of documents on behalf of the plaintiff
+of defendant’s documents has already been carried out.
+3. Put up again for admission / denial of documents on behalf
+of the defendant on 15.12.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 10, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:29
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 812/2023
+PHONOGRAPHIC PERFORMANCE LIMITED
+.....Plaintiff
+Through: Mr. Shaurya Pandey, Advocate
+versus
+UNICORN INFOSOLUTIONS PRIAVTE LIMITED &
+ORS.
+.....Defendant
+Through: Mr. Rohan Rohtagi, Ms. Muthu
+Prabha, Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 15.12.2025
+1. The matter has been listed today for carrying out
+admission / denial of documents on behalf of the defendant.
+However, admission / denial of documents could not be
+conducted today as files are not traceable because of shifting of
+IPD Branch. Registry is directed to trace the files and place the
+same on record.
+2. Put up for admission / denial of documents on 27.03.2026.
+3. It needs a highlight that certain IA’s are pending
+consideration of the Hon’ble Court i.e. IA No. 22363/2023
+(under Order 39 Rule 1 & 2 CPC), IA No. 7188/2024 (under
+O
+
+[TRUNCATED — rights are established in the opening orders above]

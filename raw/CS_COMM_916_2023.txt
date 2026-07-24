@@ -1,0 +1,1031 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_916_2023
+case_status: PENDING
+n_orders: 20
+
+$~41
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023 and I.A. 25721-726/2023
+VERSUNI HOLDING BV ..... Plaintiff
+Through:
+versus
+BUTTERFLY GANDHIMATHI
+APPLIANCES LIMITED ..... Defendant
+Through: Mr. Hemant Daswani and
+Ms.Saumya Bajpai, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 20.12.2023
+1. The Hon’ble Judge is not holding the Court today.
+2. Re-notify on 21 December 2023
+BY ORDER
+COURT MASTER
+DECEMBER 20, 2023/kd
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:21
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023 & I.A. 25721/2023, I.A. 25722/2023,
+I.A. 25723/2023, I.A. 25724/2023, I.A. 25725/2023, I.A.
+25726/2023
+VERSUNI HOLDING BV ..... Plaintiff
+Through: Mr. Pravin Anand, Ms. Archana
+Shankar, Mr. Dhruv Anand, Ms. Udita Patro
+and Ms. Nimrat Singh, Advs.
+versus
+BUTTERFLY GANDHIMATHI APPLIANCES LIMITED
+..... Defendant
+Through: Mr. Hemant Daswani, Ms.
+Saumya Bajpai, Ms. Pranjal, Mr. Kunal
+Prakash, Advs.
+CORAM:
+HON'BLE MR. JUSTICE C. HARI SHANKAR
+O R D E R
+% 21.12.2023
+CS(COMM) 916/2023
+1. The plaintiff alleges infringement, by the defendant, of Indian
+Patent IN 394403 (IN’ 403), whereunder products used in gas stove
+are patented in favour of the plaintiff.
+2. Learned Counsel for the defendant submits that the products
+used by his client does not infringe the suit patent in any manner.
+3. As this is a patent matter, I deem it appropriate that a short
+opportunity is granted to the defendant to file a response before the
+application for interlocutory injunctive relief is taken up for hearing.
+CS(COMM)916/2023 Page1of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:21
+4. Let the plaint be registered as a suit.
+5. Issue summons in the suit. Summons are accepted, on behalf of
+defendant, by Mr. Hemant Daswani.
+6. Written statement, accompanied by affidavit of admission and
+denial of the documents filed by the plaintiff be filed within 30 days
+with advance copy to learned Counsel for the plaintiff who may file
+replication thereto, accompanied by affidavit of admission and denial
+of the documents filed by the defendants within 30 days thereof.
+7. List before the learned Joint Registrar (Judicial) for completion
+of the pleadings, admission and denial of documents and marking of
+exhibits on 5 February 2024, whereafter the matter would be placed
+before the Court for case management hearing and further
+proceedings.
+I.A. 25721/2023(Order XXXIX Rules 1 and 2 of the CPC)
+8. By this application, the plaintiff seeks interlocutory injunctive
+reliefs.
+9. Issue notice. Notice is accepted, on behalf of the defendant, by
+Mr. Hemant Daswani.
+10. Reply be filed positively within a period of two weeks from
+today with advance copy to learned Counsel for the plaintiff who may
+file rejoinder thereto, if any, within ten days thereof.
+CS(COMM)916/2023 Page2of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:21
+11. List for hearing and disposal of this application before the
+Court on 19 January 2024.
+12. It is made clear that no extension of time shall be granted for
+filing of reply/rejoinder and that this application shall be taken up for
+hearing on the next date.
+I.A. 25722/2023 (under Order XI Rules 1, 3 and 5 of the CPC)
+13. Issue notice. Notice is accepted, on behalf of the defendant, by
+Mr. Hemant Daswani.
+14. Reply be filed positively within a period of two weeks from
+today with advance copy to learned Counsel for the plaintiff who may
+file rejoinder thereto, if any, within ten days thereof.
+15. List for hearing and disposal of this application before the
+Court on 19 January 2024.
+I.A. 25723/2023 (Order XI Rule 1(4) of the CPC)
+16. This application seeks permission to file additional documents.
+The plaintiff is permitted to place additional documents on record in
+accordance with Order XI Rule 1(4) of the Code of Civil Procedure,
+1908 (CPC) as amended by the Commercial Courts Act within four
+weeks from today.
+17. The application stands disposed of accordingly.
+CS(COMM)916/2023 Page3of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:21
+I.A. 25724/2023 (exemption)
+18. Subject to the plaintiff filing legible copies of any dim or
+illegible documents on which it may seek to place reliance within 30
+days from today, exemption is granted for the present.
+19. The application is disposed of.
+I.A. 25725/2023 (under Section 149 of the CPC)
+20. Learned Counsel for plaintiff submits that the court fee has been
+paid.
+21. Accordingly, this application is rendered infructuous and is
+disposed of.
+I.A. 25726/2023 (Section 12A of the Commercial Courts Act, 2015)
+22. As the defendant is represented today by learned Counsel,
+exemption from the requirement of pre-litigation mediation is allowed.
+23. The application stands disposed of.
+C.HARI SHANKAR, J
+DECEMBER 21, 2023
+dsn
+Click here to check corrigendum, if any
+CS(COMM)916/2023 Page4of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:21
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023, I.A. 25721/2023 & I.A. 25722/2023
+VERSUNI HOLDING BV ..... Plaintiff
+Through: Mr. Pravin Anand, Adv.
+versus
+BUTTERFLY GANDHIMATHI APPLIANCES LIMITED
+..... Defendant
+Through: Mr. Hemant Daswani, Ms. Saumya
+Bajpai and Ms. Pranjal, Advs.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 19.01.2024
+1. Mr. Pravin Anand, Counsel for the plaintiff points out that as part of
+the reply to the Order XXXIX Rule 1 and 2 CPC application (I.A.
+25721/2023), the defendant has claimed that the design in question was
+actually supplied to them by Avinash Industries, who according to the
+defendant is the common manufacturer between the plaintiff and the
+defendant.
+2. Mr. Pravin Anand, Counsel for the plaintiff seeks liberty to implead
+the said Avinash Industries and states that he would move suitable
+application in this regard.
+3. List before the Joint Registrar on 05th February, 2024, the date already
+fixed.
+4. Order be uploaded on the website of this Court.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:20
+ANISH DAYAL, J
+JANUARY 19, 2024/MK
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:20
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023
+VERSUNI HOLDING BV
+..... Plaintiff
+Through: Mr. Nimrat Singh, Adv.
+versus
+BUTTERFLY GANDHIMATHI APPLIANCES LIMITED
+..... Defendant
+Through: Ms. Saumya Bajpai, Adv.
+(M-8826576220).
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 05.02.2024
+The defendant is yet to file the written statement. That be
+filed as per law, whereafter its replication be also filed in
+accordance with law.
+The parties shall thereafter file the physical copies of their
+respective documents, if not already filed and the joint schedule of
+the documents.
+List the matter for admission-denial and marking of exhibits
+on 07.05.2024.
+IA No. 25721/2023 (u/s 39 Rule 1 & 2 CPC)
+The pleadings are already complete.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 5, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:20
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023
+VERSUNI HOLDING BV
+..... Plaintiff
+Through: Mr. Sampurna Samyal, Adv.
+versus
+BUTTERFLY GANDHIMATHI APPLIANCES LIMITED
+..... Defendant
+Through: Ms. Saumya Bajpai, Adv.
+for D-1.
+(M- 8826576220).
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 23.02.2024
+List the matter for further proceedings on 29.04.2024.
+IA No. 4342/2024 (u/o 1 Rule 10 & Section 151 CPC seeking
+impleadment of parties of the suit)
+Issue notice to the proposed defendant no. 2 through all
+permissible modes, subject to the filing of the PF.
+Once served, the proposed defendant no. 2 shall file the
+reply within four weeks, whose rejoinder shall then be filed in the
+next four weeks.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 23, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:19
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023
+VERSUNI HOLDING BV ..... Plaintiff
+Through: Ms. Sampurnaa Sanyal (VC),
+Advocate
+versus
+BUTTERFLY GANDHIMATHI APPLIANCES
+LIMITED ..... Defendant
+Through: Ms. Saumya Bajpai, Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 27.03.2024
+I.A. No. 6948/2024 on behalf of the defendant seeking
+condonation of delay of 55 days in filing the written
+statement.
+Issue notice.
+Notice accepted by ld. Counsel for the plaintiff.
+Ld. Counsel for the plaintiff submits that she has no
+objection if the application is allowed.
+For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the plaintiff, application is
+allowed. Delay stands condoned. Written statement is taken on
+record. Replication be filed within the period permissible, as
+worked out from today.
+IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 27, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:18
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023
+VERSUNI HOLDING BV .... Plaintiff
+Through: Mr. Dhananjay Khanna (VC),
+Advocate
+versus
+BUTTERFLY GANDHIMATHI APPLIANCES
+LIMITED ..... Defendant
+Through: Ms. Saumya Bajpai, Advocate
+for D-1.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 29.04.2024
+I.A No. 4342/2024 (seeking impleadment of proposed
+defendant as D-2).
+Ld. Counsel for the plaintiff submits that inadvertently PF
+could not be filed for service of notice to proposed defendant.
+Let the needful be done within a week whereafter, notice be
+issued to the proposed defendant.
+CS(COMM) 916/2023
+Ld. Counsel for the plaintiff submits that replication to the
+written statement of defendant no. 1 shall be filed as per rules.
+Put up for completion of pleadings on 12.08.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 29, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:18
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023
+VERSUNI HOLDING BV ..... Plaintiff
+Through: Mr. Dhananjay Khanna,
+Advocate
+versus
+BUTTERFLY GANDHIMATHI APPLIANCES
+LIMITED ..... Defendant
+Through: Ms. Saumya Bajpai, Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 07.05.2024
+Replication is yet to be filed. Ld. Counsel for the plaintiff
+submits that the same shall be filed as per rules.
+Put up for completion of pleadings on 12.08.2024, the date
+already fixed.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 7, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:17
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023
+VERSUNI HOLDING BV ..... Plaintiff
+Through: Mr. Dhananjay Khanna (VC),
+Advocate
+versus
+BUTTERFLY GANDHIMATHI APPLIANCES
+LIMITED ..... Defendant
+Through: Ms. Saumya Bajpai, Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 14.05.2024
+I.A. No. 10932/2024 filed by the plaintiff for condoning the
+delay of 14 days in filing its replication.
+Issue notice.
+Notice accepted by ld. Counsel for the defendant.
+Ld. Counsel for the defendant submits that she has no
+objection if the application is allowed.
+For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the defendant, application is
+allowed. Delay stands condoned. Replication is taken on record.
+IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 14, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:17
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023
+VERSUNI HOLDING BV ....Plaintiff
+Through: Ms. Sampurnaa Sanyal (VC),
+Advocate
+Versus
+BUTTERFLY GANDHIMATHI APPLIANCES
+LIMITED .....Defendant
+Through: Ms. Saumya Bajpai, Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 12.08.2024
+IA No. 4342/2024 filed by the plaintiff seeking impleadment
+of proposed defendant as D-2.
+1. Notice has been issued to the proposed defendant no. 2 but
+the service report is still awaited. In view of the fact that much
+time has passed since the filing of the process fee, plaintiff is at
+liberty to take steps to serve a fresh notice through courier and
+speed post also, within two weeks.
+CS(COMM) 916/2023
+2. Ld. Counsel for the plaintiff submits that replication is
+now on record. Since the affidavits of admission / denial of
+documents have been filed, both the sides are now directed to file
+their documents in physical form within four weeks, alongwith
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:16
+Joint document schedule, also in physical form.
+3. Put up for admission / denial of documents on 24.09.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 12, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:16
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023
+VERSUNI HOLDING BV .....Plaintiff
+Through: Ms. Sampurnaa Sanyal (VC),
+Advocate
+versus
+BUTTERFLY GANDHIMATHI APPLIANCES
+LIMITED .....Defendant
+Through: Ms. Pranjal, Advocate for D-1
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 24.09.2024
+I.A No. 4342/2024 filed by the plaintiff seeking impleadment
+of proposed defendant as D-2.
+1. Ld. Counsel for defendant no. 1 has also put in appearance
+on behalf of proposed defendant no. 2. Notice of the present IA
+was received on 02.09.2024 by the proposed defendant. Vide
+order dated 23.02.2024 the court has already granted four weeks
+to file a reply. Consequently, reply be filed as per the timeline
+already given. Put up again for completion of pleadings on the
+next date.
+CS(COMM)- 916/2023
+2. Documents in physical form have been filed by both the
+sides. Defendant no. 1 however is yet to file its additional
+affidavit of admission / denial to the additional document filed by
+the plaintiff on 19.12.2023 and which has been taken on record
+vide order dated 21.12.2023, as per the submission of ld. Counsel
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:15
+for the plaintiff. Let the additional affidavit be filed within two
+weeks.
+3. Put up again for admission / denial of documents on
+26.11.2024.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 24, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:15
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023
+VERSUNI HOLDING BV ....Plaintiff
+Through: None
+Versus
+BUTTERFLY GANDHIMATHI APPLIANCES
+LIMITED .....Defendant
+Through: Ms. Saumya Bajpai, Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 26.11.2024
+1. The matter has been listed today for carrying out
+admission / denial of documents. There is no appearance on
+behalf of the plaintiff.
+2. Ld. Counsel for the defendant submits that additional
+affidavit of admission / denial of documents has been filed on
+19.11.2024 which is with some delay and consequently, is under
+objections. Ld. Counsel is directed to take steps to bring the
+same on record. Documents in physical form have been filed by
+both the sides, as has been previously recorded. The additional
+affidavit of admission / denial of documents be also filed in
+physical form. Joint document schedule is also yet to be filed.
+The same be also filed within six weeks, and in physical form
+also.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:15
+I.A No. 4342/2024 filed by the plaintiff seeking impleadment
+of proposed defendant as D-2.
+3. Reply on behalf of the proposed defendant has been filed
+but the same is lying under objections. Ld. Counsel is directed to
+take steps to bring the same on record.
+4. Put up for admission / denial of documents on 03.03.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 26, 2024/sk
+Click here to check corrigendum, if any
+After the matter had been adjourned, Ms. Sampurnaa
+Sanyal, ld. Counsel for the plaintiff has put in appearance
+through VC. She has been apprised of the next date.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 26, 2024/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:15
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023
+VERSUNI HOLDING BV .....Plaintiff
+Through: Ms. Sampurnaa Sanyal (VC),
+Advocate
+versus
+BUTTERFLY GANDHIMATHI APPLIANCES
+LIMITED .....Defendant
+Through: Ms. Saumya Bajpai, Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 06.12.2024
+I.A. No. 47456/2024 filed by the defendant to condone the
+delay of six days in filing the additional affidavit of admission
+/ denial to addl. documents filed by the plaintiff.
+1. Issue notice. Notice accepted by ld. Counsel for the
+plaintiff. Ld. Counsel for the plaintiff submits that she has no
+objection if the application is allowed.
+2. For the reasons stated in the application, application is
+allowed. Delay stands condoned. Affidavit of admission / denial
+to additional documents is taken on record. IA stands disposed
+off.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+DECEMBER 6, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:14
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023
+VERSUNI HOLDING BV .....Plaintiff
+Through: Ms. Nimrat Singh & Ms.
+Sampurnaa Sanyal, Advocates
+(Through VC)
+versus
+BUTTERFLY GANDHIMATHI APPLIANCES
+LIMITED .....Defendant
+Through: Ms. Saumya Bajpai, Advocate.
+(M: 8826576220)
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 11.12.2024
+I.A. no.47940/2024 (filed on behalf of the defendant no. 2/
+applicant for condonation of delay of 24 days in filing reply)
+1. Learned counsel for the plaintiff accepts notice and
+submits that there is no objection to the application being
+allowed. Consequently for the reasons mentioned in the
+application, delay in filing reply on behalf of defendant no. 2 in
+IA No. 4342/2024 is condoned. Reply on behalf of defendant no.
+2 is brought on record. IA stands disposed off.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+DECEMBER 11, 2024/Ni
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:14
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023
+VERSUNI HOLDING BV .....Plaintiff
+Through: Ms. Sampurnaa Sanyal (VC),
+Ms. Nimrat Singh,
+Mr. Dhananjay Khanna,
+Advocates
+Versus
+BUTTERFLY GANDHIMATHI APPLIANCES
+LIMITED .....Defendant
+Through: Ms. Saumya Bajpai, Ms. Pranjal,
+Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 03.03.2025
+I.A No. 4342/2024 filed by the plaintiff seeking impleadment
+of proposed defendant as D-2.
+1. Pleadings are complete. Put up for arguments on the next
+date.
+CS(COMM) 916/2023
+2. The matter has been listed today for carrying out
+admission / denial of documents.
+3. As per the affidavit of admission / denial of documents,
+plaintiff has denied all the documents of the defendants.
+4. Additional affidavit of admission / denial of documents on
+behalf of defendant no. 1 to the additional documents filed by the
+plaintiff is taken across the board today in the Court.
+5. Ld. Counsel for the defendant admits eight documents
+filed by the plaintiff, which have been identified as Ex. P-1 to Ex.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:13
+P-8. Rest of the documents have been denied by the defendant.
+6. Put up for arguments in IA No. 4342/2024 on 01.05.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 3, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:13
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023
+VERSUNI HOLDING BV
+.....Plaintiff
+Through: Mr. Dhruv Anand,
+Ms. Udita Patro,
+Ms. Sampurnaa Sanyal,
+Mr. Dhananjay Khanna,
+Advocates
+versus
+BUTTERFLY GANDHIMATHI APPLIANCES
+LIMITED
+.....Defendant
+Through: Mr. Hemant Daswani,
+Ms. Saumya Bajpai, Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 01.05.2025
+I.A No. 4342/2024 filed by the plaintiff seeking impleadment
+of proposed defendant as D-2.
+1. Submissions heard at length on either behalf.
+CS(COMM) 916/2023
+2. Put up for orders in IA No. 4342/2024 on 20.05.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 1, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:12
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023
+VERSUNI HOLDING BV
+.....Plaintiff
+Through: Ms. Sampurnaa Sanyal,
+Advocate
+versus
+BUTTERFLY GANDHIMATHI APPLIANCES
+LIMITED
+.....Defendant
+Through: Ms. Saumya Bajpai, Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 20.05.2025
+I.A No. 4342/2024 filed by the plaintiff seeking impleadment
+of proposed defendant as D-2.
+1. Plaintiff seeks impleadment of Avinash Industries as def.
+no. 2 primarily on the ground of certain facts having come to its
+knowledge through the written statement and reply of the
+defendant to plaintiff’s interim injunction application. Brief
+factual recapitulation would be helpful.
+2. Proposed def. is a contract manufacturer engaged by the
+plaintiff for manufacture of gas stoves. Proposed def. also
+manufactures gas stoves for the defendant. Immediately
+preceding the filing of the suit, plaintiff was made aware that a
+gas stove product/model i.e. Magnum with plaintiff’s patented
+tech. of adjustable stove legs was being manufactured by the
+proposed def. for the defendant. Consequently, a communication
+was sent to the proposed def., highlighting the concern of the
+plaintiff with a request to immediately cease production of that
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:12
+product/model for the defendant. In response to the plaintiff’s
+email, proposed def. immediately halted the manufacture for
+defendant, but also highlighted in its reply email to the plaintiff
+that there is a huge inventory of the concerned product/model
+which had piled up as they were under pressure for manufacture
+of the same from the defendant.
+3. Subsequently, present suit for patent infringement was
+filed against the defendant. In its written statement, it is the
+categoric stand of the defendant that the product Magnum with
+the patented tech. in question was “jointly developed” by the
+defendant through collaboration with the proposed def. i.e. para
+10 of the preliminary objections. Defendant has also attached an
+email dt. 19.10.2023 along with its documents which is a
+communication from the proposed defendant to the defendant
+wherein a comparison has been made of the product of the
+plaintiff and that of the defendant which uses the patented tech. It
+has been highlighted in the aforesaid email by the proposed def.
+that both technologies/products are different and proposed def.
+infact had sought defendant’s help to find a solution.
+4. Proposed defendant has filed a response to the present IA.
+Interestingly, proposed def. is being represented by the Counsel
+who is representing the defendant also.
+5. In its reply, proposed defendant states nothing about the
+ownership / development of the tech. in question. It simply says
+that it is only manufacturing products for the plaintiff as also for
+the defendant. It further submits that plaintiff was well aware
+before instituting the suit that the proposed def. was
+manufacturing the product in question for the defendant but
+despite clear knowledge, it chose not to implead the proposed
+defendant. Resultantly, plaintiff now has no cause of action to
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:12
+implead the defendant.
+6. I have carefully considered the rival submissions.
+7. Ld. counsel for the plaintiff argued that prior to filing of
+the suit, proposed defendant’s status was only that of a
+manufacturer for the plaintiff as also for the defendant. However,
+in view of the written statement and the facts disclosed/asserted
+in the reply filed by the defendant (to the interim injunction IA),
+the defendant seems to be claiming that the tech. in question
+infact belongs to the proposed defendant having been purportedly
+developed by Avinash Indus., in view of which it becomes
+imperative for the proposed defendant to be impleaded so that
+plaintiff can establish its IP right over the tech. in question
+against all those who purport to lay a claim on it. Ld. Counsel
+further argued that the email dt. 19.10.2023 addressed by the
+proposed def. to the defendant also reveals that proposed
+defendant seems to disagree with the claim of the plaintiff that
+the def.’s product is infringing the patented tech. of the plaintiff.
+This aspect in the backdrop of the fact that the proposed def. has
+not stated a word in its reply that the intellectual property of the
+tech. in question belongs to the plaintiff, makes it quite clear that
+proposed defendant needs to be arrayed as a defendant,
+especially when assessed in view of the def.’s written statement
+and reply which credits the proposed def. with the development
+of the patented tech./tech in question. Additionally, plaintiff is
+correct in also highlighting that the initial assurance of the
+proposed defendant was to halt the production but there is no
+confirmation that it has completely ceased manufacture of the
+product in question for the defendant. This aspect also gains
+traction in view of the proposed def.’s assertion (in reply to
+plaintiff’s initial email prior to institution of the suit) that a huge
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:12
+inventory of the product in question has piled up under pressure
+from the defendant. Plaintiff is thus rightly concerned about the
+disposal of the said inventory since in its reply to the present IA,
+proposed def. has not touched upon as to what has it done with
+the said inventory, for which reason also the proposed def. should
+be impleaded. Consequently, in the best understanding of the
+Court, the IA deserves to be allowed. Ordered accordingly. IA
+stands allowed. Proposed defendant is impleaded as defendant
+no. 2 and is deemed to have been served with summons today.
+CS(COMM) 916/2023
+8. Amended memo be filed within 2 weeks. Consequential
+amended plaint would also be required to be filed. Period to file
+the written statement for defendant no. 2 shall commence on
+filing of amended memo as also amended plaint, same being
+brought on record as also copies thereof being supplied to the
+newly impleaded defendant.
+9. Put up for completion of pleadings on 18.09.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 20, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:12
+
+===== ORDER =====
+
+$~233
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023
+VERSUNI HOLDING BV
+.....Plaintiff
+Through: Ms. Sampurnaa Sanyal, Adv. (VC)
+versus
+BUTTERFLY GANDHIMATHI APPLIANCES LIMITED
+.....Defendant
+Through: Ms. Saumya Bajpai, Adv.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+At request, let this matter be sent back to the Hon’ble Court for
+further directions.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:11
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023
+VERSUNI HOLDING BV
+.....Plaintiff
+Through: Mr. Dhananjay Khanna,
+Advocate
+versus
+BUTTERFLY GANDHIMATHI APPLIANCES
+LIMITED
+.....Defendant
+Through: Ms. Saumya Bajpai, Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 18.09.2025
+1. Ld. Counsel for the plaintiff submits that pursuant to
+impleadment of defendant no. 2 on 20.05.2025, plaintiff was
+required to file amended memo of parties and amended plaint
+which however could not be done for certain pressing reasons.
+Another opportunity has been sought to do the needful. Let the
+same be now done within four weeks failing which cost shall
+follow. Once the amended memo of parties is filed, Registry is
+directed to list the case title as per the amended memo. Copy of
+the amended memo of parties be supplied to ld. Counsel for the
+defendants.
+2. Put up for completion of pleadings on 11.12.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 18, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:11
+
+===== ORDER =====
+
+$~4
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 916/2023
+VERSUNI HOLDING BV .....Plaintiff
+Through: Mr. Dhananjay Khanna (VC),
+Advocate
+Versus
+BUTTERFLY GANDHIMATHI APPLIANCES
+LIMITED .....Defendant
+Through: Ms. Saumya Bajpai, Mr. Kunal
+Prakash, Advocates for D-1
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 11.12.2025
+1. Ld. Counsel appearing for defendant no. 1, though was
+initially appearing for defendant no. 2 also (who was impleaded
+on 20.05.2025), today submits that their office has been asked
+not to appear for defendant no. 2 by defendant no. 2, on
+18.09.2025. However, till date there has been no formal
+discharge of the ld. counsel. It needs a further highlight that right
+of defendant no. 2 to file written statement was to commence
+from the date of amended plaint and amended memo of parties
+coming on record. As per the noting of the Registry, amended
+plaint and amended memo of parties has been placed on record
+on 26.09.2025.
+2. Ms. Saumya Bajpai, ld. counsel is directed to send a
+formal communication to defendant no. 2 informing it / them of
+the discharge and is also directed to place the communication on
+record within 10 days. There is no appearance on behalf of
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:10
+defendant no. 2. In view of the situation explained above, ld.
+Counsel for the plaintiff has no objection if fresh steps are taken
+for service of summons on defendant no. 2. Consequently, on PF
+being filed within a week, defendant no. 2 be served through
+speed post and courier.
+3. Put up again on 01.04.2026.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+DECEMBER 11, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:10

@@ -1,0 +1,897 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_952_2023
+case_status: PENDING
+n_orders: 16
+
+$~52
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 952/2023
+SUMMIT AVIATION PVT. LTD. ..... Plaintiff
+Through: Mr. Chinmoy Pradip Sharma, Sr.
+Adv. along with Mr. Kush Sharma,
+Ms. Asiya Khan, Mr. Krishnajyoti
+and Mr. Shubhankar, Advs.
+versus
+PUNJAB NATIONAL BANK & ANR. ..... Defendants
+Through: Mr. Jitender Chaudhary and Mr.
+Shilpa Chouhan, Advs. for D2.
+CORAM:
+HON'BLE MR. JUSTICE SACHIN DATTA
+O R D E R
+% 22.12.2023
+I.A. 26330/2023 –Ex. (Filing Certified Of The Documents And True Typed
+Copies)
+1. The application is allowed subject to the plaintiff producing the
+original and all certified copies, as and when directed.
+2. The application stands disposed of.
+CS(COMM) 952/2023
+3. Let the plaint be registered as a suit.
+4. Issue summons in the suit.
+5. Learned counsel, as aforesaid, accepts summons on behalf of
+Defendant No. 2.
+6. Upon the plaintiff taking steps within 10 days, let summons be sent to
+the remaining defendants by all permissible modes. Let the summons
+indicate that the defendants are required to file written statement to the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:25
+plaint within 30 days from the date of receipt of summons, alongwith
+affidavit of admission/denial of the documents filed by the plaintiff. The
+plaintiff may file replication to the written statement within 30 days
+thereafter, alongwith affidavit of admission/denial of the documents filed by
+defendants.
+7. List before the Joint Registrar for completion of pleadings, for
+admission/denial of documents and marking of exhibits on 15.02.2024.
+I.A. 26329/2023 –(Seeking Exemption From Pre-Institution Mediation)
+8. This is an application seeking exemption from pre-institution
+mediation under Section 12A of the Commercial Courts Act, 2015.
+9. Considering the averments made in the application, and in view of
+the judgment in “Chandra Kishore Chaurasia vs. R. A. Perfumery Works
+Private Ltd.” 2022/DHC/004454 passed by the Division Bench of this
+Court, the application is allowed.
+I.A. 26328/2023 – (Seeking Leave to file addl. Documents)
+10. This is an application seeking leave to file additional documents filed
+on behalf of plaintiff.
+11. Considering the averments made in the application, let additional
+documents, if any, be filed latest within a period of 2 weeks from today.
+12. Application stands disposed of.
+I.A. 26327/2023 – ( U/o XXXIX Rule 1 & 2 of CPC for Int. Injunction)
+13. Issue notice.
+14. Learned counsel, as aforesaid, accepts notice on behalf of Defendant
+No. 2. Let reply be filed by the Defendant No. 2 before the next date of
+hearing.
+15. Issue notice to the remaining defendants through all permissible
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:25
+modes, including electronically, returnable for the next date of hearing.
+16. List on 10.01.2024.
+SACHIN DATTA, J
+DECEMBER 22, 2023/AT
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:25
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 952/2023 and I.A. No. 26327/2023
+SUMMIT AVIATION PVT. LTD. ..... Plaintiff
+Through: Mr. Chinmoy Pradip Sharma, Mr.
+Kush Sharma, Mr. Nishchaya Nigam
+and Mr. Shubhankar, Advocates.
+versus
+PUNJAB NATIONAL BANK & ANR. ..... Defendants
+Through: Mr. Jitender Chaudhary and Ms.
+Shilpa, Advocates for D-2.
+CORAM:
+HON'BLE MR. JUSTICE ANUP JAIRAM BHAMBHANI
+O R D E R
+% 10.01.2024
+The matter is mentioned at 1:13 p.m.
+At request of Mr. Chinmoy Pradip Sharma, learned senior counsel
+appearing for the plaintiff who submits that he is occupied with a part-heard
+matter in the post-lunch session, re-notify on 09th February 2024.
+The date of 15.02.2024 before Joint Registrar shall stand as-is.
+ANUP JAIRAM BHAMBHANI, J
+JANUARY 10, 2024/uj
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:24
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 952/2023
+SUMMIT AVIATION PVT. LTD. ..... Plaintiff
+Through: Mr. Chinmoy Pradeep Sharma, Senior
+Advocate with Mr. Kush Sharma,
+Mr. Nishchaya Nigam, Ms. Asiya
+Khan, Mr. Shubhankar, Mr. Abhishek
+Yadav and Ms. Krishna Jyoti Deka,
+Advocates.
+versus
+PUNJAB NATIONAL BANK & ANR. ..... Defendants
+Through: Mr. Lovelesh Kukreja, Proxy Counsel
+for D-2.
+CORAM:
+HON'BLE MR. JUSTICE ANUP JAIRAM BHAMBHANI
+O R D E R
+% 09.02.2024
+I.A. 26327/2023
+Learned counsel appearing for defendant No. 2 seeks a pass-over.
+It is noticed that defendant No. 1/Punjab National Bank has remained
+unrepresented despite service.
+Mr. Chinmoy Pradeep Sharma, learned senior counsel appearing for
+the plaintiff submits that two helicopters, that were subject matter of
+hypothecation, have been sold by auction to defendant No. 2, despite the
+plaintiff having offered a higher price towards redemption. Learned senior
+counsel also points-out that the two helicopters are subject matter of
+attachment by the Income Tax Authorities, against which attachment
+CS(COMM) 952/2023 Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:24
+defendant No. 2 has filed a writ petition which is pending before another
+Bench.
+In the circumstances, let court notice be issued to Mr. S.K. Rawat,
+Advocate, who is one of the Standing Counsel for defendant No.1/Punjab
+National Bank, returnable for the next date, along with a copy of this order.
+In the meantime, let reply to this application be filed by both
+defendants within 03 weeks; rejoinder thereto, if any, be filed within 02
+weeks thereafter; with copies to the opposing counsel.
+Mr. Sharma’s essential submission is that the auction of the
+helicopters by the bank to defendant No. 2 is bad in law, since the plaintiff
+had the right of redemption in the first instance, which has been defeated by
+defendant No. 1 bank by omitting to follow the requisite legal procedure.
+Since, it would appear that no relief can be granted in the present
+petition so long as the two helicopters are subject matter of attachment by
+the Income Tax Authorities, Mr. Sharma submits, the petitioner would move
+an appropriate application in the writ proceedings initiated by defendant No.
+2 seeking to be heard in that matter.
+As requested, the plaintiff is permitted to file additional documents,
+leave to file which was granted vide order dated 22.12.2023 in I.A.
+26328/2023, within 02 weeks from today.
+The date of 15.02.2024, before the learned Joint Registrar shall stand,
+as-is.
+Re-notify on 09th April 2024.
+ANUP JAIRAM BHAMBHANI, J
+FEBRUARY 9, 2024/
+MR
+CS(COMM) 952/2023 Page 2 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:24
+
+===== ORDER =====
+
+$~4
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 952/2023
+SUMMIT AVIATION PVT. LTD. ..... Plaintiff
+Through: Ms. Asiya Khan, Adv. (joined
+through VC)
+versus
+PUNJAB NATIONAL BANK & ANR. ..... Defendants
+Through: Mr. Anmol Panwar, Adv. for D-1
+(joined through VC)
+CORAM:
+JOINT REGISTRAR (JUDICIAL) MS. PRIYA
+MAHENDRA, (DHJS)
+O R D E R
+% 15.02.2024
+CS(COMM) 952/2023
+Learned counsel for the defendant no.1 seeks some
+time to file Written Statement. Needless to say, Written
+Statement, if any, filed by the defendant no.1 shall be
+made part of the record as per law.
+The learned counsel for the defendant no.2 had
+accepted summons of the suit on 22.12.2023 before the
+Hon'ble Court. However, till date neither any Written
+Statement has been filed nor anyone is present on behalf of
+the defendant no.2 today to explain in this regard. The
+statutory period of 30 in filing the Written Statement has
+already expired. Needless to say, Written Statement, if
+any, filed by the defendant no.2 shall be made part of the
+record as per law.
+Re-notify the matter for completion of pleadings on
+02.04.2024.
+PRIYA MAHENDRA (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 15, 2024/ab
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:23
+
+===== ORDER =====
+
+$~2
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 952/2023
+SUMMIT AVIATION PVT. LTD. ..... Plaintiff
+Through: Mr. Kush Sharma & Ms. Vagmi
+Singh, Advs.
+Versus
+PUNJAB NATIONAL BANK & ANR. ..... Defendants
+Through: Mr. Praveenware, Adv. for Mr.
+Anmol Panwar, Adv. for D-1
+Ms. Dharitry Phookan (joined
+through VC) & Ms. Lanutula
+Karanur (physically), Advs. for
+D-2
+CORAM:
+JOINT REGISTRAR (JUDICIAL) MS. PRIYA
+MAHENDRA, (DHJS)
+O R D E R
+% 02.04.2024
+CS(COMM) 952/2023
+As per office note, fresh Vakalatnama filed by
+learned counsel for the defendant no.2 is on record.
+The defendant no.2 has not yet filed the Written
+Statement till date. It is stated by learned counsel for the
+defendant no.2 that she will file Written Statement
+alongwith an appropriate application seeking condonation
+of delay in filing Written Statement. Needless to say,
+Written Statement, if any, filed by defendant no.2 shall be
+made part of the record as per law.
+No Written Statement has been filed by defendant
+no.1 till date. Learned counsel for the defendant no.1 seeks
+some time to file the Written Statement. Needless to say,
+Written Statement, if any, filed by defendant no.1 shall be
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:23
+made part of the record as per law.
+Since the date before the Hon’ble Court is short, the
+matter may be placed before the Hon’ble Court on date
+already fixed i.e. 09.04.2024, for further directions.
+PRIYA MAHENDRA (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+APRIL 2, 2024/ab
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:23
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 952/2023
+SUMMIT AVIATION PVT. LTD. ..... Plaintiff
+Through: Mr. Kush Sharma, Mr. Nishchaya
+Nigam and Ms. V. Singh,
+Advocates.
+versus
+PUNJAB NATIONAL BANK & ANR. ..... Defendants
+Through: Mr. Anmol Panwar and Mr. Praveen,
+Advocates for D-1.
+Ms. Dharitry Phookan and Ms.
+Lanutula Karanur, Advocates for D-2.
+CORAM:
+HON'BLE MR. JUSTICE ANUP JAIRAM BHAMBHANI
+O R D E R
+% 09.04.2024
+I.A. 26327/2023
+Reply to the present application is stated to have been filed. However
+the same is not on record.
+Let reply be brought on record before the next date.
+Mr. Kush Sharma, learned counsel appearing for the
+applicant/plaintiff seeks time to file rejoinder, submitting that a copy of the
+reply has been received yesterday.
+Let rejoinder be filed within 04 weeks; with copies to the opposing
+counsel.
+Re-notify on 09th August 2024.
+CS(COMM)952/2023 Page1of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:22
+CS(COMM) 952/2023
+Written statement and documents are stated to have been filed by the
+defendants, however the same are lying under office objections.
+Let office objections be cleared; and the written statement and
+documents filed by the defendants be brought on record, before the next
+date.
+Re-notify on 09th August 2024.
+ANUP JAIRAM BHAMBHANI, J
+APRIL 9, 2024/ak
+CS(COMM)952/2023 Page2of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:22
+
+===== ORDER =====
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 952/2023
+SUMMIT AVIATION PVT. LTD. ..... Plaintiff
+Through: Mr. Kush Sharma & Mr.
+Nishchaya Nigam, Advs.
+versus
+PUNJAB NATIONAL BANK & ANR. ..... Defendants
+Through: Ms. Dharitry Phookan, Adv.
+(joined through VC) and Ms.
+Lanutula Karanur (physically),
+Adv. for D-2
+CORAM:
+JOINT REGISTRAR (JUDICIAL) MS. PRIYA
+MAHENDRA, (DHJS)
+O R D E R
+% 16.04.2024
+IA No.8421/2024 under Order VIII Rule 1 CPC moved
+by the defendant no.2 seeking condonation of delay in
+filing Written Statement
+Learned counsel for the plaintiff accepts notice of
+the captioned IA and submits that he has no objection to
+the captioned IA.
+Heard. In view of reasons mentioned in the
+application, the captioned IA stands allowed to the extent
+that the delay, if any, in filing Written Statement and
+documents is condoned and the same are taken on record.
+It is stated by learned counsel for the defendant no.2
+that inadvertently he has not filed condonation of delay
+application in respect of Affidavit of Admission/Denial of
+the documents filed by the defendant no. 2. The ld counsel
+for the plaintiff submits that he has no objection if the
+delay in filing the same is condoned. At oral request, delay
+in filing Affidavit of Admission/Denial of the documents
+is condoned and the same is taken on record.
+On perusal of Admission/Denial of the documents
+filed by the defendant no.2, it is found that the same is not
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:21
+filed in the prescribed format as per Chapter VII of Delhi
+High Court (Original Side) Rules. So, the defendant no.2 is
+directed to file fresh/revised Affidavit of
+Admission/Denial of the documents within two weeks with
+copy to the opposite side, as a last and final opportunity.
+Accordingly, the captioned IA stands disposed of.
+IA No.8551/2024 under Section 151 CPC moved by the
+defendant no.2/Counter Claimant
+Learned counsel for the plaintiff accepts notice of
+captioned IA and seeks some time to file reply. At request,
+reply, if any, to the captioned IA be filed by the plaintiff
+within two weeks with copy to the opposite side, who is at
+liberty to file rejoinder, if any, within two weeks thereafter
+with copy to the opposite side.
+Re-notify the captioned IA for completion of
+pleadings on 05.07.2024.
+PRIYA MAHENDRA (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+APRIL 16, 2024/ab
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:21
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 952/2023
+SUMMIT AVIATION PVT. LTD.
+.....Plaintiff
+Through: Mr. Kush Sharma, Mr. Nishchaya
+Nigam, Ms. Vagmi Singh, Advs. (M:
+7838214305, Email:
+info.ksalawoffices@gmail.com)
+versus
+PUNJAB NATIONAL BANK & ANR.
+.....Defendants
+Through: Mr. Anmol Panwar, Adv. for D1 /
+Punjab National Bank
+Ms. Dharitry Phookan, Ms. Lanutula
+Karanur, Advs. For D2
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 05.07.2024
+Learned Presiding Officer is on leave today.
+As per directions, put up for the purpose already fixed on 01.08.2024.
+READER TO JR(JUDICIAL)
+JULY 5, 2024/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:21
+
+===== ORDER =====
+
+$~1
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 952/2023
+SUMMIT AVIATION PVT. LTD.
+.....Plaintiff
+Through: Mr. Nishchaya Nigam, Adv.
+(Through VC)
+versus
+PUNJAB NATIONAL BANK & ANR.
+.....Defendants
+Through: Mr. Anmol Panwar, Adv. for D1
+(Through VC)
+Ms. Lanutula Karanur, Ms. Chandrika
+Sachdev, Advs. for D2 (Through VC)
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 01.08.2024
+I.A. No. 8551/2024(On behalf of counter-claimant for treating the
+documents filed with written statement and plaint as the documents of
+present counter-claim)
+No reply has been filed on behalf of the plaintiff.
+No one is appearing for plaintiff today. Last opportunity is granted to
+the plaintiff to file the reply within one week, with advance copy to the
+opposite party.
+I.A. No. 32407/2024(On behalf of defendant no. 1 for condonation of
+delay of 90 days in filing the written statement)
+Issue notice of this application to the plaintiff, on taking necessary
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:20
+steps on behalf of defendant no. 1 and after service, put up for filing reply, if
+any, with advance copy to the opposite party and for completion of
+pleadings / consideration on this application.
+CS(COMM) 952/2023
+Written statement has already been filed on behalf of defendant no. 1
+& 2. However, the application seeking condonation of delay in filing written
+statement on behalf of defendant no. 1 is pending. Let the pleadings be
+completed in accordance with law.
+Matter is already fixed before the Hon’ble Court for 09.08.2024.
+Hence, put up before the Hon’ble Court on the date already fixed i.e.
+09.08.2024 for further directions.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 1, 2024/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:20
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 952/2023 & I.A. 26327/2023
+SUMMIT AVIATION PVT. LTD. .....Plaintiff
+Through: Mr. Nishchaya Nigam, Adv.
+versus
+PUNJAB NATIONAL BANK & ANR. .....Defendants
+Through: Mr. Anmol Panwar, Adv. for D-1
+Ms. Dharitry Phookan, Ms. Lanutula
+Karanur and Ms. Chandrika Sachdev,
+Advs. for D-2
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 09.08.2024
+1. Learned counsel for the defendant no. 2 states that she has filed a
+counter-claim on 06.04.2024, however, summons have not been issued.
+2. Let the counter claim be registered and numbered.
+3. Issue notice. Learned counsel for the plaintiff accepts notice and
+waives service of formal summons for the counter-claim.
+4. He states that he will file the written statement to the counter-claim
+within 15 days along with the affidavit of admission/denial of documents
+filed in support of the counter claim. It is made clear if the written statement
+is not accompanied with the affidavit of admission/denial, it will not be
+taken on record.
+5. Replication, if any, be filed within 15 days from receipt of the written
+statement. The replication shall be accompanied with affidavit of
+CS(COMM) 952/2023 Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:20
+admission/denial in respect of the documents filed with the written
+statement. It is made clear if the replication is not accompanied with the
+affidavit of admission/denial, it will not be taken on record,
+6. List before the Joint Registrar (J) for completion of pleadings on
+24.10.2024.
+MANMEET PRITAM SINGH ARORA, J
+AUGUST 9, 2024/hp/ms
+Click here to check corrigendum, if any
+CS(COMM) 952/2023 Page 2 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:20
+
+===== ORDER =====
+
+$~2
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 952/2023
+SUMMIT AVIATION PVT. LTD.
+.....Plaintiff
+Through: Appearance not given
+versus
+PUNJAB NATIONAL BANK & ANR.
+.....Defendants
+Through: Ms. Nasreen, Mr. Anmol Panwar,
+Advs. for D1 (M: 9871717254)
+Mr. Dharitry Phookan, Adv. for D2
+(Through VC)
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 24.10.2024
+CS(COMM) 952/2023
+1. Written statement has been filed by defendant no. 1 but application
+for condonation of delay is pending.
+2. Written statement of defendant no. 2 is already on record.
+I.A. No. 32407/2024(by defendant no. 1 for condonation of delay in
+filing the written statement)
+3. Learned counsel for plaintiff appeared, accepted the notice and seeks
+time to file reply.
+4. Let reply be filed within four weeks, with advance copy to the
+opposite party and rejoinder thereto, if any, may also be filed within two
+weeks thereafter so that pleadings may be completed in this IA before the
+next date of hearing.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:19
+CC(COMM) 30/2024
+5. No written statement has been filed to the counter-claim.
+6. Let the pleadings be completed in accordance with order Dated
+09.08.2024 for 20.02.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+OCTOBER 24, 2024/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:19
+
+===== ORDER =====
+
+$~4
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 952/2023
+SUMMIT AVIATION PVT. LTD. .....Plaintiff
+Through: Mr. Divjot Singh Bhatia and Mr.
+Shreesh Chadha, Advs. (Email:
+divjot.singh@kaaryalaw.com) (M:
+9910048284).
+versus
+PUNJAB NATIONAL BANK & ANR. .....Defendants
+Through: Mr. Dharitry Phookan, Ms. Amrita
+Kumari and Ms. Jasleen Kaur,
+Advs.for D-2 (Email:
+advamritayadav@gmail.com)
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 20.02.2025
+CC(COMM) 30/2024 (by defendant no. 2)
+1. Written statement not filed. Learned counsel for plaintiff submitted
+that the written statement filed by him is lying under objection and he will
+re-file the same in accordance with law.
+CS(COMM) 952/2023
+2. Written statement has already been filed on behalf of defendant no. 2.
+No replication filed. Written statement filed by defendant no. 1 with delay
+application. As requested by learned counsel for plaintiff, defendant no. 2 is
+directed to supply copy of written statement to him on sharing the e-mail.
+I.A. 26327/2023(u/O 39 R 1 & 2 CPC)
+3. Reply filed by defendant nos. 1 & 2. No rejoinder is to be filed.
+Pleadings are complete.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:16
+I.A. No. 32407/2024(by defendant no. 1 for condonation of delay in
+filing the written statement)
+4. Reply not filed.
+5. Let reply be filed within four weeks, with advance copy to the
+opposite party and rejoinder thereto, if any, may also be filed within two
+weeks thereafter so that pleadings may be completed in this IA before the
+next date of hearing.
+6. Put up for completion of pleadings in accordance with law on
+21.05.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 20, 2025/NG
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:16
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 952/2023
+SUMMIT AVIATION PVT. LTD. .....Plaintiffs
+Through: Mr.Shreesh Chadha and Mr. Divjot S.
+Bhatia, Advs.
+versus
+PUNJAB NATIONAL BANK & ANR. .....Defendants
+Through: Ms. Nasreen and Mr. Anmol Panwar,
+Advs. for PNB
+Ms. Dharitry Phookan and Ms.
+Jasleen Kaur, Advs. for D-2
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL
+O R D E R
+% 21.05.2025
+I.A. 26327/2023 (under Order XXXIX Rule 1 & 2 CPC)
+1. Pleadings already complete.
+I.A. 32407/2024 (filed by D-1 seeking condonation of 90 days delay in
+filing written statement)
+2. Reply not filed.
+3. Learned counsel for plaintiff submitted that he is unable to contact the
+plaintiff and requested for some more time to file the reply.
+4. Let reply be filed within four weeks, with advance copy to the
+opposite party and rejoinder thereto, if any, may also be filed within two
+weeks thereafter so that pleadings may be completed in this IA before the
+next date of hearing.
+CC(COMM) 30/2024 (filed by D-2)
+5. Written statement not filed. As per learned counsel for plaintiff, he
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:16
+will clarify on next date of hearing as to whether written statement was filed
+by the learned previous counsel or not and will take appropriate steps to do
+the needful.
+CS(COMM) 952/2023
+6. Written statement filed on behalf of defendant no.1 is pending for
+delay application.
+7. Learned counsel for plaintiff submitted that he had already received
+copy of written statement with affidavit of admission/denial filed on behalf
+of defendant no. 2 and had already filed replication thereto but same is lying
+under objection.
+8. Put up for completion of pleadings in accordance with law on
+12.09.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+MAY 21, 2025/tp
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:16
+
+===== ORDER =====
+
+$~200
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 952/2023
+SUMMIT AVIATION PVT. LTD.
+.....Plaintiff
+Through: None
+versus
+PUNJAB NATIONAL BANK & ANR.
+.....Defendant
+Through: Mr. Dharitry Phookan & Mr. Jasleen
+Kaur, Advs. (VC)
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 04.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the plaintiff when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 04, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:15
+
+===== ORDER =====
+
+$~2
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 952/2023
+SUMMIT AVIATION PVT. LTD.
+.....Plaintiff
+Through: Mr. Shreesh Chadha, Adv. with
+AR of plaintiff
+versus
+PUNJAB NATIONAL BANK & ANR.
+.....Defendant
+Through: Mr. Anmol Panwar, Adv. for
+PNB
+Ms. Jasleen Kaur, Adv. for D-2
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 12.09.2025
+I.A. 26327/2023 (under Order XXXIX Rule 1 & 2 CPC)
+1. Pleadings already complete.
+I.A. 32407/2024 (filed by D-1 seeking condonation of 90 days delay
+in filing written statement)
+2. Reply not filed.
+3. Plaintiff submitted that he has to engage a new counsel and
+seeks time to file reply.
+4. Let reply be filed within four weeks, with advance copy to the
+opposite party and rejoinder thereto, if any, may also be filed within
+two weeks thereafter with advance copy to opposite party.
+CC(COMM) 30/2024 (filed by D-2)
+5. Written statement not filed. As per learned counsel for
+defendant in counter-claim/plaintiff, he had already filed the written
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:15
+statement but same may be lying under objection.
+6. Defendant in counter-claim/plaintiff submitted that as the
+present counsel has been discharged, he will take appropriate steps to
+do the needful.
+CS(COMM) 952/2023
+7. Written statement filed on behalf of defendant no.1 is pending
+for delay application.
+8. Replication not filed qua the written statement of defendant
+no.2.
+9. Learned counsel for plaintiff submitted that he may be
+discharged in this case. Plaintiff appeared through V.C. and raised no
+objection. Therefore, learned counsel Mr. Shreesh Chadhha is hereby
+discharged from his vakalatnama in the present case.
+10. Let the pleadings be completed in accordance with law.
+11. Put up for completion of pleadings in accordance with law on
+12.01.2026.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 12, 2025/tp
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:15
+
+===== ORDER =====
+
+$~2
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 952/2023
+SUMMIT AVIATION PVT. LTD. .....Plaintiff
+Through: Ms. Sakshi Kakkar, Adv.
+versus
+PUNJAB NATIONAL BANK & ANR. .....Defendants
+Through: Ms.Tanvi Jain, Adv. for D-1
+Mr. Ronmi Risom, Adv. for D-2
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 12.01.2026
+I.A. 26327/2023 (under Order XXXIX Rule 1 & 2 CPC)
+1. Pleadings already complete.
+I.A. 32407/2024 (filed by D-1 seeking condonation of 90 days delay in
+filing written statement)
+2. Reply not filed.
+3. Learned counsel for plaintiff submitted that she is engaged recently
+and seeks time to file reply.
+4. Let reply be filed within four weeks, with advance copy to the
+opposite party and rejoinder thereto, if any, may also be filed within two
+weeks thereafter with advance copy to opposite party.
+CC(COMM) 30/2024 (filed by D-2)
+5. Written statement not filed. Written statement to the counter-claim is
+lying under objection.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:14
+CS(COMM) 952/2023
+6. Written statement filed on behalf of defendant no.1 is pending for
+delay application.
+7. Replication not filed qua the written statement of defendant no.2.
+8. Put up for completion of pleadings in accordance with law on
+06.04.2026.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 12, 2026/tp
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:14

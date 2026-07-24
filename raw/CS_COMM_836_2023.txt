@@ -1,0 +1,1181 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_836_2023
+case_status: PENDING
+n_orders: 22
+
+$~38
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 836/2023, CAV 597/2023 and IA Nos.23199/2023,
+23200/2023
+SOUTH EAST U P POWER TRANSMISSION COMPANY
+LIMITED ..... Plaintiff
+Through: Mr. Venkatesh, Mr. Siddharth Joshi,
+Mr. Abhishek Nangia and Mr. Mohit
+Gupta, Advs.
+versus
+IDBI BANK LIMITED & ANR. ..... Defendants
+Through: Mr. Praful Jindal, Adv. for D-1.
+CORAM:
+HON'BLE MR. JUSTICE SACHIN DATTA
+O R D E R
+% 22.11.2023
+1. During the course of hearing it transpires that a connected suit, i.e.
+CS(OS) 660/2023, filed by the defendant no.1 herein, in which the plaintiff
+and the defendant no.2 are also parties is pending before the coordinate
+bench presided by Hon’ble Mr. Justice D.K. Sharma.
+2. Accordingly, the matter list before the bench presided by Hon’ble Mr.
+Justice D.K. Sharma on 28.11.2023, subject to orders of Hon’ble Judge (In-
+Charge) (Original Side).
+SACHIN DATTA, J
+NOVEMBER 22, 2023/cl
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:18
+
+===== ORDER =====
+
+$~37
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 836/2023
+SOUTH EAST U P POWER TRANSMISSION COMPANY
+LIMITED ..... Plaintiff
+Through: Mr. Jayant Mehta, Sr. Adv. with Mr.
+Sh. Venkatesh, Mr. Siddharth Joshi,
+Mr. Abhishek Nangia, Mr. Mohit
+Gupta, Advs.
+versus
+IDBI BANK LIMITED & ANR. ..... Defendants
+Through: Mr. Praful Jindal, Adv. for D-1/IDBI
+CORAM:
+HON'BLE MR. JUSTICE DINESH KUMAR SHARMA
+O R D E R
+% 28.11.2023
+CAV 597/2023
+Since caveator/Defendant No.1 has appeared on advance notice.
+Accordingly, CAVEAT stands discharged.
+I.A. 23200/2023
+Exemption is allowed subject to all just exceptions.
+CS(COMM) 836/2023
+1. The present suit has been filed seeking the following prayers;
+“(a) Passed a decree in favour of the Plaintiff and against the
+defendant No. l mandatorily enjoining IDBI Bank to process
+encashment of the Suit BGs and to remit the proceeds thereof to the
+Plaintiff and to take all necessary, incidental and ancillary steps in
+respect of the same including to keep the Suit BGs in good order in
+order to process their encashment in favour of the Plaintiff.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:17
+(b) Passed a decree in favour of the Plaintiff and against PFC
+thereby permanently restraining PFC from claiming any rights or
+interest of any kind, directly or indirectly over the Suit BGs and
+from interfering their invocation and encashment by the Plaintiff.
+( c) A ward costs and interest to the Plaintiff
+( d) Pass such other orders that this Hon'ble Court may deem fit in
+the facts and circumstances of the present case.”
+2. Let summons be issued.
+3. Mr. Praful Jindal, learned counsel for defendant No.1/IDBI Bank
+appears and accepts summons on behalf of the defendant. Let written
+statements be filed within thirty days from today.
+4. Let summons be issued to defendant No.2 through all permissible
+modes upon filing PF by the plaintiff.
+5. The defendant No.1 is directed to file an affidavit of admission/denial
+against the documents filed by the plaintiff, failing which the written
+statement shall not be taken on record.
+6. The plaintiff is at liberty to file replications thereto within fifteen days
+of the filing of the written statements, which shall be accompanied by
+affidavits of admission/denial, in respect of the documents filed by the
+defendant, failing which the replications shall not be taken on record.
+7. It is made clear that any unjustified denial of documents may lead to
+an order of costs against the concerned party.
+8. Any party seeking inspection of documents may do so in accordance
+with the Delhi High Court (Original Side) Rules, 2018.
+9. List before the Joint Registrar on 25.01.2024.
+I.A. 23199/2023
+10. The present application has been moved under Order XXXIX Rule 1
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:17
+& 2 read with Section 151 CPC seeking following prayers;
+(a) Pass ad-interim ex-parte direction restraining IDBI Bank
+from releasing any amount in bank account of PFC qua the
+irrevocable and unconditional BGs issued in favour of the
+Plaintiff;
+(b) Pass any such further orders(s) as this Hon'ble Court may
+deem fit and proper in the facts and circumstances of the present
+case.
+11. Issue notice.
+12. Mr. Praful Jindal, learned counsel for defendant No.1/IDBI Bank has
+accepted notice.
+13. Mr. Jayant Mehta, learned senior counsel for the plaintiff submits that
+initially, the bank guarantee were issued by ICOLUX to whom the
+plaintiff had given the contract as a retention bank guarantee.
+However, later on, the benefits of these bank guarantees were given by
+the plaintiff to its lender/PFC for securing the loan given by the PFC to
+the plaintiff/company. While, the matter rested thus, IBC proceedings
+were initiated against the plaintiff and resolution plan IRP was
+appointed and the resolution plan was duly approved.
+14. Learned senior counsel submits that as per the terms of the resolution
+plan, these bank guarantees were returned to the plaintiff/company and
+the PFC has no right, title or interest over the said bank guarantees.
+Learned senior counsel submits that in the meanwhile, IDBI filed a
+writ petition bearing W.P.(C)11946/2018 against the PFC in which
+initially, a status quo order was passed vide order dated 12.05.2023.
+However, later on, this writ petition was disposed of inter alia holding
+that this is a contractual dispute between the parties.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:17
+15. Learned senior counsel submits that subsequently, the IDBI filed
+another civil Suit bearing CS(COMM) No. 660/2023 (tilted as IDBI
+Bank v. PFC & Ors. ) against the plaintiff and PFC which is pending
+before this Court and is listed on 22.01.2024. Learned senior counsel
+submits that in that suit, a statement was made on behalf of IDBI Bank
+Ltd that there is the possibility of an amicable settlement. However,
+the plaintiff is not aware of that. Learned senior counsel submits that
+the interest of the plaintiff may be secured as the bank guarantees
+which though expired may not be enchased by the IDBI Bank
+otherwise, the suit will become infructuous.
+16. Issue notice.
+17. Mr. Praful Jindal, learned counsel for defendant No.1/IDBI Bank has
+accepted notice.
+18. Learned counsel for the defendant No.1 submits that in fact the
+plaintiff company has played a fraud upon the IDBI Bank. It has been
+submitted that the ICOLUX company was an affiliate/subsidiary
+company with eight common directors of the plaintiff/company. It has
+been submitted that the contract was awarded to ICOLUX and the
+subsidiary company executed the retention bank guarantee in favour of
+the plaintiff. Learned counsel for the IDBI submits that the interest of
+the defendant Bank is being seriously prejudiced.
+19. It is pertinent to mention here that it has come in the submissions of
+learned counsel for defendant No.1 that the bank guarantees have
+already expired and thus, the funds of bank guarantees Nos.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:17
+may not be released by the IDBI Bank. In view of the fact that if the
+funds are released the suit will become infructuous. As per
+submissions of the learned counsel for the plaintiff, the right of BG‟s
+now stands vested with plaintiff, the balance of convenience also lies
+in its favour. However, this is a prima facie view and shall not amount
+to be an expression on the merits of the case.
+20. Let the reply be filed.
+21. Let notice of the application be issued to defendant No.2 through all
+permissible modes upon filing PF by the plaintiff.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:17
+be maintained till the next date of hearing.
+22. List the matter before the Joint Registrar on 25.01.2024 for completion
+of pleadings.
+DINESH KUMAR SHARMA, J
+NOVEMBER 28, 2023
+Pallavi
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:17
+
+===== ORDER =====
+
+$~1
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 836/2023
+SOUTH EAST U P POWER TRANSMISSION
+COMPANY LIMITED
+..... Plaintiff
+Through: Mr. Abhishek Nangia & Mr.
+Mohit Gupta, Advs.
+versus
+IDBI BANK LIMITED & ANR.
+..... Defendant
+Through: Mr. Praful Jindal, Adv. for D-1
+(appeared through VC)
+Mr. Ramakant Rai, Mr. Yashish
+Chandra & Mr. Varun Tikmani,
+Advs. for D-2
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. MANISH
+SHARMA, (DHJS)
+O R D E R
+% 25.01.2024
+1. As per office note, summoned issued to defendant no.2 has
+been served.
+2. Written statement, documents, affidavit of
+admission/denial of documents.
+3. Vakalatnama, written statement, affidavit of
+admission/denial of documents and reply to the captioned
+IA have been filed on behalf of defendant no.2.
+4. Learned counsel for plaintiff submits that affidavit of
+admission/denial of documents filed on behalf of the
+defendant no.1 is not proper.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:16
+5. Heard. Record perused.
+6. Learned counsel for defendant no.1 seeks time to file fresh
+and proper affidavit of admission/denial of documents in
+terms of Order 11 Rule 4 (2) of the Commercial Courts
+Act. Let fresh and proper affidavit of admission/denial of
+documents be filed within two weeks.
+7. Let replication and affidavit of admission/denial of
+documents be filed by the plaintiff within stipulated period
+with advance copy to the opposite side.
+8. Re-notify the matter for completion of pleadings and
+admission/denial of documents on 03rd April, 2024.
+MANISH SHARMA, (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 25, 2024/nk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:16
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 836/2023
+SOUTH EAST U P POWER TRANSMISSION
+COMPANY LIMITED ..... Plaintiff
+Through: Mr. Abhishek Mongia, Mr.
+Mohit Gupta, Advocates.
+versus
+IDBI BANK LIMITED & ANR. ..... Defendant
+Through: Mr. Ramakant, Mr.
+Yashish Chandra, Mr.
+Varun Tikmani, Advocate
+for D-1.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. MANISH SHARMA,
+(DHJS)
+O R D E R
+% 31.01.2024
+Regular Steno is on leave today.
+IA NO.2329/2024 (APPLICATION UNDER ORDER VIII RULE
+1 OF THE CODE OF THE CIVIL PROCEDURE, 1908, READ
+WITH SECTION 16 OF THE COMMERCIAL COURTS ACT,
+2015, READ WITH SECTION 151 OF THE CODE OF CIVIL
+PROCEDURE, 1908, SEEKING CONDONATION OF DELAY
+IN FILING OF THE WRITTEN STATEMENT ON BEHALF OF
+THE DEFENDANT NO.2.)
+1. It is submitted that the matter is coming up before this
+Court on 03/04/2024.
+2. File is taken up today on listing of the captioned IA.
+3. Learned counsel for the plaintiff accepts notice of the
+captioned IA and submits that he has no objection if the
+captioned IA may be allowed.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:16
+4. In view of the averments made in the captioned IA and
+also in view of the submission made by learned counsel for
+the plaintiff, the captioned IA is allowed. Delay in filing
+Written statement and affidavit of admission/denial of
+documents is condoned. The same are taken on record.
+5. Replication be filed within the stipulated time.
+6. IA stands disposed of.
+MANISH SHARMA, (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 31, 2024/K
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:16
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 836/2023
+SOUTH EAST U P POWER TRANSMISSION
+COMPANY LIMITED
+..... Plaintiff
+Through: Mr. Abhishek Nangia & Mr.
+Mohit Gupta, Advs.
+versus
+IDBI BANK LIMITED & ANR.
+..... Defendant
+Through: Mr. Sidhartha Barua & Mr.
+Praful Jindal, Advs. for D-1
+(appeared through VC)
+Mr. Ramakant Rai & Mr. Varun
+Tikmani, Advs. for D-2
+Mr. Abhinav Mishra, Ms.
+Nivedita Chauhan, Ms. Jagriti
+Das & Ms. Komal Singh, Advs.
+for applicant in IA No.7368/2024
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. MANISH
+SHARMA, (DHJS)
+O R D E R
+% 03.04.2024
+I.A.No.7389/2024 (under Section 5 of Limitation Act
+r/w Section 16 of the Commercial Courts Act r/w
+Section 151 CPC filed on behalf of the plaintiff seeking
+condonation of delay in filing replication to the written
+statement of defendant no.2)
+1. Learned counsel for defendant no.2 accepts notice of
+the captioned IA and submits that he has no objection,
+if the captioned IA is allowed.
+2. Heard. Record perused.
+3. In view of the averments made in the captioned IA and
+also in view of no objection furnished by learned
+counsel for defendant no.2, the captioned IA is allowed.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:15
+Delay in filing replication to the written statement of
+defendant no.2 is condoned and the same is taken on
+record.
+4. IA stands disposed of.
+I.A.No.7368/2024 (under Order I Rule 10 r/w Section
+151 CPC filed by M/s South East U.P Power
+Transmission Company Limited seeking impleadment
+of M/s Isolux Corsan India Engineering &
+Construction Pvt. Ltd. through its Liquidator)
+5. Learned counsel for plaintiff as well as learned counsel
+for defendant no.1 & 2 accept notice of the captioned
+IA and seek time to file reply.
+6. Let reply be filed within two weeks with advance copy
+to the opposite side.
+7. Rejoinder, if any, be filed within two weeks thereafter.
+CS(COMM) 836/2023 & I.A.No.23199/2023 (under
+Order XXXIX Rule 1 & 2 CPC)
+8. As per office note, plaintiff has filed replications qua
+the written statement of defendant nos.1 & 2 along with
+documents and affidavit of admission/denial of
+documents.
+9. Defendant no.1 has filed affidavit of admission/denial
+qua the documents of plaintiff.
+10. Pleadings stand complete.
+11. An application seeking impleadment of applicant
+pending consideration.
+12. Re-notify the matter for admission/denial of documents
+on 24th May, 2024.
+MANISH SHARMA, (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+APRIL 03, 2024/nk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:15
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 836/2023
+SOUTH EAST U P POWER TRANSMISSION
+COMPANY LIMITED
+..... Plaintiff
+Through: Mr. Shryeshth Sharma, Mr.
+Akash Lamba, Mr.A. Singh, Mr.
+Mohit Gupta, Advs.
+versus
+IDBI BANK LIMITED & ANR. ..... Defendant
+Through: Mr. Sidhartha Barua, Mr. Praful
+Jindal & Mr. Akash Mohan
+Srivastava, Advs. for D-1
+Mr. Yashish Chandra, Mr. Varun
+Kumar Tikmani & Mr. Shivam
+Sharan, Advs. for D-2
+Mr. Abhinav Mishra, Ms.
+Nivedita Chauhan, Ms. Jagriti
+Dosi & Ms. Komal Singh, Advs.
+for applicant in IA No.7368/2024
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. MANISH
+SHARMA, (DHJS)
+O R D E R
+% 24.05.2024
+Fresh IA No.30306/2024 (under Section 5 of Limitation
+Act filed on behalf of the plaintiff seeking condonation
+of delay in filing reply to IA No.7368/2024)
+Ld. Presiding Officer is on half day leave today.
+As per directions, re-notify the matter for further
+proceedings on 30th July, 2024.
+Private Secretary a/w
+SH. MANISH SHARMA, (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+MAY 24, 2024/nk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:14
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 836/2023
+SOUTH EAST U P POWER TRANSMISSION COMPANY
+LIMITED
+.....Plaintiff
+Through: Mr. Shryeshth Ramesh Sharma, Mr.
+Mohit Gupta, Mr. Aakash Lamba,
+Advs.
+versus
+IDBI BANK LIMITED & ANR.
+.....Defendants
+Through: Mr. Praful Jindal, Adv. for D1 / IDBI
+Bank
+Mr. Ramakant Rai, Mr. Varun Kumar
+Tikmani, Mr. Shivam Sharan, Advs.
+for D2
+Mr. Abhinav Mishra, Ms. Nivedita
+Chauhan, Ms. Jagriti Dosi, Ms.
+Komal Singh, Advs. for applicant
+(Through VC)
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 30.07.2024
+I.A. No. 7368/2024(Application filed by Isolux Corsan India
+Engineering and Construction Pvt. Ltd. for its impleadment)
+Reply has been filed by the plaintiff but same is under objection.
+Learned counsel for defendant no. 1 seeks time to file the reply.
+Learned counsel for defendant no. 2 also seeks time to file the reply, if any.
+Let reply on behalf of defendant no. 1 & 2 may be filed, if any, within two
+weeks.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:14
+At request, learned counsel for plaintiff shall serve the copy of the
+application today itself to the learned counsel for defendant no. 2, on sharing
+the necessary particulars.
+Put up for completion of pleadings on the next date of hearing.
+I.A. No. 30306/2024(Application seeking condonation of delay in filing
+the reply to the I.A. No. 7368/2024)
+No objection is raised.
+Hence, the captioned IA is allowed and disposed of. The reply be
+accordingly taken on record.
+CS(COMM) 836/2023
+Written statement has been filed on behalf of defendant no. 1 & 2 and
+replications thereto have also been filed.
+Learned counsel for defendant no. 2 submitted that the plaintiff had
+filed certain documents with the replication to the written statement of
+defendant no. 1 but same have not been filed in compliance of Order XI
+Rule 1(5) of CPC. At this, learned counsel for plaintiff submitted that he will
+take appropriate steps in this regard.
+Put up for completion of pleadings in the I.A. No. 7368/2024 for
+24.09.2024.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JULY 30, 2024/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:14
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 836/2023
+SOUTH EAST U P POWER TRANSMISSION COMPANY
+LIMITED
+.....Plaintiff
+Through: Mr. Shryeshth Ramesh Sharma, Mr.
+Akash Lamba, Mr. Mohit Gupta,
+Advs.
+versus
+IDBI BANK LIMITED & ANR.
+.....Defendants
+Through: Mr. Praful Jindal, Adv. for D1
+(Through VC)
+Mr. Varun Kumar Tikmani, Mr.
+Shivam Sharan, Mr. Ramakant Rai,
+Advs. for D2
+Mr. Abhinav Mishra, Ms. Nivedita
+Chauhan, Ms. Jagriti Dosi, Ms.
+Komal Singh, Mr. Priyanshu Singh,
+Advs. for applicant (M: 9007941418,
+8651094374, 7908699181; Email:
+admin@chambersofabhinavmishra.in)
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 24.09.2024
+I.A. No. 7368/2024(Application filed by Isolux Corsan India
+Engineering and Construction Pvt. Ltd. for its impleadment)
+1. Reply has already been filed on behalf of the plaintiff and rejoinder
+has also been filed.
+2. Reply has not been filed on behalf of defendant no. 1 & 2. Learned
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:13
+counsel for defendant no. 2 submitted that without prejudice to his right, he
+does not want to file any reply to this IA.
+3. Let reply be filed on behalf of defendant no. 1 as last opportunity
+within four weeks, with advance copy to the opposite party and rejoinder
+thereto, if any, may also be filed within two weeks thereafter so that
+pleadings may be completed in this IA before the next date of hearing and
+put up for arguments on this IA on 28.11.2024.
+CS(COMM) 836/2023
+4. Pleadings are already complete.
+5. Learned counsel for plaintiff submitted that he has already filed an
+application under Order XI Rule 1(5) CPC regarding additional documents
+filed by him with the replication, however, same is not listed yet.
+6. Put up for completion of pleadings as well as completion of process of
+filing of Joint Document Schedule in terms of Rule7A of Chapter VII of
+The Delhi High Court (Original Side) Rules, 2018 physically by plaintiff
+after getting it signed from defendants, admission / denial of documents and
+marking of Exhibits in accordance with law on 17.02.2025.
+7. Documents, if e-filed be filed physically by parties so as to mark the
+Exhibits.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 24, 2024/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:13
+
+===== ORDER =====
+
+$~31
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 836/2023 & I.A. 40685/2024
+SOUTH EAST U P POWER TRANSMISSION COMPANY
+LIMITED .....Plaintiff
+Through: Mr. Shryeshth Ramesh Sharma, Mr.
+Akash Lamba, Mr. Mohit Gupta
+Mr. Sunil Chauhan, Mr. Aditya S
+Chauhan, Advocates
+versus
+IDBI BANK LIMITED & ANR. .....Defendants
+Through: Mr. Praful Jindal, Advocate,
+Advocate for defendant no. 1
+Mr. Ramakant Rai, Mr. Varun, Mr.
+Shivam, Advocates for defendant no.
+2
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 27.09.2024
+The Hon’ble Judge is not holding the Court today as the Hon’ble
+Judge is presiding over a Tribunal constituted under the Unlawful Activities
+(Prevention) Act.
+List on 07.11.2024.
+BY ORDER
+COURT MASTER
+SEPTEMBER 27, 2024/hp
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:13
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 836/2023 & I.A. 40685/2024
+SOUTH EAST U P POWER TRANSMISSION COMPANY
+LIMITED .....Plaintiff
+Through: Shri. Venkatesh, Mr. Shryeshth
+Ramesh Sharma, Mr. Aakash Lamba
+and Mr. Mohit Gupta, Advocates
+versus
+IDBI BANK LIMITED & ANR. .....Defendants
+Through: Mr. Praful Jindal, Advocate for D-1
+Mr. Shivam Sharan, Mr. Varun
+Kumar Tikmani, Mr. Ramakant Rai,
+Advocates for D-2
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 07.11.2024
+The Hon’ble Judge is on leave today.
+List on 21.11.2024.
+BY ORDER
+COURT MASTER
+NOVEMBER 7, 2024/rhc
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:12
+
+===== ORDER =====
+
+$~4
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 836/2023
+SOUTH EAST U P POWER TRANSMISSION COMPANY
+LIMITED .....Plaintiff
+Through: Mr. Shryeshth Ramesh Sharma, Mr.
+Aakash Lamba and Mr. Abhishek
+Nangia and Mr. Mohit Gupta,
+Advocates
+versus
+IDBI BANK LIMITED & ANR. .....Defendants
+Through: Mr. Akash Mohan, Advocate
+(through VC) for D-1
+Mr. Varun Kumar Tikmani and Mr.
+Shivam Sharan, Advocates for D-2
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 21.11.2024
+I.A. 40685/2024 (Application on behalf of the plaintiff under Order XI Rule
+1(5) read with Section 151 CPC and Section 16 of the Commercial Courts
+Act, 2015)
+1. This is an application filed by the plaintiff under Order XI Rule 1(5)
+of the Code of Civil Procedure, 1908 (CPC) read with Section 16 of the
+Commercial Courts Act, 2015, for placing on record additional documents
+filed along with the replication, to the written statement by defendant no. 1.
+2. The documents which have been placed on record have been enlisted
+at paragraph ‘4’ of this application which reads as under:
+(a) Transmission Service Agreement (“TSA”) dated 20.01.2012;
+(b) Supplementary Transmission Service Agreement dated 09.06.2018;
+(c) Letter dated 30.06.2023 issued by the Government of U.P.
+3. It is stated in the application that the objection to the filing of the said
+documents was raised by defendant no. 2. The said objection was procedural
+CS(COMM) 836/2023 Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:11
+inasmuch as the plaintiff had not sought the leave of this Court before filing
+the said documents with its replication.
+4. Issue notice. Learned counsel for defendant no. 2 accepts notice. He
+states that the objection was procedural in nature and he has no objection if
+the documents are taken on record subject to defendant no. 2 being granted
+right to file his affidavit of admission/denial of documents.
+5. Learned counsel for defendant no. 1 as well adopts the submission of
+the defendant no.2 and seeks leave to file an affidavit of admission/denial of
+documents.
+6. Accordingly, the application is allowed. The documents are directed
+to be taken on record.
+7. Defendant nos. 1 and 2 are directed to file their affidavit of
+admission/denial of documents within three (3) weeks.
+8. It is made clear that the documents have been taken on record without
+prejudice to the rights and contentions of the defendants on the merits of the
+dispute.
+CS(COMM) 836/2023
+9. The plaintiff shall file its Joint Document Schedule within four (4)
+weeks.
+10. List before the learned Joint Registrar (J) for recording
+admission/denial of documents and marking of exhibits on the date already
+fixed i.e., 17.02.2025.
+11. Interim orders to continue.
+MANMEET PRITAM SINGH ARORA, J
+NOVEMBER 21, 2024/msh/sk
+Click here to check corrigendum, if any
+CS(COMM) 836/2023 Page 2 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:11
+
+===== ORDER =====
+
+$~1
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 836/2023
+SOUTH EAST U P POWER TRANSMISSION COMPANY
+LIMITED .....Plaintiff
+Through: Mr. Shri Venkatesh, Mr. Shryeshth
+Ramesh Sharma, Mr. Abhishek
+Nangia, Mr. Akash Lamba, Mr. Mohit
+Gupta, Mr. Shubham Singh, Advs.
+(M: 8519003427, Email:
+lawyers@skvlawoffice.com)
+versus
+IDBI BANK LIMITED & ANR. .....Defendants
+Through: Mr. Praful Jindal, Mr. Anuraag
+Mehta, Advs. for D1 / IDBI Bank
+(Through VC)
+Mr. Varun Kumar Tikmani, Mr.
+Shivam Sharan, Mr. Ramakant Rai,
+Advs. for D2
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 28.11.2024
+I.A. No. 46421/2024(Application on behalf of plaintiff for condonation
+of delay of 9 days in filing rejoinder to the reply of defendant no. 1)
+1. Learned counsel for applicant stated that he is not pressing for this
+application to place on record the rejoinder to the reply filed by IDBI Bank
+to the I.A. No. 7368/2024 as he is not the applicant in that IA.
+2. Hence, at request, captioned IA is disposed of as withdrawn.
+I.A. No. 7368/2024(by applicant, Isolux Corsan India Engineering and
+Construction Pvt. Ltd. u/O I R 10 CPC for impleadment as defendant)
+3. Learned counsel for defendant no. 1 i.e. IDBI Bank is not opposing
+this application.
+4. Learned counsel for defendant no. 2 already submitted that he does
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:11
+not want to file reply without prejudice to his rights.
+5. Plaintiff had already filed the reply and rejoinder thereto, already
+filed.
+6. Therefore, pleadings are complete.
+7. Part arguments heard. Learned counsels for defendant no. 2 as well as
+plaintiff raised objections on the maintainability of the present application in
+view of Section 33(5) of the Insolvency And Bankruptcy Code, 2016. At
+this, learned counsel for applicant stated that although the applicant had
+already taken approval for initiating the legal proceedings but she had not
+filed the relevant order and seeks time to place on record the same.
+8. Hence, at request, put up for filing the same, if any, with copy to the
+opposite party and for arguments on 16.01.2025.
+CS(COMM) 836/2023
+9. Put up for completion of process of filing of Joint Document
+Schedule, in compliance of order Dated 24.09.2024, in terms of Rule7A of
+Chapter VII of The Delhi High Court (Original Side) Rules, 2018
+physically by plaintiff after getting it signed from defendants, admission /
+denial of documents and marking of Exhibits in accordance with law on
+17.02.2025 i.e. the date already fixed.
+10. Documents, if e-filed be filed physically by parties so as to mark the
+Exhibits.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 28, 2024/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:11
+
+===== ORDER =====
+
+$~2
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 836/2023
+SOUTH EAST U P POWER TRANSMISSION COMPANY
+LIMITED
+.....Plaintiff
+Through: Mr. Shryeshth Ramesh Sharma, Mr.
+Abhishek Nangia, Mr. Akash Lamba,
+Mr. Mohit Gupta, Mr. Shubham
+Singh, Advocates (M: 8519003427)
+versus
+IDBI BANK LIMITED & ANR.
+.....Defendants
+Through: Mr. Praful Jindal, Advocate for D1
+Mr. Varun Kumar Tikmani, Mr.
+Shivam Sharan, Mr. Ramakant Rai,
+Advocates for D2
+Mr. Abhinav Mishra, Ms. Nivedita
+Chauhan, Ms. Jagriti Dosi, Ms. Komal
+Singh, Advocates for applicant in I.A.
+No. 7368/2024
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 16.01.2025
+CS(COMM) 836/2023
+1. As per office noting, affidavit of admission /denial has been filed on
+behalf of defendant no. 2 but same is not filed on behalf of defendant no. 1.
+2. Hard copy of documents filed on behalf of defendant no. 2. Let
+affidavit of admission / denial be filed on behalf of defendant no. 1 in
+compliance of order Dated 21.11.2024.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:10
+3. Put up for completion of process of filing of Joint Document Schedule
+in terms of Rule7A of Chapter VII of The Delhi High Court (Original
+Side) Rules, 2018 physically by plaintiff after getting it signed from
+defendants, admission / denial of documents and marking of Exhibits in
+accordance with law. Documents, if e-filed be filed physically by parties so as
+to mark the Exhibits.
+I.A. No. 23199/2023(u/O XXXIX R 1 & 2 CPC)
+4. Pleadings already complete.
+I.A. No. 7368/2024(by applicant u/O I R 10 CPC for impleadment of M/s
+Isolux Corsan India Engineering & Construction Private Limited
+through its liquidator)
+5. Defendant no. 1 already raised no objection to this application.
+6. As per previous order, plaintiff and defendant no. 2 raised objections
+on the maintainability of the present application and thereafter learned
+counsel for applicant sought time to place on record the relevant order of
+approval.
+7. The applicant had already placed on record compliance affidavit
+including the order of the Hon’ble NCLT Dated 28.04.2022. During
+arguments she referred Page No. 2 of the said order stating that their
+application i.e. I.A. No. 405/2021 was allowed vide that order in matter
+Oriental Bank of Commerce Vs. Isolux Corsan India Engineering and
+Construction Private Limited and vide that order, applicant was allowed to
+defend all the litigation mentioned in the list Annexure C-2 i.e. prosecution or
+other consequential proceedings civil as well as criminal nature.
+8. On the other hand, learned counsel for plaintiff and defendant no. 2
+objected upon the same stating that through the aforesaid order, only liberty
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:10
+was granted to the applicant to proceed as per law but the applicant had not
+proceeded as per law and had not taken the requisite approval in view of the
+Section 33(5) of the Insolvency and Bankruptcy Code, 2016.
+9. Thereafter, arguments further advanced on merit also on behalf of the
+applicant as well as defendant no. 2 & plaintiff.
+10. I have considered the submissions and have gone through the records.
+Regarding the objections raised by learned counsel for plaintiff and defendant
+no. 2 on the maintainability of the present application, some clarifications are
+required pertaining to order of the Hon’ble NCLT and the document
+Annexure C-2 mentioned in the said order Dated 28.04.2022.
+11. Hence, put up for clarifications and further arguments, if any for
+03.02.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 16, 2025/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:10
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 836/2023
+SOUTH EAST U P POWER TRANSMISSION COMPANY
+LIMITED .....Plaintiff
+Through: Mr. Shryeshth Ramesh Sharma, Mr.
+Abhishek Nangia, Mr. Akash Lamba,
+Mr. Mohit Gupta, Mr. Shubham
+Singh, Advocates (M: 8519003427)
+versus
+IDBI BANK LIMITED & ANR. .....Defendants
+Through: Mr. Praful Jindal, Advocate for D1 /
+IDBI Bank (Through VC)
+Mr. Ramakant Rai, Mr. Varun
+Tikmani, Mr. Shivam Sharan,
+Advocates for D2
+Mr. Abhinav Mishra, Ms. Nivedita
+Chauhan, Ms. Jagriti Dosi, Ms.
+Komal Singh, Advocates for applicant
+in I.A. No. 7368/2024 (M:
+9007941418)
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 03.02.2025
+CS(COMM) 836/2023
+1. Learned counsel for defendant no. 1 seeks some more time to file
+affidavit of admission / denial qua the additional documents filed by the
+plaintiff with the replication.
+2. Hard copy of documents filed by defendant no. 2.
+3. Learned counsels for plaintiff and defendant no. 1 submitted that they
+will file the hard copy of documents within one week.
+4. Put up for completion of process of filing of Joint Document Schedule
+in terms of Rule7A of Chapter VII of The Delhi High Court (Original
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:09
+Side) Rules, 2018 physically by plaintiff after getting it signed from
+defendants, admission / denial of documents and marking of Exhibits in
+accordance with law. Documents, if e-filed be filed physically by parties so
+as to mark the Exhibits.
+I.A. 23199/2023(u/O XXXIX R 1 & 2 CPC)
+5. Pleadings are already complete.
+I.A. No. 7368/2024(by applicant u/O I R 10 CPC for impleadment of
+M/S Isolux Corsan India Engineering & Construction Private Limited
+through its liquidator)
+6. It is clarified by learned counsel for plaintiff and defendant no. 2 that
+in previous order, in third line of Paragraph No. 8, it has been recorded that
+‘liberty was granted to the applicant to proceed as per law’ whereas their
+contention was that ‘the applicant was granted liberty to defend all the
+litigations mentioned in the list Annexure-C2’.
+7. As it is only submission on behalf of the plaintiff and defendant no. 2,
+therefore, same is clarified and be read as clarified by learned counsel for
+plaintiff and defendant no. 2.
+8. It is further clarified by learned counsel for defendant no. 2 that his
+submissions are only regarding maintainability whereas learned counsel for
+plaintiff argued both regarding maintainability as well as merit.
+9. Put up for order on the date already fixed i.e. 17.02.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 3, 2025/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:09
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 836/2023
+SOUTH EAST U P POWER TRANSMISSION COMPANY
+LIMITED .....Plaintiff
+Through: Mr. Shryesth Ramesh Sharma, Mr.
+Abhishek Nangia, Mr. Shubham
+Singh & Mr. Mohit Gupta, Advs.
+Mr. Abhinav Mishra, Ms. Nivedita
+Chauhan, Ms. Jagriti Dosi & Ms.
+Komal Singh, Advs. for applicant in
+I.A. 7368/2024.
+versus
+IDBI BANK LIMITED & ANR. .....Defendants
+Through: Mr. Ramakant Rai and Mr. Varun
+Tikmani, Advs. for D-2.
+Mr. Praful Jindal, Adv. for D-1
+(through VC).
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 17.02.2025
+Learned Presiding Officer is on leave today.
+As per directions, put up for the purpose already fixed on 10.03.2025.
+READER TO JR(JUDICIAL)
+FEBRUARY 17, 2025/NG
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:08
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 836/2023
+SOUTH EAST U P POWER TRANSMISSION COMPANY
+LIMITED .....Plaintiff
+Through: Mr. Abhishek Nangia, Adv.
+Mr. Abhinav Mishra and Ms. Jagriti
+Dosi, Advs.
+versus
+IDBI BANK LIMITED & ANR. .....Defendants
+Through: Mr. Varun Kumar Tikmani, Mr.
+Ramakant Rai and Mr. Shivam
+Sharan, Advs.
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 10.03.2025
+I.A. 23199/2023 (u/O 39 R 1 & 2 CPC)
+1. Pleadings are already complete.
+I.A. 7368/2024 (by applicant u/O 1 R 10 CPC for impleadment M/s
+Isolux Corsan India Engineering & Construction Private Limited
+through its liquidator)
+2. Arguments heard.
+3. Learned counsel for applicant submitted that the applicant is required
+to be impleaded in the present suit as a necessary as well as proper party.
+Learned counsel further submitted that dispute arise from the Retention
+Bank Guarantees issued by IDBI/respondent no. 2/defendant no. 1 on behalf
+of the applicant i.e. Isolux Corsan India during its insolvency in favor of
+respondent no. 1/SEUPPTCL/plaintiff.
+CS(COMM) 836/2023 Page 1 of 11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:07
+4. In year 2011, plaintiff and Mainpuri Power Transmission Pvt. Ltd.
+entered into supply, service and civil works agreements each dated
+10.02.2012 with ICI-C&C Mainpuri JV for the execution of the construction
+of 765 KV S/S Mainpuri to Baraline with 765/KV/400KV AIS at Mainpuri
+and Associated Schemes/Work on Build Own Operate and Transfer Basis
+(UP-BOOT Project). In furtherance of the aforesaid agreements plaintiff was
+to pay the applicant a sum of INR 496,36,37,542/-. Later in December, 2014
+the UP-BOOT Agreements had undergone a series of changes through the
+execution of various Novation Agreements, whereby plaintiff became the
+final employer and applicant became the final EPC Contractor for the
+UP-BOOT Project. The Bank Guarantees (BGs) being subject matter of the
+captioned suit were issued in furtherance of the payment terms prescribed
+under the UP-BOOT Agreement. Total 7 BGs amounting to a total sum of
+INR 58.50 crores were issued by IDBI to the plaintiff on behalf of the
+applicant to secure the retention amount in case of any defect in the
+supply/work/service rendered by the applicant in terms of the UP-BOOT
+Agreements.
+5. Learned counsel for applicant further submitted that plaintiff had
+procured a long term loan from PFC Ltd. (defendant no.2) by assigning the
+aforesaid BGs to secure its financial obligations vide Loan Agreement dated
+28.02.2014, whereby a term loan facility of INR 3713.25 crores was granted
+by PFC to plaintiff. Thereafter Group 1 of UP-BOOT Project was
+successfully completed and the remaining portion of the said project
+remained incomplete and some parts of it were suspended on account of
+delays and defaults on the part of plaintiff. Upon initiation of corporate
+insolvency resolution process (CIRP) against the applicant, the above
+CS(COMM) 836/2023 Page 2 of 11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:07
+mentioned BGs were fraudulently invoked by PFC against which IDBI had
+preferred a writ petition, however the said writ petition was dismissed.
+Thereafter, an LPA was preferred by IDBI but same was also disposed of
+permitting the parties to take recourse to other remedies available to them in
+law. Thereafter, the CS(COMM.) 660/2023 was filed by the IDBI against
+the plaintiff and PFC was training them from encashing/invoking any
+payments from the BGs in persons. During hearing of the said suit, applicant
+came to know about the captioned suit filed by plaintiff to maliciously
+invoke and encash the BGs.
+6. Learned counsel for applicant further submitted that its impleadment
+is very much necessary in the present suit as the BGs in question were
+provided by IDBI Bank in favor of the plaintiff on behalf of the applicant.
+Outcome of the captioned suit will be having direct impact on the interest of
+the applicant in liquidation. Therefore, the captioned IA may be allowed.
+Learned counsel for applicant also relied upon the judgments i.e. “Mumbai
+International Airport Pvt. Ltd. vs. Regency Convention Centre and Hotels
+Pvt. Ltd. and Ors.” [(2010) 7 SCC 417]; “Ramesh Hiranand Kundanmal
+vs. Municipal Corporation of Greater Bombay and Ors.” [(1992) 2 SCC
+524] and “Kranti Arora vs. DIGJAM Ltd.” [2022 SCC OnLine Del 2023]
+in support of her arguments.
+7. On the other hand, learned counsel for plaintiff/respondent no. 1 and
+learned counsel for respondent no. 2 opposed the application. Reply has
+been filed opposing the application. Learned counsel for plaintiff and
+defendant no. 2 submitted that the application moved by the applicant is not
+maintainable in view of Section 33(5) of the Insolvancy Act and Bankruptcy
+Code, 2016 as applicant had not taken the appropriate approval.
+CS(COMM) 836/2023 Page 3 of 11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:07
+8. Learned counsel for the plaintiff further submitted that the applicant is
+neither necessary nor proper party in the present suit. The suit BGs were
+issued by IDBI/defendant no. 1 in favor of the plaintiff at the behest of the
+applicant. The suit BGs are irrevocable and unconditional in nature and form
+an independent contract between IDBI and the plaintiff. The entity at whose
+behest the said BGs have been issued becomes irrelevant as a party while
+deciding upon the question of invocation. In this suit the plaintiff had not
+claimed any relief against the applicant and therefore he cannot be
+compelled to fight against the applicant. As per facts of the case the
+applicant instructed IDBI Bank to issue irrevocable suit BGs for the purpose
+of executing the project and the project could not be executed on account of
+delay by the applicant itself. It is a settled law that no one can take
+advantage of its own wrong. The present application is nothing but a
+malafide attempt to take benefit of its delay in executing the project and
+claim its right over the suit BGs. The application moved by the applicant is
+without any merit and same may be dismissed. Learned counsel for plaintiff
+relied upon the case laws i.e. “Vidur Impex and Traders Private Limited vs.
+Tosh Apartment” (2012) 8 SCC 384; “Ansal Engineering Projects Ltd. vs.
+Tehri Hydro Development Corporation Ltd. and Anr.” (1996) 5 SCC 450;
+“Hindustan Steel Works Construction Ltd. vs. Tarapore & Co. and Anr.”
+(1996) 5 SCC 34; “SKS Power Generation (Chhattisgarh) Ltd. vs. Canara
+Bank” 2021 SCC OnLine Bom 1835; “Dwarikesh Sugar Industries Ltd. vs.
+Prem Heavy Engineering Works(P) Ltd.” (1997) 6 SCC 450; “Standard
+Chartered Bank vs. Heavy Engineering Corporation Limited & Anr”
+(2020) 13 SCC 574; “Kranti Arora vs. Digjam Ltd.” 2022 SCC OnLine Del
+CS(COMM) 836/2023 Page 4 of 11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:07
+2023 and “Devendra Kumar vs. State of Uttaranchal and Ors.” (2013) 9
+SCC 363 in support of his arguments.
+9. I have considered the submission of both parties and have gone
+through the contents of the application, reply, rejoinder, the relevant
+statutory provisions and case laws.
+10. The facts of the present suit in brief are that the plaintiff i.e.
+SEUPPTCL filed this suit against IDBI Bank and PFCL seeking the relief of
+mandatory injunction against the defendant no. 1/IDBI Bank to encash the
+BGs in favor of the plaintiff and further seeking the relief of restraining PFC
+from claiming any right or interest upon the suit BGs. The plaintiff was
+incorporated as a Special Purpose Vehicle by Uttar Pradesh Power
+Transmission Company Ltd. for establishing 765 KV S/C Mainpuri Baraline
+with 765/400 KV AIS at Mainpuri and associated work (Project) on built,
+own, operate & maintain and transfer (BOOT) basis in the State of Uttar
+Pradesh. On 05.07.2011 the original parent company of the plaintiff was
+selected as the transmission service provider through a competitive bidding
+process carried out by UPPTCL. To develop the project a joint venture
+between the applicant company and C&C Construction Pvt. Ltd. entered
+into the Definitive Agreements (i.e. agreements for civil works, su
+
+[TRUNCATED — rights are established in the opening orders above]

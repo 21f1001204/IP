@@ -1,0 +1,1320 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_800_2023
+case_status: DISPOSED
+n_orders: 22
+
+$~39
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023
+NOKIA TECHNOLOGIES OY ..... Plaintiff
+Through: Mr. Akhil Sibal, Sr. Advocate
+with Ms. Abhilasha Nautiyal, Mr. Aditya
+Gupta, Ms. Asavari Jain and Mr. Shuvam
+Bhattacharya, Advs.
+versus
+AMAZON SELLER SERVICES
+PRIVATE LIMITED & ORS. ..... Defendants
+Through: Mr. Sai Krishna Rajagopal, Ms.
+Sneha Jain, Ms. Charu Grover, Dr. Victor
+Vaibhav Tandon, Mr. Aniruddh Bhatia, Ms.
+Shruti Jain and Mr. Saif Rahman Ansari,
+Advs. for D-1 to D-4
+Mr. Rajiv Nayar, Sr. Advocate with Mr.
+Abhijnan Jha, Dr. Abhimanyu Chopra, Ms.
+Sadhvi Chhabra and Mr. Kushagra Jain,
+Advs. for D-5
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 06.11.2023
+CS(COMM) 800/2023
+1. This suit alleges infringement, by the Amazon Prime Video
+service of the defendants, of Indian Patent 275707 (IN’707) and
+Indian Patent 382275 (IN’275) of the plaintiff.
+2. The plaint is directed essentially against the Trending Now and
+Continue Watching features of Amazon Prime Video.
+CS(COMM) 800/2023 Page 1 of 5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:48
+3. Mr. Sai Krishna Rajagopal, learned Counsel for Defendants 1 to
+4 submits that these features have been available to consumers since a
+number of years.
+4. In any event, the matter is extremely complex and would
+require a detailed examination.
+5. In the circumstances, let the plaint be registered as a suit.
+6. Issue summons in the suit. Summons are accepted on behalf of
+Defendants 1 to 4 by Mr. Sai Krishna Rajagopal and on behalf of
+Defendant 5 by Dr. Abhimanyu Chopra.
+7. Written statement, accompanied by affidavit of admission and
+denial of the documents filed by the plaintiff be filed within 30 days
+with advance copy to learned Counsel for the plaintiff who may file
+replication thereto, accompanied by affidavit of admission and denial
+of the documents filed by the defendant within 30 days thereof.
+8. List before the learned Joint Registrar (Judicial) for completion
+of the pleadings, admission and denial of documents and marking of
+exhibits on 8 January 2024, whereafter the matter would be placed
+before the Court for case management hearing and further
+proceedings.
+I.A. 22003/2023 (Order XXXIX Rules 1 and 2 of the CPC)
+CS(COMM) 800/2023 Page 2 of 5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:48
+9. By this application under Order XXXIX Rules 1 and 2 of the
+Code of Civil Procedure, 1908 (CPC), the plaintiff seeks ad interim
+interlocutory injunctive relief.
+10. Issue notice. Notice is accepted on behalf of Defendants 1 to 4
+by Mr. Sai Krishna Rajagopal and on behalf of Defendant 5 by Dr.
+Abhimanyu Chopra.
+11. Reply, if any, be filed within a period of six weeks with
+advance copy to learned Counsel for the plaintiff, who may file
+rejoinder thereto, if any, within a period of four weeks thereof.
+12. Renotify before the Court for hearing and disposal of this
+application on 6 February 2024.
+13. Both sides are directed to place on record short note of their
+respective submissions not exceeding five pages each after
+exchanging copies with each other accompanied by duly indexed
+compilation of any judicial authorities on which they may seek to
+place reliance, at least one week prior to next date of hearing.
+14. It is made clear that no extension of time for filing reply or
+rejoinder shall be granted and that this application would be taken up
+for hearing on that next date of hearing.
+I.A. 22004/2023 (Exemption)
+CS(COMM) 800/2023 Page 3 of 5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:48
+15. Subject to the plaintiff filing legible copies of any dim or
+illegible documents within 30 days, exemption is granted for the
+present.
+16. The application is disposed of.
+I.A. 22005/2023 (Order XI Rule 1(4) of the CPC)
+17. This application seeks permission to file additional documents.
+The plaintiff is permitted to place additional documents on record in
+accordance with Order XI Rule 1(4) of the CPC as amended by the
+Commercial Courts Act, 2015 within four weeks from today.
+18. The application stands disposed of accordingly.
+I.A. 22006/2023 (Section 12A of the Commercial Courts Act, 2015)
+19. This is an application seeking exemption from the requirement
+of pre-institution mediation.
+20. Issue notice. Notice is accepted on behalf of Defendants 1 to 4
+by Mr. Sai Krishna Rajagopal and on behalf of Defendant 5 by Dr.
+Abhimanyu Chopra.
+21. Reply, if any, be filed within a period of four weeks with
+advance copy to learned Counsel for the plaintiff, who may file
+rejoinder thereto, if any, within a period of four weeks thereof.
+CS(COMM) 800/2023 Page 4 of 5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:48
+22. Renotify before the Court for hearing and disposal of this
+application on 6 February 2024.
+I.A. 22007/2023 (Order II Rule 2 of the CPC)
+23. This is an application under Order II Rule 2 of the CPC for
+permission to the plaintiff to sue for additional claims and reliefs,
+should it come to the notice of the plaintiff.
+24. In actual fact, no such application is required. Should the
+plaintiff come to learn of any additional infringement, it would be
+within its authority to raise a claim in that regard in accordance with
+the provisions of the CPC.
+25. This application is disposed of accordingly.
+C.HARI SHANKAR, J
+NOVEMBER 6, 2023
+rb
+Click here to check corrigendum, if any
+CS(COMM) 800/2023 Page 5 of 5
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:48
+
+===== ORDER =====
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023
+NOKIA TECHNOLOGIES OY
+..... Plaintiff
+Through: Mr. Abhilasha Nantiyal and
+Mr. Shivam Bhattacharya,
+Advs.
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED &
+ORS.
+..... Defendant
+Through: Mr. Victor Vaibhav Tondon,
+Mr. Saif Rahman Ansari and
+Mr. Amirudh Bhatia, Advs.
+for D-1 to 4.
+Mr. A. Chopra and Mr.
+Kushagra Jain, Adv. for D-5.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 08.01.2024
+Learned P.O is on half day leave today.
+Put up the matter on 18.01.2024 for purpose already fixed.
+Reader a/w
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 8, 2024/ss
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:47
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023
+NOKIA TECHNOLOGIES OY
+..... Plaintiff
+Through: Mr. Abhilasha Nautiyal and
+Mr. Shuvam Bhattacharya,
+Advs.
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED &
+ORS.
+..... Defendant
+Through: Mr. Victor Vaibhav Tandon
+and Mr. Saif Rahman
+Ansari, Advs. for D-1 to 4.
+Dr. Abhimanyu Chopra, Mr.
+Abhijnan Jha, Ms. Sadhvi
+Chabbra and Mr. Kushagra
+Jain, Advs. for D-5.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 18.01.2024
+The defendants are yet to file their written statements. Those
+be filed in due course, whereafter the replications be filed
+accordingly.
+The parties shall also file the physical copies of their
+respective documents, if not already filed and the joint schedule of
+the documents.
+List the matter for admission-denial and marking of exhibits
+on 26.04.2024.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:47
+IA No. 1280/2024 (u/s 148 r/w Section 151 CPC seeking
+enlargement of time by plaintiff )
+The application is allowed without prejudice, as the
+defendants have no objection.
+IA No.22003/2023 (u/order 39 Rule 1 & 2 r/w Section 151 CPC)
+The replies of the defendants are taken on record today.
+The plaintiff may now file the rejoinders before the Hon'ble
+Court hearing.
+This application is already listed before the Hon'ble Court
+on 06.02.2024.
+IANo.22006/2023 (u/s 151 CPC seeking exemption from
+Pre-institution mediation u/s 12 (A) of the CC Act)
+The replies have already been filed by defendant no.1, 2 and
+4. If there were any delays, those stands condoned without
+prejudice.
+The plaintiff has already filed rejoinders qua defendant no. 1,
+2 and 4. The pleadings in respect thereof are thus complete.
+The plaintiff may file the rejoinder qua defendant no.3
+before the Hon'ble Court hearing.
+The counsel for defendant no.5 states that he does not wish
+to file any reply.
+This application is already listed before the Hon'ble Court
+on 06.02.2024.
+IA No. 410/2024 (u/order 1 Rule 10 (2) r/w Section 151 CPC by
+D-5 for striking out of D-5 from the array of parties)
+Issue notice. Accepted.
+The plaintiff may file the reply within four weeks,
+whereafter the rejoinder be filed by defendant no.5 in due course.
+IA No. 411/2024 (u/s 151 CPC by D-3 seeking condonation of
+delay in filing the reply to IA No.22006/2023)
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:47
+The application is allowed without prejudice, as the plaintiff
+has no objection.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 18, 2024/ss
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:47
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023 & I.A. Nos. 22003/2023, 22006/2023,
+410/2024
+NOKIA TECHNOLOGIES OY ..... Plaintiff
+Through: Mr. Akhil Sibal, Senior Advocate
+with Ms. Abhilasha Nautiyal, Mr.
+Aditya Gupta, Ms. Asavari Jain, Mr.
+Shivam Bhattacharya and Mr.
+Neilotpal Mukhopadhyay, Advocates.
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED & ORS.
+..... Defendants
+Through: Mr. S. Raja Gopal, Ms. Sneha Jain,
+Mr. Anirudh Bhatia, Dr. Victor
+Vaibhav Tandon and Mr. T. Khurana,
+Advocates for D-1 to 4.
+Mr. Rajiv Nayyar, Senior Advocate
+with Dr. Abhimanyu Chopra and Mr.
+Kushagra Jain, Advocates for D-5.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 06.02.2024
+1. Counsel for the parties shall file written notes of arguments, not
+exceeding 10 pages and place it on record before the next date of hearing,
+after exchanging copies with opposing counsel.
+2. Said submissions may cover all pleadings by the parties including
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:46
+rejoinder and any other documents filed.
+3. Renotify on 13th May, 2024.
+4. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+FEBRUARY 6, 2024/ssc/sc
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:46
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023
+NOKIA TECHNOLOGIES OY ..... Plaintiff
+Through: Ms. Abhilasha Nautiyal,
+Mr. Shuvam Bhattacharya,
+Mr. Neilotpal
+Mukhopadhyay,
+Advocates
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED &
+ORS. ..... Defendant
+Through: Dr. Victor Vaibhav
+Tandon, Mr. Saif Rahman
+Ausain, Mr. Aniruddh
+Bhatiya, Advocates for
+D-1 to 4.
+Mr. Abhimanyu Chopra,
+Mr. Abhijnan Jha,
+Ms. Sadhvi Chabra,
+Mr. Kushagra Jain,
+Advocates for D-5.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 11.03.2024
+I.A No. 5616/2024 on behalf of defendant no. 1 seeking
+condonation of delay of 89 days in filing the written
+statement.
+Issue notice.
+Notice accepted by the ld. Counsel for the plaintiff who
+seeks an opportunity to file a response.
+Let the reply be filed within four weeks, with an advance
+copy to the opposite side. Rejoinder thereto, if any, be filed
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:46
+thereafter within two weeks of receiving the copy of advance
+reply.
+Put up for completion of pleadings and arguments, if
+feasible on 26.04.2024, the date already fixed.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 11, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:46
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023
+NOKIA TECHNOLOGIES OY .... Plaintiff
+Through: Ms. Abhilasha Nautiyal,
+Mr. Shuvam Bhattacharya,
+Mr. Neilotpal Mukhopadhyay,
+Advocates
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED &
+ORS. ..... Defendant
+Through: Dr. Victor Vaibhav Tandon,
+Mr. Saif Rahman Ansari,
+Advocates for D-1 to 4.
+Dr. Abhimanyu Chopra,
+Mr. Abhijnan Jha, Ms. Sadhvi
+Chabra, Mr. Kushagra Jain,
+Advocates for D-5.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 26.04.2024
+I.A. No. 9151/2024 filed by D-1 to 4 to condone the delay of 88
+days in filing the written statement and the statement of
+admission and denial.
+Issue notice.
+Notice accepted by ld. Counsel for the plaintiff.
+Ld. Counsel for the plaintiff submits that she has no
+objection if the application is allowed without prejudice to the
+right to object to the contents of the written statement.
+For the reasons stated in the application, application is
+allowed keeping the plaintiff’s right alive to object to the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:45
+contents of the written statement. Delay stands condoned.
+Written statement is taken on record. Replication be filed within
+the period permissible, as worked out from today.
+IA stands disposed off.
+I.A. No. 9255/2024 filed by D-1 to 4 to allow the defendants to
+file the unredacted written statement and confidential
+documents, in sealed cover and/or encrypted electronic
+format in pen drive and pass directions in accordance with
+the terms stated in paragraph 3 of this application.
+There is no objection to the present application. However,
+Ld. Counsel for the plaintiff has highlighted that so far as the
+prayer made in the application, specifically contained in para 3
+sub para (e) is concerned, there is already a confidentiality
+agreement between the plaintiff and the defendant no. 1 to 4 in
+terms of which the application may be allowed i.e. confidentiality
+agreement referred above exchanged / agreed vide email dated
+12.03.2024. The application is thus allowed in the above terms.
+I.A. No. 410/2024 on behalf of defendant no. 5 for striking out
+of defendant no. 5.
+Rejoinder to the reply of the plaintiff has been re-filed
+yesterday. However, the same has not come on record. Copy of
+the same has been supplied to ld. Counsel for the defendant. Put
+up for arguments on the next date.
+I.A No. 5616/2024 on behalf of defendant no. 5 seeking
+condonation of delay of 89 days in filing the written
+statement.
+Inadvertently, in the last order it was recorded that this IA
+has been moved on behalf of defendant no. 1.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:45
+Issue notice.
+Notice accepted by ld. Counsel for the plaintiff.
+Ld. Counsel for the plaintiff submits that she has no
+objection if the application is allowed without prejudice to the
+right to object to the contents of the written statement.
+For the reasons stated in the application, application is
+allowed keeping the plaintiff’s right alive to object to the
+contents of the written statement. Delay stands condoned.
+Written statement is taken on record. Replication be filed within
+the period permissible, as worked out from today.
+IA stands disposed off.
+CS(COMM)-800/2023:
+Matter is already listed before the Hon’ble Court for
+13.05.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 13.05.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 26, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:45
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023, I.A. 22003/2023, & I.A. 410/2024
+NOKIA TECHNOLOGIES OY ..... Plaintiff
+Through: Mr. Akhil Sibal, Sr. Adv. with Ms.
+Abhilasha Nautiyal, Mr. Aditya Gupta,
+Ms. Asavari Jain, Mr. Shivam
+Bhattacharya and Mr. Neilotpal
+Mukhopadhyay, Advocates
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED & ORS.
+..... Defendants
+Through: Mr. S. Raja Gopal, Ms. Sneha Jain,
+Mr. Anirudh Bhatia, Dr. Victor Vaibhav
+Tandon and Mr. T. Khurana,
+Advocates for D-1 to 4. Mr. Rajiv
+Nayyar, Senior Advocate with Dr.
+Abhimanyu Chopra and Mr. Kushagra
+Jain, Advocates for D-5.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 13.05.2024
+I.A. 22006/2023(Seeking exemption from pre-institution mediation)
+1. This application has been filed by plaintiff seeking exemption from pre-
+institution mediation under Section 12A of the Commercial Courts Act, 2015.
+2. Counsel for defendant nos. 1-4 has sought to contest this application on
+the basis that there was no urgency which necessitated the plaintiff to seek an
+exemption and file a suit without undergoing pre-institution mediation.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:44
+3. Notwithstanding, the respective contentions of the parties in this regard,
+it is noted that when the matter was first listed before this Court on 06th
+November, 2023, notice was issued on the Order XXXIX Rules 1 and 2, Code
+of Civil Procedure, 1908 (“CPC”) application and summons were already
+issued in the suit.
+4. Pleadings were to be completed in I.A. 22003/2023 under Order XXXIX
+Rules 1 & 2 of CPC, and directions were given accordingly. Matter was also
+placed for hearing post the completion of pleadings.
+5. In these circumstances, subsequent events having transpired and
+pleadings being complete, no purpose would be served by keeping this
+application pending.
+6. In any event, if the parties seek to explore mediation, they are at liberty
+to do so.
+7. Counsel for defendants state that they are open to explore mediation.
+However, counsel for plaintiff states that they do not wish to do explore
+mediation on the basis that it is an obstructive tactic.
+8. In that event, possibility of mediation itself fails on this account.
+9. Application is therefore disposed of.
+I.A. 410/2024 (Application seeking striking out of defendant no.5 from the
+array of parties).
+1. This application has been filed under Order I Rule 10 (2) of Code of Civil
+Procedure, 1908 by defendant no. 5 seeking deletion from the array of parties.
+2. Mr. Rajiv Nayyar, Senior counsel for defendant 5 only sells and offers
+for sale ‘Relevant Devices’ in India like other sellers and resellers, and has
+absolutely no role in the manufacturing process of the ‘Relevant Devices’ and
+therefore do not have any involvement in the activities alleged to be infringing
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:44
+by the plaintiff of the suit patents.
+3. He has drawn attention to various paragraphs in the plaint inter alia para
+24 and 41 to contend that as per the plaint, allegations are merely against the
+other defendants being Amazon entities and only averment qua defendant no.5
+is relating is in para 24, stating that defendant no.5 sells and offers for sale
+‘Relevant Devices’ in India through defendant’s website Amazon.in. On of the
+‘Relevant Devices’ is inter alia “Firestick” which allow an access to a user to
+the OTT platform such as Prime Video.
+4. Mr. Akhil Sibal, Senior Counsel for plaintiff draws attention definition
+of ‘Relevant Device’ and ‘Relevant Service’ in para 2 (i) & (ii) of the plaint,
+which is extracted as under:
+5. He further states that a clear and categorical averment regarding
+defendant no.5 is made in para 24 and is relatable to Section 48 of the Patents
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:44
+Act, 1970 (hereinafter referred to as “the Act”) which confirms upon the
+patentee the right to prevent third parties inter alia those who are selling the
+infringing products.
+6. In this view of the matter, he contends that defendant no.5 has admitted
+to selling product(s) that are alleged by plaintiff as infringing the suit patent.
+7. Mr. Rajiv Nayyar, also relied upon the Hon’ble Supreme Court in Vidur
+Impex & Traders (P) Ltd. v. Tosh Apartments (P) Ltd., (2012) 8 SCC 384 to
+buttress his point that that they are not a necessary party, considering they have
+already made a statement in the application that they will abide by orders of this
+Court.
+8. To this, Mr. Sibal has argued that they are seeking damages inter alia
+against defendant no.5, therefore, the argument does not sustainable.
+9. In the opinion of this Court, defendant no.5’s plea of being deleted from
+the array of parties, at this stage, is not made out. The Court still has to apply its
+mind to the respective contentions of the parties, in relation to the suit patent and
+the alleged infringement.
+10. Section 48 of the Act also encompasses all possible activity from
+manufacturing, using, selling and offering for sale of the infringing products.
+The averments in the plaint in para 24 aver that defendant no. 5 is selling the
+‘Relevant Devices’ which is not denied by defendant no.5 as evident from their
+averments in the application.
+11. In view of the same, the application is dismissed.
+I.A. 10867/2024 (Application under Order 11 of the High Court of Delhi Rules)
+1. This application has been filed by plaintiff to file the unredacted
+replication and Expert Report under password protection or in a sealed cover
+and that the same may be kept confidential under the seal of the Court.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:44
+2. Considering that the pleadings by defendant have also been kept
+confidential and redacted copies had been filed, counsel for defendant has no
+objection for the same.
+3. Accordingly, the application is allowed.
+4. It is directed that they can file unredacted replication and Expert Report,
+in a password protected electronic form, which shall be kept confidential by the
+Registry.
+5. Counsel for defendant shall file written submissions as already directed.
+Submissions of plaintiff are already on record.
+6. Application stands disposed of.
+CS(COMM) 800/2023 with I.A. 22003/2023
+1. List on 02nd August, 2024.
+2. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+MAY 13, 2024/RK/ig
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:44
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023 & I.A. 22003/2023
+NOKIA TECHNOLOGIES OY .....Plaintiff
+Through: Mr. Akhil Sibal, Sr. Adv. with Ms.
+Abhilasha Nautiyal, Ms. Asavari Jain,
+Mr. Shivam Bhattacharya, Mr.
+Neilotpal Mukhopadhyay, Advocates
+(M:8240808870)
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED & ORS.
+.....Defendants
+Through: Mr. Saikrishna Rajgopal, Ms. Sneha
+Jain, Mr. Victor Vaibhav Tondon, Mr.
+Saif Rahman Ansari, Mr. Aniruddh
+Bhatiya, Ms. Shruti Jain, Advocates
+for D-1 to 4 (M:7409531351)
+Dr. Abhimanyu Chopra, Mr.
+Abhijnan Jha, Ms. Sadhvi Chabra,
+Mr. Kushagra Jain, Advocates for D-5
+(M:9891434361)
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 02.08.2024
+1. This Court notes that pleadings in the matter are complete.
+2. Accordingly, list before the Joint Registrar for admission/denial of the
+documents and marking of the exhibits, on 16th August, 2024.
+3. Written submissions of the plaintiff as well as of the defendants to I.A.
+No. 22003/2023, are on record.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:44
+4. Accordingly, list before the Court for hearing of I.A. 22003/2023, on
+18th October, 2024.
+MINI PUSHKARNA, J
+AUGUST 2, 2024
+au
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:44
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023
+NOKIA TECHNOLOGIES OY .....Plaintiff
+Through: Ms. Abhilasha Nautiyal,
+Ms. Asavari Jain, Mr. Neilotpal
+Mukhopadhyay, Advocates
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED &
+ORS. .....Defendant
+Through: Dr. Abhimanyu Chopra,
+Mr. Abhijnan Jha, Ms. Sadhvi
+Chhabra, Mr. Kushagra Jain,
+Advocates for D-5
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 16.08.2024
+1. Matter is at the stage of carrying out admission / denial of
+documents. Ld. Counsel for the plaintiff submits that its physical
+documents are on record. However, no one is appearing for
+defendant nos. 1 to 4 today and there is no confirmation whether
+they have filed their documents in physical form or not. They are
+directed again to file the documents in physical form, if not
+already filed.
+2. Ld. Counsel for defendant no. 5 submits that only one
+document has been filed alongwith written statement but the
+same is yet to be filed in physical form.
+3. There is an issue regarding the Joint document schedule as
+well since affidavit of admission / denial to the additional
+documents filed alongwith the replication has yet not been filed
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:43
+by the defendants. Ld. Counsel for defendant no. 5 submits that
+plaintiff should seek permission from the Hon’ble Court for
+filing of those additional documents. Consequently, admission /
+denial of documents cannot be carried out today. Ld. Counsel for
+the plaintiff submits that appropriate action shall be taken in
+regard to those documents which had been filed alongwith the
+replication.
+4. Put up again for admission / denial of documents on
+19.09.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+At 2.30 p.m.
+Mr. Aniruddh Bhatia, ld. Counsel for defendant nos. 1 to 4
+has joined through VC and apprised of the direction given to file
+the documents in physical form.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 16, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:43
+
+===== ORDER =====
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023
+NOKIA TECHNOLOGIES OY ....Plaintiff
+Through: Ms. Abhilasha Nautiyal,
+Ms. Asavari Jain, Mr. Shuvam
+Bhattacharya, Advocates
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED &
+ORS. .....Defendant
+Through: Mr. Victor Vaibhav Tandon,
+Mr. Saif Rahman Ansari,
+Advocates for D-1 to 4.
+Dr. Abhimanyu Chopra,
+Ms. Sadhvi Chhabra,
+Mr. Kushagra Jain,
+Advocates for D-5.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 19.09.2024
+1. The matter has been listed today for carrying out
+admission / denial of documents.
+2. Ld. Counsel for the plaintiff submits that in response to the
+objections raised on the last date on behalf of defendant no. 5, an
+application under Order 11 Rule 1 (1) (c) (ii) CPC as applicable
+to the Commercial Suits, has been moved to formally place on
+record the documents filed alongwith the application. However,
+the application is yet to be listed.
+3. Ld. Counsel for defendant nos. 1 to 4 submits that
+documents in physical form have still not been filed. Let the
+same be done now within four weeks failing which cost of Rs.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:42
+10,000/- shall be imposed. Ld. Counsel for defendant no. 5 is
+also directed to file its lone document within four weeks failing
+which defendant no. 5 shall also be put to the same terms. Since
+no admission / denial of documents can be carried out today, put
+up before the Hon’ble Court on the date already fixed i.e.
+18.10.2024, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 19, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:42
+
+===== ORDER =====
+
+$~53
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023
+NOKIA TECHNOLOGIES OY .....Plaintiff
+Through: Ms. Abhilasha Nautiyal, Adv
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED & ORS.
+.....Defendants
+Through: Ms. Sneha Jain, Mr Saif Rahman
+Ansari and Mr. Aniruddh Bhatia,
+Advs for D-1 to 4
+Dr. Abhimanyu Chopra, Ms. Sadhvi
+Chhabra and Mr. Kushagra Jain,
+Advs for D-5
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 23.09.2024
+I.A. 40202/2024 under O XI R 1(c)(ii) and 5, CPC
+1. By virtue of the present application, the plaintiff seeks to bring on
+record certain additional documents as mentioned in the table given in
+para three of the present application.
+2. Issue notice.
+3. Learned counsel for defendant nos. 1 to 4 submits that she has no
+objection if the present application is allowed and the documents
+mentioned hereinabove are taken on record.
+4. However, learned counsel for defendant no.5 seeks and is granted
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:42
+two weeks to file a reply. Rejoinder thereto, if any, be filed within a period
+of two days thereafter.
+5. Accordingly, renotify before the Roster Bench on 18.10.2024.
+SAURABH BANERJEE, J
+SEPTEMBER 23, 2024/Ab
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:42
+
+===== ORDER =====
+
+$~45
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023 & I.A. 41950/2024, I.A. 22003/2023
+NOKIA TECHNOLOGIES OY .....Plaintiff
+Through: Mr. Akhil Sibal, Sr. Adv. with Ms.
+Abhilasha Nautiyal, Mr. Aditya
+Gupta, Mr. Shuvam Bhattacharya,
+Mr. Neilotpal Mukhopadhyay,
+Advocates (M:8240808870)
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED & ORS.
+.....Defendants
+Through: Mr. Saikrishna Rajagopal, Mr.
+Anirudh Bhatia, Ms. Shruti Jain,
+Advocates for D-1 & 4
+(M:9872224778)
+Dr. Abhimanyu Chopra, Mr.
+Abhijnan Jha, Ms. Sadvi Chabbra and
+Mr. Kushagra Jain, Advocates for D-5
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 09.10.2024
+I.A. 41950/2024 (Application under Rule 33 of Delhi High Court
+Intellectual Property Rights Division Rules, 2022 and Chapter XVIII
+Rule 4 of the Delhi High Court (Original Side) Rules, 2018 read with
+Section 151 of CPC )
+1. Learned Senior Counsel for the plaintiff submits that a fixed time may
+be allotted for hearing of I.A. 22003/2023, on the date alreadyfixed, i.e., 18th
+October, 2024.
+2. Considering the submissions made before this Court, it is directed that
+the present matter shall be taken up for hearing at 3:30 PM on the next date
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:41
+of hearing, i.e., 18th October, 2024.
+3. With the aforesaid directions, the present application is disposed of.
+MINI PUSHKARNA, J
+OCTOBER 9, 2024
+au
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:41
+
+===== ORDER =====
+
+$~33
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023, I.A. 22003/2023, I.A. 40202/2024 & I.A.
+41950/2024
+NOKIA TECHNOLOGIES OY .....Plaintiff
+Through: Mr. Akhil Sibal, Sr. Adv. with Ms.
+Abhilasha Nautiyal, Ms. Asavari Jain,
+Mr. Neilotpal Mukhopadhyay, Ms.
+Sarah Haque, Ms. Jahnavi Sindhu and
+Ms. Sugandh Shahi, Advs.
+M: 8240808870
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED
+& ORS. .....Defendants
+Through: Mr. Saikrishna Rajagopal, Ms. Sneha
+Jain, Ms. Charu Miglani, Mr. V.
+Vaibhav Tandon, Mr. Saif Rahman
+Ansari, Mr. Aniruddh Bhatiya and
+Mr.Harshit Parasher, Advs. for D-1 to
+4
+M: 9999569439
+Email:
+harshit_parasher@outlook.com
+Dr. Abhimanyu Chopra and Ms.
+Sadhvi Chhabra, Advs. for D-5.
+Email:
+Abhimanyu.chopra@gmail.com
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 18.10.2024
+1. Arguments to I.A. 22003/2023, have been commenced by learned
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:41
+Senior Counsel appearing for the plaintiff.
+2. To continue for further arguments, re-notify on 06th December, 2024.
+MINI PUSHKARNA, J
+OCTOBER 18, 2024/kr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:41
+
+===== ORDER =====
+
+$~49
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023 & I.A. 46459/2024
+NOKIA TECHNOLOGIES OY .....Plaintiff
+Through: Ms. Abhilasha Nautiyal, Mr. Aditya
+Gupta, Ms. Asavari Jain, Advocates
+(M:9765097954)
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED & ORS.
+.....Defendants
+Through: Mr. Saikrishna Rajagopal, Ms. Sneha
+Jain, Ms. Shruti Jain, Mr. Saif R.
+Ansari, Dr. Victor Vaibhav Tandon,
+Advocates for D-1 to 4
+(M:9582085884)
+Dr. Abhimanyu Chopra, Mr.
+Abhijnan Jha, Ms. Sadhvi Chabra,
+Mr. Kushagra Jain, Advocates for D-5
+(M:9891434361)
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 28.11.2024
+I.A. 46459/2024
+1. The present application has been filed seeking allotment of time to
+hear the matter.
+2. Considering the submissions made before this Court, it is directed that
+the matter shall be taken up at 3:30 PM on the date already fixed, i.e., 06th
+December, 2024.
+3. Application is disposed of.
+MINI PUSHKARNA, J
+NOVEMBER 28, 2024
+au
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:40
+
+===== ORDER =====
+
+$~25
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023, I.A. 22003/2023, I.A. 40202/2024
+& I.A. 41950/2024
+NOKIA TECHNOLOGIES OY .....Plaintiff
+Through: Mr. Akhil Sibal, Sr. Adv. with Ms.
+Abhilasha Nautiyal, Mr. Aditya
+Gupta, Ms. Asavari Jain and Mr.
+Shuvam Bhattacharya, Advs.
+(M): 9765092954
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED &
+ORS. .....Defendants
+Through: Mr. Saikrishna Rajagopal, Ms. Sneha
+Jain, Ms. Charu Miglani, Dr. V.
+Vaibhav Tandon, Ms. Shruti Jain and
+Mr. Aniruddh Bhatia, Advs.
+Email:
+shruti.j@saikrishnaassociates.com
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 06.12.2024
+1. For further arguments, re-notifyon 16th and 17th December, 2024.
+MINI PUSHKARNA, J
+DECEMBER 6, 2024/nd
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:40
+
+===== ORDER =====
+
+$~33
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023 & I.A. 22003/2023, I.A. 40202/2024, I.A.
+41950/2024
+NOKIA TECHNOLOGIES OY .....Plaintiff
+Through: Mr. Akhil Sibal, Sr. Advocate with
+Ms. Abhilasha Nautiyal, Mr. Aditya
+Gupta, Ms. Asavari Jain, Mr. Shuvam
+Bhattacharya, Mr. Vignesh Raj T.,
+Ms. Sarah Haque, Ms. Sugandh
+Shahi, and Ms. Jahnavi Sindhu,
+Advocates
+Mob: 6290634317
+Email: shuvam@ira.law
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED & ORS.
+.....Defendants
+Through: Mr. Saikrishna Rajagopal, Ms. Sneha
+Jain, Ms. Charu Miglani, Dr. V.
+Vaibhav Tandon, Ms. Shruti Jain, Mr.
+Aniruddh Bhatia, and Mr. Saif
+Rahman Ansari, Advocates
+Email:
+shruti.j@saikrishnaassociates.com
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 16.12.2024
+1. For further arguments on behalf of the plaintiff, re-notify on 17th
+December, 2024.
+MINI PUSHKARNA, J
+DECEMBER 16, 2024/ak
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:39
+
+===== ORDER =====
+
+$~33
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023 & I.A. Nos. 22003/2023 & 40202/2024
+NOKIA TECHNOLOGIES OY .....Plaintiff
+Through: Ms. Abhilasha Nautiyal with Mr.
+Aditya Gupta, Ms. Asavari Jain,
+Mr. Shuvam Bhattacharya and Mr.
+Vignesh Raj T, Advocates.
+(M): 6290634317
+Email: shuvam@ira.law
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED &
+ORS. .....Defendants
+Through: Mr. Saikrishna Rajagopal with
+Ms. Sneha Jain, Ms. Charu Miglani,
+Dr. Victor Vaibhav Tandon, Mr. Saif
+Rahman Ansari, Ms. Shruti Jain and
+Mr. Aniruddh Bhatia, Advocates.
+(M): 9582085884
+Email: shruti.j@saikrishnaassocaties.com
+Dr. Abhimanyu Chopra with
+Ms. Sadhvi Chhabra and Mr.
+Kushagra Jain, Advocates for
+defendant no. 5.
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 17.12.2024
+1. For further arguments, list on 07th February, 2025.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:39
+2. The present is a part-heard matter.
+MINI PUSHKARNA, J
+DECEMBER 17, 2024
+c
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:39
+
+===== ORDER =====
+
+$~44
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023, I.A. 22003/2023 & I.A. 40202/2024
+NOKIA TECHNOLOGIES OY .....Plaintiff
+Through: Mr. Akhil Sibal, Sr. Advocate with
+Ms. Abhilasha Nautiyal, Mr. Aditya
+Gupta, Ms. Asavari Jain, Mr. Shuvam
+Bhattacharya, Mr. Vignesh Raj, Ms.
+Sarah Haque, Ms. Sugandh Shahi and
+Ms. Jahnavi Sindhu, Advocates
+Mob: 6290634317
+Email: shuvam@ira.law
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED & ORS.
+.....Defendants
+Through: Mr. Saikrishna Rajagopal, Ms. Sneha
+Jain, Mr. Victor Vaibhav Tandon, Mr.
+Saif Rahman Ansari, Mr. Aniruddh
+Bhatia and Ms. Shruti Jain, Advocates
+Mob: 7409531351
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 07.02.2025
+1. Mr. Akhil Sibal, learned Senior Counsel appearing for the plaintiff
+has completed his arguments in I.A. 22003/2023.
+2. For arguments on behalf of the defendants, re-notify on 10th March,
+2025 and 12th March, 2025.
+MINI PUSHKARNA, J
+FEBRUARY 7, 2025
+ak
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:38
+
+===== ORDER =====
+
+$~45
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023 & I.A. 22003/2023, I.A. 40202/2024
+NOKIA TECHNOLOGIES OY .....Plaintiff
+Through: Ms. Abhilasha Nautiyal, Ms. Asavari
+Jain, Mr. Shuvam Bhattacharya, Mr.
+Vignesh Raj T, Advocates
+(M:6290634317)
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED & ORS.
+.....Defendants
+Through: Mr. Saikrishna Rajagopal, Ms. Sneha
+Jain, Mr. Victor Vaibhav Tandon, Mr.
+Saif Rahman Ansari, Mr. Aniruddh
+Bhatiya, Ms. Shruti Jain, Advocates
+for D-1 to 4 (M:7409531351)
+Dr. Abhimanyu Chopra, Mr.
+Abhijnan Jha, Ms. Sadhvi Chhabra,
+Mr. Kushagra Jain, Advocates for D-5
+(M:9910960710)
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 10.03.2025
+1. The matter is already listed for hearing on 12th March, 2025.
+2. Accordingly, re-notify on 12th March, 2025.
+MINI PUSHKARNA, J
+MARCH 10, 2025
+au
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:38
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023, I.A. 22003/2023 & I.A. 40202/2024
+NOKIA TECHNOLOGIES OY .....Plaintiff
+Through: Mr. Akhil Sibal, Sr. Adv. with Ms.
+Abhilasha Nautiyal, Mr. Aditya
+Gupta, Ms. Asavari Jain, Mr. Shuvam
+Bhattacharya, Mr. Vignesh Raj T.,
+Ms. Sarah Haque and Ms. Sugandh
+Shahi, Advs.
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED
+& ORS. .....Defendants
+Through: Mr. Saikrishna Rajagopal, Ms. Sneha
+Jain, Dr. Victor Vaibhav Tandon, Ms.
+Shruti Jain, Mr. Saif Rahman Ansari
+and Mr. Aniruddh Bhatia, Advs. for
+D-1 to 4.
+Dr. Abhimanyu Chopra, Mr.
+Abhijnan Jha, Ms. Sadhvi Chhabra
+and Mr. Kushagra Jain, Advs. for D-5
+M: 9910960710
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 12.03.2025
+CS(COMM) 800/2023
+1. Learned counsel appearing for the defendants submits that a counter
+claim on their behalf has been filed. However, the same is not on record.
+2. Let steps be taken to have the same placed on record.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:37
+3. The Registry of this Court is directed to number the counter claim of
+the defendants and place it in a separate folder in the present case.
+4. Learned counsel appearing for the defendants submits that the
+requisite Court Fees on the counter claim is yet to be deposited and the
+defendants be granted time of two weeks for depositing the same.
+5. Libertyis so granted.
+6. Let the Court Fees to the counter claim be deposited bythe defendants
+within a period of two weeks.
+I.A. 22003/2023
+7. Mr. Saikrishna Rajagopal, learned counsel appearing for the
+defendants has commenced his arguments.
+8. It is clarified that the present is a Part-Heard matter for hearing of I.A.
+22003/2023.
+9. For further arguments, re-notifyon 21st March, 2025 at 03:30 PM.
+MINI PUSHKARNA, J
+MARCH 12, 2025/kr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:37
+
+===== ORDER =====
+
+$~O-1
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023 & CC(COMM) 19/2025, I.A. 22003/2023
+NOKIA TECHNOLOGIES OY .....Plaintiff
+Through: Mr. Akhil Sibal, Sr. Adv. with Ms.
+Abhilasha Nautiyal, Ms. Asavari Jain,
+Mr. Shuvam Bhattacharya, Mr.
+Vignesh Raj T, Ms. Sarah Haque, Ms.
+Sugandh Shahi, Ms. Jahnavi Sindhu,
+Advocates (M: 6290634317)
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED & ORS.
+.....Defendants
+Through: Mr. Saikrishna Rajagopal, Ms. Sneha
+Jain, Ms. Charu Miglani, Mr. Saif
+Rahman Ansari, Ms. Shruti Jain, Mr.
+Aniruddh Bhatiya, Advocates for D-1
+to 4 (M:7409531351)
+Dr. Abhimanyu Chopra, Mr.
+Abhijnan Jha, Ms. Sadhvi Chhabra,
+Mr. Kushagra Jain, Advocates for D-5
+(M:9910960710)
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 21.03.2025
+1. Learned counsel for the defendants has continued with his arguments
+in I.A. 22003/2023.
+2. For further arguments on behalf of the defendants, re-notify on 17th
+April, 2025 at 3:30 PM.
+MINI PUSHKARNA, J
+MARCH 21, 2025/ au
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:37
+
+===== ORDER =====
+
+$~O-1
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 800/2023 & I.A. 8745/2025, I.A. 8797/2025
+NOKIA TECHNOLOGIES OY .....Plaintiff
+Through: Ms. Abhilasha Nautiyal, Ms. Asavari
+Jain, Mr. Shuvam Bhattacharya, Mr.
+Vignesh Raj T, Advocates
+(M:6290634317)
+versus
+AMAZON SELLER SERVICES PRIVATE LIMITED & ORS.
+.....Defendants
+Through: Dr. Victor Vaibhav Tandon, Ms.
+Shruti Jain, Mr. Saif Rahman Ansari
+and Mr. Aniruddh Bhatia, Advocates
+Mr. Vijayendra Pratap Singh, Mr.
+Abhimanyu Chopra, Mr. Abhijnan
+Jha, Ms. Sadhvi Chhabra and Mr.
+Kushagra Jain, Advocates for D-5
+Email: advocate.sadhvi@gmail.com
+Mob: 9582252001
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 04.04.2025
+I.A. 8745/2025 (Application under Order XXIII Rule 1 read with
+Section 151 CPC)
+1. The present application has been filed under Order XXIII Rule 1, read
+with Section 151 of the Code of Civil Procedure, 1908 (“CPC”).
+2. The present suit has been filed by the plaintiff, inter alia, for
+permanent injunction restraining the defendant from infringement of the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:20:36
+plaintiff’s patents and for damages.
+3. Learned counsel appearing for the plaintiff submits that plaintiff and
+defendant nos. 1 to 4 have entered into a Confidential Global Patent
+Agreement to settle their pending disputes and have consequently, decided
+to withdraw their respective clai
+
+[TRUNCATED — rights are established in the opening orders above]

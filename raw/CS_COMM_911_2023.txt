@@ -1,0 +1,439 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_911_2023
+case_status: DISPOSED
+n_orders: 6
+
+$~52
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 911/2023
+TATA STEEL LIMITED ..... Plaintiff
+Through: Mr. Siddharth Pandey and Mr.
+Siddhant Grover, Advs.
+versus
+MS VISTRAT REAL ESTATE PRIVATE LIMITED & ORS.
+..... Defendants
+Through: Mr. Vineet Wadhwa, Adv. (through
+v/c)
+CORAM:
+HON'BLE MR. JUSTICE SACHIN DATTA
+O R D E R
+% 20.12.2023
+IA No.25685/2023 (Exemption)
+Allowed, subject to all just exceptions.
+Application stands disposed of.
+CS(COMM) 911/2023
+At the request of learned counsel for the plaintiff, renotify on
+28.03.2024.
+SACHIN DATTA, J
+DECEMBER 20, 2023/cl
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:28
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 911/2023
+TATA STEEL LIMITED ..... Plaintiff
+Through: Mr. Siddharth Pandey and Mr.
+Siddhant Grover, Advocates.
+versus
+MS VISTRAT REAL ESTATE PRIVATE LIMITED & ORS.
+..... Defendants
+Through: Mr. Arvind Nayyar, Senior Advocate
+with Mr. Vineet Wadhwa, Ms. R. and
+Ms. Vasudha Sen, Advocates for D-1
+and D-4.
+CORAM:
+HON'BLE MR. JUSTICE ANUP JAIRAM BHAMBHANI
+O R D E R
+% 28.03.2024
+By way of the present suit, the plaintiff seeks recovery of
+Rs. 36,40,35,233/- alongwith pendente lite interest and future interest
+@12% per annum and costs as detailed in the plaint.
+2. Mr. Siddharth Pandey, learned counsel appearing for the plaintiff
+submits that they have gone through the pre-litigation mediation in
+compliance of section 12-A of the Commercial Courts Act 2015,
+which however has ended as ‘Not Settled’.
+3. Pre-Institution Mediation report dated 16.03.2024 issued by the Delhi
+High Court Mediation and Conciliation Centre has been handed-up in
+court. Let the Mediation report dated 16.03.2024 be placed on record.
+CS(COMM)911/2023 Page1of3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:28
+4. Upon a prima-facie conspectus of the matter, let the plaint be
+registered as a suit.
+5. Issue summons in the suit.
+6. Mr. Vineet Wadhwa, learned counsel appearing for defendants Nos.1
+and 4 accepts summons; and seeks time to file written statement.
+7. Upon the plaintiff taking requisite steps within 10 days, let summons
+be sent to the remaining defendants by all permissible modes,
+returnable for the next date before the learned Joint Registrar.
+8. Let the summons indicate that the defendants are required to file
+written statements to the plaint within 30 days from the date of receipt
+of summons, alongwith affidavit of admission/denial of the
+documents filed by the plaintiff. The plaintiff may file replications to
+the written statements within 30 days thereafter, alongwith affidavit of
+admission/denial of the documents filed by defendants.
+9. List before the learned Joint Registrar for completion of pleadings, for
+admission/denial of documents and marking of exhibits on 10th July
+2024.
+10. List before court thereafter.
+11. Mr. Arvind Nayyar, learned senior counsel appearing for defendants
+Nos.1 and 4 submits, that defendant No.4, who was an initial
+promoter and original subscriber of defendant No.1 is undergoing
+personal insolvency in two separate proceedings titled State Bank of
+India vs. Sh. Neeraj Singal in C.P. (IB) No. 710/2022 and L & T
+Finance Limited vs. Neeraj Singhal in C.P. (IB) No.1014/2020
+which are pending before the National Company Law Tribunal and
+accordingly no proceeding can be instituted against defendant No.4.
+CS(COMM)911/2023 Page2of3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:28
+The said defendant is at liberty to file an appropriate application
+bringing on record the requisite documents to support his plea.
+ANUP JAIRAM BHAMBHANI, J
+MARCH 28, 2024/ak
+CS(COMM)911/2023 Page3of3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:28
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 911/2023
+TATA STEEL LIMITED
+.....Plaintiff
+Through: Mr. Siddharth Pandey, Mr. Siddhant
+Grover, Advs. (M: 9935796292)
+versus
+MS VISTRAT REAL ESTATE PRIVATE LIMITED & ORS.
+.....Defendants
+Through: Ms. Ranjana Roy Gawai, Ms.
+Vasudha Sen, Mr. Vineet Wadhwa,
+Advs. For D1 to 4
+Mr. Anubhav Singh, Mr. Aman
+Singh, Mr. Hemant, Advs. For D5
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 10.07.2024
+Learned Presiding Officer has gone to attend Delhi Judicial
+Academy as Resource Person.
+As per directions, put up for the purpose already fixed on 13.09.2024.
+READER TO JR(JUDICIAL)
+JULY 10, 2024/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:25
+
+===== ORDER =====
+
+$~10
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 911/2023
+TATA STEEL LIMITED
+.....Plaintiff
+Through: Mr. Siddharth Pandey, Ms. Saravna
+Vasanta, Advs. (M: 9935796292,
+Email: siddharthp@palaw.in)
+versus
+MS VISTRAT REAL ESTATE PRIVATE LIMITED & ORS.
+.....Defendants
+Through: Ms. Ranjana Roy Gawai, Ms.
+Vasudha Sen, Mr. Vineet Wadhwa,
+Advs. for D1, 2 & 4 (Through VC)
+Mr. Anubhav Singh, Ms. Maria Mary
+Sunil, Advs. for D5 (Through VC)
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 13.09.2024
+I.A. No. 39418/2024(Application for condonation of delay of 76 days in
+filing the written statement by defendant no. 5)
+1. Learned counsel for plaintiff submitted that he is having no objection
+if the delay is condoned subject to appropriate costs.
+2. In view of the facts and circumstances, the delay in filing the written
+statement on behalf of defendant no. 5 stands condoned subject to a cost of
+Rs. 3,000/- to be given to the opposite party, on sharing the necessary
+particulars.
+3. The captioned IA is accordingly allowed and disposed of.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:25
+CS(COMM) 911/2023
+4. Written statement with affidavit of admission / denial has been filed
+by defendant no. 5.
+5. Learned counsel for defendant no. 1, 2 & 4 submitted that he had
+already filed the written statement but same is lying under objections.
+However, as per learned counsel for plaintiff, he has not received the copy
+of the written statement and same has not been supplied to him deliberately
+by the opposite party and accordingly same may be considered as dummy
+filing.
+6. No one is appearing on behalf of defendant no. 3 and no written
+statement has been filed on behalf of defendant no. 3.
+7. Put up for completion of pleadings in accordance with law and
+thereafter for completion of process of filing of Joint Document Schedule in
+terms of Rule7A of Chapter VII of The Delhi High Court (Original Side)
+Rules, 2018 physically by plaintiff after getting it signed from defendants,
+admission / denial of documents and marking of Exhibits in accordance with
+law on 06.02.2025.
+8. Documents, if e-filed be filed physically by parties so as to mark the
+Exhibits.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 13, 2024/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:25
+
+===== ORDER =====
+
+$~10
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 911/2023
+TATA STEEL LIMITED
+.....Plaintiff
+Through: Mr. Arvind Thapliyal, Mr. Siddharth
+Pandey, Advocates (M: 9935796292)
+(Through VC)
+versus
+MS VISTRAT REAL ESTATE PRIVATE LIMITED & ORS.
+.....Defendants
+Through: Ms. Ranjana Roy Gawai, Ms.
+Vasudha Sen, Mr. Vineet Wadhwa,
+Ms. K. Hema, Advocates for D1, 2 &
+4
+Mr. Anubhav Singh, Mr. Aman
+Singh, Mr. Nitin Kumar, Ms. Maria
+Mary, Advocates for D5
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 06.02.2025
+I.A. No. 3120/2024(by defendant no. 2 for condonation of delay of 63
+days in filing the written statement),
+I.A. No. 3121/2024(by defendant no. 2 u/O I R 10(2) CPC for deletion of
+his name),
+I.A. No. 3122/2024(by defendant no. 2 for condonation of delay of 36
+days in re-filing the written statement),
+I.A. No. 3146/2024(by defendant no. 4 for condonation of delay of 100
+days in re-filing the written statement),
+I.A. No. 3151/2024(by defendant no. 4 u/O I R 10(2) CPC for deletion of
+his name),
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:24
+I.A. No. 3152/2024(by defendant no. 4 for condonation of delay of 2 days
+in re-filing the I.A. No. 3151/2024 for deletion) &
+I.A. No. 3154/2024(by defendant no. 4 for condonation of delay of 100
+days in re-filing the misjoinder application)
+1. Learned counsel for plaintiff accepted the notice and seeks time to file
+the reply.
+2. Let reply be filed within four weeks, with advance copy to the
+opposite party and rejoinder thereto, if any, may also be filed within two
+weeks thereafter so that pleadings may be completed in these IAs before the
+next date of hearing.
+CS(COMM) 911/2023
+3. Put up for completion of pleadings in accordance with law for
+06.05.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 6, 2025/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:24
+
+===== ORDER =====
+
+$~44
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 911/2023 I.A. 3514/2025 I.A. 3515/2025 I.A.
+3516/2025
+TATA STEEL LIMITED .....Plaintiff
+Through: Mr. Sumit Bansal, Sr. Advocate along
+with Mr. Arvind Thapliyal, Mr.
+Siddharth Pandey, Mr. Udai Bir
+Kochar, Mr. Aditya Bakshi, Mr.
+Pushkar Khanna, Advocates.
+versus
+MS VISTRAT REAL ESTATE PRIVATE LIMITED
+& ORS. .....Defendant
+Through: Ms. Ranjana Roy Gawai, Ms.Vasudha
+Sen, Mr. Vineet Wadhwa, Mr. Prateek
+Gupta, Advocates for D-1, 2 & 4.
+Mr. Anubhav Singh, Mr. Aman Singh,
+Mr. Nitin Kumar, Ms. Maria Mary,
+Advocates for D-5.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 11.02.2025
+1. Applications under Section 8 of Arbitration & Conciliation Act, 1996
+(‘A&C Act’) and Order VII Rule 11 of the Code of Civil Procedure, 1908
+(‘CPC’) have been moved on behalf of defendant no.1.
+2. However, at the very outset, a submission is made by Mr. Sumit Bansal,
+Senior Counsel for plaintiff that, without prejudice to their objection that the
+Arbitration Clause in the Lease Agreement does not cover the disputes that
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:23
+arose in the Memorandum of Security Deposit, basis which the suit was filed
+for recovery of approximately Rs.36.40 Crores plus interest, they are
+agreeable to the matter being referred to the Arbitration by this Court under
+Section 89 of the CPC.
+3. Counsel for defendant had already filed an application under Section 8
+of the A&C Act and, therefore, per se, do not have objection that the disputes
+be referred to Arbitration.
+4. Considering the above submission, the Court, therefore, without
+adverting to the merits of the application under Section 8 of the A&C Act,
+refers the matter to Arbitration in exercise of the powers of this Court under
+Section 89 of the CPC, based on the consensus arrived at between the parties.
+Needless to state, plaintiff shall not object to the arbitrability of the issue
+before the Arbitrator, considering the above.
+5. In a connected matter being CS(COMM) 634/2024, orders were passed
+on 10th February 2025, on similar lines, appointing Mr.Justice Rajiv Shakdher
+(Retd.), Former Chief Justice, High Court of Himachal Pradesh, as the Sole
+Arbitrator. Considering that parties are the same, the said matter be also
+referred to Arbitration.
+6. Mr. Justice Rajiv Shakdher (Retd.), Former Chief Justice, High Court of
+Himachal Pradesh (Mobile No. 9717495004) is appointed as the Sole
+Arbitrator. The fee of the Sole Arbitrator shall be as per the Fourth Schedule
+of the A&C Act.
+7. All issues inter se the parties, may be placed before the Arbitrator, in
+accordance with law.
+8. In view of the directions passed under Section 89 of CPC, the Court fee
+be refunded to the plaintiff. The Registry is directed accordingly.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:23
+9. Petition is disposed of with all pending applications, if any.
+10. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+FEBRUARY 11, 2025/ak/tk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:23

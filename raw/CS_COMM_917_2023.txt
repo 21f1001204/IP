@@ -1,0 +1,1018 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_917_2023
+case_status: DISPOSED
+n_orders: 13
+
+$~42
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 917/2023 and I.A. 25744-749/2023
+LARGAN PRECISION CO. LTD. ..... Plaintiff
+Through: Mr. Pravin Anand, Mr.Shrawan
+Chopra, Mr. Vibhav Mithal, Ms. Saumya
+Singh and Mr. A. Tewari, Advocates.
+versus
+PEGATRON TECHNOLOGY
+INDIA PRIVATE LIMITED & ANR. ..... Defendants
+Through:
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 20.12.2023
+1. The Hon’ble Judge is not holding the Court today.
+2. Re-notify on 21 December 2023
+BY ORDER
+COURT MASTER
+DECEMBER 20, 2023/kd
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:38
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 917/2023 & I.A. 25744/2023, I.A. 25745/2023,
+I.A. 25746/2023, I.A. 25747/2023, I.A. 25748/2023, I.A.
+25749/2023
+LARGAN PRECISION CO. LTD. ..... Plaintiff
+Through: Mr. Pravin Anand, Mr.
+Shrawan Chopra, Mr. Achyut Tewari and
+Ms. Samya Singh, Advs.
+versus
+PEGATRON TECHNOLOGY INDIA PRIVATE
+LIMITED & ANR. ..... Defendants
+Through:
+CORAM:
+HON'BLE MR. JUSTICE C. HARI SHANKAR
+O R D E R
+% 21.12.2023
+I.A. 25746/2023 (for additional documents)
+1. This is an application filed by the plaintiff seeking leave to file
+additional documents under the Commercial Courts, Commercial
+Division and Commercial Appellate Division of High Courts Act,
+2015 (hereinafter, ‘Commercial Courts Act’). The plaintiff, if it
+wishes to file additional documents at a later stage, shall do so strictly
+as per the provisions of the Commercial Courts Act and the DHC
+(Original Side) Rules, 2018.
+2. The application is disposed of.
+CS(COMM)917/2023 Page1of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:37
+I.A. 25747/2023 (under Section 12A of the Commercial Courts Act)
+3. This is an application filed by the plaintiff seeking exemption
+instituting pre-litigation mediation under Section 12A of the
+Commercial Courts Act.
+4. Ld. counsel for the plaintiff submits that since the plaintiff itself
+is the supplier to Apple India for several years, there may be parallel
+negotiations that may be going on in this matter.
+5. Considering the facts and circumstances of the case, the Court
+is satisfied that in terms of the judgment of the Hon’ble Supreme
+Court in Yamini Manohar v. T.K.D Keerthi1, the present suit
+contemplates urgent interim relief.
+6. Accordingly, the exemption is allowed and application is
+disposed of.
+I.A. 25748/2023 (for exemption)
+7. This is an application seeking exemption from filing
+originals/certified/cleared/typed or translated copies of documents,
+proper margins, electronic documents, etc. Original documents shall
+be produced/filed at the time of Admission/Denial, if sought, strictly
+as per the provisions of the Commercial Courts Act and the DHC
+(Original Side) Rules, 2018.
+12023SCCOnLineSC1382
+CS(COMM)917/2023 Page2of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:37
+8. Exemption is allowed, subject to all just exceptions.
+Accordingly, application is disposed of.
+I.A. 25749/2023 (for exemption)
+9. This is an application from filing legalized versions of various
+affidavits, statement of truth, etc. Let the legalized affidavit be filed
+within a period of eight weeks.
+10. List on 1 April, 2024.
+I.A. 25745/2023 (for interrogatories)
+11. In this application, the plaintiff seeks answers to the
+interrogatories which are annexed to the application.
+12. Issue notice.
+13. Let a reply to this application be filed within four weeks.
+Rejoinder be filed within four weeks, thereafter. List on 1 April, 2024.
+CS(COMM) 917/2023
+14. Let the plaint be registered as a suit.
+15. Issue summons to the Defendants through all modes upon filing
+of Process Fee.
+CS(COMM)917/2023 Page3of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:37
+16. The summons to the Defendants shall indicate that the written
+statement to the plaint shall be positively filed within 30 days from
+date of receipt of summons. Along with the written statement, the
+Defendants shall also file an affidavit of admission/denial of the
+documents of the plaintiff, without which the written statement shall
+not be taken on record.
+17. Liberty is given to the plaintiff to file a replication within 15
+days of the receipt of the written statement(s). Along with the
+replication, if any, filed by the plaintiff, an affidavit of
+admission/denial of documents of the Defendants, be filed by the
+plaintiff, without which the replication shall not be taken on record. If
+any of the parties wish to seek inspection of any documents, the same
+shall be sought and given within the timelines.
+18. List before the Joint Registrar for marking of exhibits on 26
+February, 2024. It is made clear that any party unjustifiably denying
+documents would be liable to be burdened with costs.
+19. List before the Court on 1 April, 2024.
+I.A. 25744/2023 (u/O XXXIX Rule 1 and 2 CPC)
+20. Issue notice.
+21. The plaintiff in the present suit- Largan Precision Co. Ltd. is a
+CS(COMM)917/2023 Page4of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:37
+Taiwanese company, founded in 1987. The case of the plaintiff is that
+it is a global leader in the research, development, design, and
+production of high end miniaturized optical components, including a
+variety of camera lenses, optical lens modules, voice coil motors, and
+optoelectronic components. These products of the plaintiff are used in
+smartphones, tablet PCs, laptops and various other digital devices,
+including smart vehicles, medical devices, smart home applications
+and even consumer electronic products which have cameras and
+scanners.
+22. The plaintiff claims to be one of the world’s largest suppliers of
+smartphones camera lenses with a 25 to 30 percent of the global
+market share. The range of optical products which are being
+manufactured and sold by the plaintiff are filed as a list along with the
+documents in the present suit.
+23. The case of the plaintiff is that it has invested approximately ₹
+10 billion in research and development in 2022 and owing to the high
+end digital expertise which the plaintiff possesses, it has obtained a
+large number of patents for its innovations as well. Being one of the
+main suppliers of high-end camera lenses, the various models of
+lenses which are manufactured by the plaintiff are also stated to be
+used in various Apple products including Iphone 15 Plus. The present
+suit relates to the following two patents:
+(i) Indian Patent No. IN 384240 titled as “PHOTOGRAPHING
+OPTICAL LENS ASSEMBLY, IMAGE CAPTURING UNIT
+AND ELECTRONIC DEVICE” (hereinafter “IN’240”). The
+CS(COMM)917/2023 Page5of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:37
+said patent IN’240 relates to a photographic optical lens
+assembly and an image capturing unit applicable to an
+electronic device. The bibliographic details of the suit patents
+IN’240 are as detailed below:
+(ii) Indian Patent No. IN 389877 titled as “ANNULAR
+OPTICAL ELEMENT, IMAGING LENS MODULE AND
+ELECTRONIC DEVICE” (hereinafter, “IN’877”). The said
+patent IN’877 relates to an annular optical element and an
+imaging lens module which are applicable to portable electronic
+devices, such as a smartphone. The bibliographic details of the
+suit patent IN’877 are as detailed below:
+CS(COMM)917/2023 Page6of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:37
+(iii) Indian Patent No. IN 398503 (IN’503) titled as
+“IMAGING OPTICAL SYSTEM” (also known as “suit patent
+IN’503”). The suit patent IN’503 relates to an imaging optical
+system. IN’503 pertains to a five-element lens structure which
+is now often used for the front or ultrawide lens assemblies. The
+bibliographic details of the suit patents IN’503 are as detailed
+below:
+ApplicationNo. 1678/MUM/2015
+Patent No. 398503
+Dateof IndianFiling April 27,2015
+DateofPublicationu/s August 31,2016
+CS(COMM)917/2023 Page7of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:37
+11A
+FER IssueDate September24,2018
+FER ResponseDate March22,2019
+PriorityDate May26,2014
+PriorityNumber TW103118248
+Title IMAGING OPTICAL
+SYSTEM
+Patentee LarganPrecisionCo.Ltd
+DateofGrant June3,2022
+24. The submission of learned Counsel for the plaintiff is that
+Pegatron Technology India Private Limited (hereinafter, Pegatron)
+which is the manufacturer of iPhones in India as also the Singaporean
+principal company i.e., Foxconn Singapore Pte Ltd. are violating and
+infringing upon the patents of the plaintiff.
+25. It is his submission that the plaintiff supplies lenses for iPhones
+to Apple. However, when such lenses are supplied, the same are
+clearly identifiable as the plaintiff’s products.
+26. In some of the models of iPhone products which are being
+currently manufactured in India, some third-party lenses that are
+infringing in nature are being used by Foxconn, which infringe the
+plaintiff’s patents.
+27. The plaintiff accordingly prays for an injunction and for
+damages. Advance copies have been served to the Defendants.
+However, none appears for the Defendants.
+CS(COMM)917/2023 Page8of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:37
+28. Let a reply to this application be filed within four weeks.
+Rejoinder be filed within four weeks, thereafter.
+29. List before the Court on 1 April, 2024.
+C.HARI SHANKAR, J
+DECEMBER 21, 2023
+dsn
+Click here to check corrigendum, if any
+CS(COMM)917/2023 Page9of9
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:37
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 917/2023
+LARGAN PRECISION CO. LTD.
+..... Plaintiff
+Through: Ms. Samya Singh, Adv.
+(M- 9899407069).
+versus
+PEGATRON TECHNOLOGY INDIA PRIVATE LIMITED
+& ANR.
+..... Defendant
+Through: Mr. Ankit Rajgarhia & Ms.
+Vindhya D., Advs. for D-1
+& 2.
+(M- 9818855771).
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 26.02.2024
+Due to the untimely death in the immediate family today
+morning, the learned P.O. is on half day leave today to attend her
+last rites.
+Put up the matter on 19.03.2024 for purpose already fixed.
+Reader a/w
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 26, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:37
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 917/2023
+LARGAN PRECISION CO. LTD. ..... Plaintiff
+Through: Mr. Vibhav Mithal (VC),
+Advocate
+versus
+PEGATRON TECHNOLOGY INDIA PRIVATE
+LIMITED & ANR. ..... Defendant
+Through: Mr. Ankit Rajgharia,
+Ms. Vindhya S.Mani,
+Mr. Bhuvan Malhotra,
+Mr. Ritwik Sharma, Mr. Devesh
+Aswal, Ms. Surbhi Nautiyal,
+Mr. Rohit Kumar, Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 19.03.2024
+Both the defendants have been served with summons on
+18.01.2024. Appearance has been put in on behalf of the
+defendants. Let the written statement be filed as per rules.
+Matter is already listed before the Hon’ble Court for
+01.04.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 01.04.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 19, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:36
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 917/2023 & I.A. 6565/2024
+LARGAN PRECISION CO. LTD. ..... Plaintiff
+Through: Mr. Arvind Nigam, Mr Deyan
+Krishnan, Mr. Shrawan Chopra, Mr.
+Achyut Tewari, Mr. Agneesh, Mr.
+Vaibhav Mittal and Ms. Samya
+Singh, Advs.
+versus
+PEGATRON TECHNOLOGY INDIA PRIVATE LIMITED &
+ANR. ..... Defendants
+Through: Mr. Abhishek Manu Singhvi, Mr.
+Rajiv Nayar & Mr. Akhil Sibal, Sr.
+Advs. with Mr. V Lakhsmikumaran,
+Mr. Aviskar Singhvi, Mr. Anirudh
+Bakhru, Ms. Meghna Mishra, Mr.
+Badri Narayanan, Ms. Tahira
+Karanajawala, Mr. Ankit Rajgharia,
+Mr. Arjun Sharma, Ms. Charanya
+Lakshmikumaran, Mr. Prashant
+Philips, Ms. Vindhya S.Mani, Mr.
+Varun Juneja, Mr. Bhuvan Malhotra,
+Mr. Ritwik Sharma, Mr. Devesh
+Aswal, Ms. Surbhi Nautiyal and Mr.
+Rohit Kumar, Advocates
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 21.03.2024
+1. List all three above captioned matters before another Bench, of which
+Hon'ble Mr. Justice Anish Dayal is not a member, subject to order of Hon’ble
+Judge In-Charge.
+2. It is stated that there is a connected suit, being CS (COMM) 867/2023,
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:36
+which may also be listed before the designated Bench, subject to order of
+Hon’ble Judge In-Charge.
+3. At joint request of counsels for parties, list on 10th April, 2024.
+4. Date 1st April, 2024, fixed earlier, stands cancelled.
+5. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+MARCH 21, 2024/sm/na
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:36
+
+===== ORDER =====
+
+$~38
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 917/2023
+LARGAN PRECISION CO. LTD. ..... Plaintiff
+Through: Mr. Dayan Krishnan, Mr. Arvind
+Nigam, Senior Advocates with Mr.
+Pravin Anand, Mr. Shrawan, Mr.
+Sukit Seth, Mr. Nibhav Mittal, Mr.
+Agnish, Mr. Achyut Tewan & Mr.
+Samya Singh, Advocate.
+versus
+PEGATRON TECHNOLOGY INDIA PRIVATE LIMITED & ANR.
+..... Defendants
+Through: Mr. Vijay Laxmi Rathi, Advocate.
+Dr. Abhishek Manu Singhvi Senior
+Advocate with Mr. Rajiv Nayar, Mr.
+Akhil Sibal, Mr. Anirudh Bakhru, Ms.
+Meghna Mishra, Mr. Badri Narayan,
+Ms. Tahira Karanajwala, Mr. Ankit
+Rajgarhia, Mr. Charanya
+Lakshmikumaran, Mr. Parashant
+Phillips, Mr. Arjun Sharma, Ms.
+Vindhya S. Mani, Ms. Varuna Juneja,
+Mr. Bhuvan Malhotra, Mr. Rohit
+Kumar, Mr. Ritwik Sharma & Mr.
+Devesh Aswal, Advocate for D-1 and
+2 in I.A. No. 6566 of 2024.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 10.04.2024
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:35
+I.A. 6565/2024, I.As. 8168-8172/2024 & I.As. 8273-8276/2024
+1. Issue notice. Counsel for Non-Applicants accept notice. Reply be
+filed within a period of four weeks from today. Rejoinder thereto, if any, be
+filed within a period of two weeks thereafter.
+2. List before Joint Registrar on 28th May, 2024 for completion of
+pleadings.
+3. List before Court on 31st July, 2024.
+SANJEEV NARULA, J
+APRIL 10, 2024
+da
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:35
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 917/2023
+LARGAN PRECISION CO. LTD.
+..... Plaintiff
+Through: Mr. Vibhan Mithai, Advocate
+versus
+PEGATRON TECHNOLOGY INDIA PRIVATE LIMITED &
+ANR.
+..... Defendant
+Through: Mr. Ankit Rajgarhia,
+Mr. Rohit Kumar,
+Mr. Prashant Phillips,
+Mr. Bhuvan Malhotra,
+Advocates
+CORAM:
+JOINT REGISTRAR(JUDICIAL) Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 28.05.2024
+Learned Presiding Officer is on leave today.
+Re-notify for purpose already fixed on 09.07.2024.
+Reader to
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 28, 2024
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:34
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 917/2023
+LARGAN PRECISION CO. LTD. .....Plaintiff
+Through: Appearance not given.
+versus
+PEGATRON TECHNOLOGY INDIA PRIVATE
+LIMITED & ANR. ..... Defendant
+Through: Mr. Ankit Rajgarhia, Mr. Rohit Kumar,
+Mr. Bhuvan Malhotra, Mr. Devesh
+Aswal, Ms. Vindhya S.Mani,
+Advocates for D-1 & 2 also in
+IA No. 6565/2024.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 09.07.2024
+I.A. No. 6565/2024 on behalf of applicant for directions.
+Pleadings are complete.
+I.A. No. 8168/2024 on behalf of the defendants seeking leave
+of the Hon'ble Court to file additional documents at a belated
+stage of the proceedings.
+Pleadings are complete.
+I.A. No. 8169/2024 on behalf of the defendants seeking
+exemption from filing originals, certified copies, fair typed
+copies, translated copies with proper and low margins
+notarized and apostilled documents.
+&
+I.A. No. 8170/2024 on behalf of the counter claimant seeking
+exemption from filing originals, certified copies, fair typed
+copies, translated copies with proper and low margins
+notarized and apostilled documents.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:34
+In view of submissions of ld. Counsels and grounds
+mentioned in the applications, the applications are allowed
+subject to just exceptions.
+Both the IA’s stand disposed off.
+I.A. No. 8171/2024 on behalf of applicants/defendants under
+seeking return of the plaint filed by the plaintiff.
+Pleadings are complete.
+I.A. No. 8172/2024 on behalf of applicant seeking rejection of
+the plaint filed by the plaintiff.
+Pleadings are complete.
+I.A. No. 8273/2024 for condonation of delay for condonation
+of delay of 73 days in filing reply to i.e. I.A no. 25744 of 2023
+(Stay).
+Arguments heard.
+Put up for orders on the next date.
+I.A. No. 8274/2024 for condonation of delay for condonation
+of delay of 73 days in filing reply to interrogatories filed by
+plaintiff i.e. I.A. No.25745 of 2023.
+Although the pleadings are complete, ld. Counsel for the
+plaintiff submits that there is an overlap between the present IA
+and the IA moved on behalf of the intervener which is to come
+up for consideration before the Hon’ble Court on 31.07.2024. Ld.
+Counsel has further highlighted that ld. Counsel for the
+defendants is appearing for the intervener also. Ld. Counsel for
+the defendants does not have any objection to the present IA
+being put up before the Hon’ble Court. Put up again on the next
+date.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:34
+I.A. No. 8275/2024 on behalf of defendant nos. 1 & 2 seeking
+interrogatories.
+Pleadings are complete.
+I.A. No. 8276/2024 for condonation of delay for condonation
+of delay of 72 days in filing written statement.
+Arguments heard.
+Put up for orders on 16.07.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 9, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:34
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 917/2023
+LARGAN PRECISION CO. LTD. .....Plaintiff
+Through: Mr. Achut Tiwari, Advocate
+versus
+PEGATRON TECHNOLOGY INDIA PRIVATE
+LIMITED & ANR. .....Defendant
+Through: Mr. Ankit Rajgarhia, Mr. Rohit Kumar,
+Mr. Bhuvan Malhotra, Mr. Devesh
+Aswal, Ms. Vindhya S.Mani,
+Advocates for D-1 & 2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 16.07.2024
+I.A. No. 8276/2024 for condonation of delay for condonation
+of delay of 72 days in filing written statement.
+1. Explaining the delay, ld Counsel for the applicants has
+highlighted that both the defs. are foreign residents i.e. def. no. 1
+being the wholly owned subsidiary of def no. 2 which is based in
+Taiwan. In addition to the locational disadvantage of the defs.
+which in the opinion of the ld. counsel for the applicants has
+resulted in contributing to the delay, ld. Counsel has highlighted
+that the present suit being a patent infringement suit, defs. had to
+file the report of technical experts in support of their defense. To
+this end, ld. Counsel has further highlighted that two technical
+affidavits of two technical experts running into about 400 pages
+and 200 pages respectively have been filed along with the written
+statement. One of the experts whose technical affidavit has been
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:33
+filed is based in the US. All these factors have purportedly
+contributed in causing the delay in filing of the written statement.
+Opposing the prayer, ld. Counsel for the plaintiff submitted that
+sanctity of the 30 days period to file a written statement in a
+commercial suit has never been challenged since the inception of
+the Commercial Courts Act despite the fact that intellectual
+property disputes invariably involve filing of voluminous
+documents to prove/establish the IP rights. Ld. Counsel has
+disputed the contention of the applicants that both defs. are
+foreign entities. Ld. Counsel pointed out that def. no. 1 is an
+entity based in India. It has been further submitted that
+condonation of delay or extension of period for filing the written
+statement has to be for justifiable reasons and not as a matter of
+routine, simply because the statute provides for an outer limit.
+2. I have carefully considered the rival submissions.
+3. This Court is in complete agreement with the submission
+of ld. counsel for the plaintiff that condonation of delay in filing
+written statement beyond the 30 days period cannot be fait
+accompli to the extended timeline of 120 days which has been
+provided in the statute. Usually, in such IA’s, the reason put forth
+for filing written statement with delay is that the plaintiff has
+filed voluminous documents which need to be responded to.
+Interestingly, in the present IA, the reason that has been given is
+that it is the defendants who took up time in preparing two
+voluminous technical affidavit which contributed substantially to
+the delay. To be fair to both the sides, especially in a patent
+infringement suit, and also in IPR matters in general, documents
+are bound to be voluminous. Plaintiff however, has a natural
+advantage in as much it is not bound by any time line. Defendant
+on the other hand has a limited window to respond. And has to
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:33
+pack all of its defense in this limited period. Overshoots can thus
+naturally be expected. However, at this stage of the proceedings,
+it is very difficult for any court to make an objective assessment
+of whether the documents so filed by the defendant to put forth
+its defense were actually required or not but the general
+presumption is in favour of the defendant. Therefore,
+notwithstanding the strict time line, law is conscious of the
+possibility of time overruns in commercial disputes and that is
+why the provision for extended time line. Having observed so,
+we need to revert to the initial argument of ld. counsel for the
+plaintiff which was concerning the sanctity of the 30 days
+timeline. Till date, there has been no change in that part of the
+law concerning commercial suits which leads us to the irrefutable
+conclusion that if reasonable grounds exist, delay may be
+condoned but it has to be accompanied with costs. In the
+understanding of the court, the imposition of cost while
+condoning delay is mandatory, as is borne out from the plain
+language of the relevant provision.
+4. Defs. have relied upon 2 main grounds for seeking
+condonation – the fact that both entities are based abroad, and
+filing of voluminous technical affidavits of two experts. So far as
+the entities being based abroad (which averment is partly
+incorrect) is concerned, the current state of IT makes national
+boundaries redundant. So far as filing of technical affidavits is
+concerned, the IA is silent on when were the relevant expert/s
+contacted for preparing the affidavit. Such timelines are
+important as each day’s delay has to be reasonably explained
+while seeking condonation. Nevertheless, having regard to all of
+the above factors, since the written statement has been filed in the
+maximum permissible period, I find it appropriate to condone the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:33
+delay subject to a cost of Rs. 15000/-, to be paid to the plaintiff/
+plaintiff’s counsel. The cost be paid within 3 weeks failing which
+the written statement shall be deemed to have been taken off the
+record. Replication however, may be filed within the period
+permitted, as worked out from today. Subject to the above,
+written statement is taken on record.
+5. IA stands disposed off accordingly.
+I.A. No. 8273/2024 for condonation of delay for condonation
+of delay of 73 days in filing reply to i.e. I.A no. 25744 of 2023
+(Stay).
+And
+I.A. No. 8274/2024 for condonation of delay for condonation
+of delay of 73 days in filing reply to interrogatories filed by
+plaintiff i.e. I.A. No.25745 of 2023.
+6. From both sides, arguments akin to what were submitted
+while taking up the IA for seeking condonation of delay in filing
+the written statement, were put forth. Defs. sought to justify the
+delay on account of two technical affidavits which have been
+filed alongwith the written statement and which bear a cross
+reference to the Plaintiff’s IA for seeking interim injunction, and
+technical nature of the interrogatories. However, the prayer for
+condonation has been strongly opposed. For the sake of brevity,
+the submissions are not being repeated. However, having due
+regard to the rival submissions, the delay in filing replies is
+condoned subject however to a cost of Rs. 5000/- each i.e. for
+both the applications, to be deposited with Bharat ke Veer fund
+(online portal). The cost be paid within 2 weeks failing which the
+respective replies shall be taken off the record. Should there be a
+problem in paying on the portal, the amount may be deposited
+with Delhi High Court Bar Clerks Association but within the
+same timeline.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:33
+7. The IA’s stand disposed off accordingly.
+CS(COMM) 917/2023
+8. Matter is already listed before the Hon’ble Court for
+31.07.2024.
+9. Put up before the Hon’ble Court on the date already fixed
+i.e. 31.07.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 16, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:33
+
+===== ORDER =====
+
+$~26
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 917/2023
+LARGAN PRECISION CO. LTD. .....Plaintiff
+Through: Mr. Arvind Nigam and Mr. Dayan
+Krishan, Sr. Advocates with Mr.
+Pravin Anand, Mr. S. Chopra, Mr.
+Vibhav Mittal, Mr. Achyut Tewari,
+Mr. Sukrit Seth and Mr. Agnish,
+Advocates
+versus
+PEGATRON TECHNOLOGY INDIA PRIVATE LIMITED &
+ANR. .....Defendants
+Through: Mr. Neeraj Kishan Kaul, Senior
+Advocate, Mr. Raj Shekhar Rao,
+Senior Advocate with Ms. Meghna
+Mishra, Mr. Badri Narayanan, Ms.
+Tahira Karanajwala, Mr. Ankit
+Rajgarhia, Mr. Arjun Sharma, Ms.
+Charanya Lakshmikumaran, Mr.
+Prashant Philips, Ms. Vindhya S.
+Mani, Ms. Varuna Juneja, Mr.
+Bhuvan Malhotra, Mr. Rohit
+Kumar, Mr. Ritwik Sharma and
+Mr. Devesh Aswal, Advocates for
+D-1 & 2
+Dr. Abhishek Manu Singhvi, Sr.
+Adv., Mr. Rajiv Nayar, Sr. Adv.,
+Mr. Akhil Sibal, Sr. Adv. with Mr.
+V. Lakhsmikumaran, Mr. Avishkar
+Singhvi, Mr. Anirudh Bakhru, Ms.
+Meghna Mishra, Mr. Mr Badri
+Narayanan, Ms. Tahira
+Karanajwala, Mr. Ankit Rajgarhia,
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:32
+Mr. Arjun Sharma, Ms. Charanya
+Lakshmikumaran, Mr. Prashant
+Philips, Ms. Vindhya S. Manı, Ms.
+Varuna Juneja, Mr. Bhuvan
+Malhotra, Mr. Rohit Kumar, Mr.
+Ritwik Sharma, Ms. Sugandh Sahi,
+Ms. Surbhi Nautiyal and Mr.
+Devesh Aswal, Advocates for
+I.A.6565/2024
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 31.07.2024
+I.A. 8171/2024-return of plaint & I.A. 8172/2024-Seeking rejection of
+plaint (Stage I)
+1. Since pleadings are complete in the present applications, list for
+arguments on 02.12.2024. It is clarified that both the aforesaid
+applications will be initially taken up together.
+2. Learned counsel for the parties seeks, and is granted, four weeks to
+file written synopsis not exceeding five pages giving a chronological list
+of dates and events and relevant documents, if any, alongwith duly
+highlighted relevant judgments, which they wish to rely upon.
+I.A. 25744/2023-Stay, I.A. 25745/2023-Seeking interrogatories & I.A.
+8275/2024-Seeking interrogatories (Stage II)
+3. Pleadings in I.A. 8275/2024 are complete. Learned senior counsels
+appearing for the plaintiff submits that rejoinder in I.A. 25744/2023 & I.A.
+25745/2023 are required to be filed.
+4. Let the same shall be filed within the allotted time frame.
+5. List for hearing on 02.12.2024, when these applications will be
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:32
+taken up for hearing, after conclusion of the arguments by all the learned
+counsel for the respective parties in Stage I.
+I.A. 8168/2024-To file addl. doc. at a belated stage & I.A. 8275/2024-
+Exp from filing legalised versions of various affidavits (Stage-III)
+6. List alongwith I.A. 24204/2023 for arguments on 02.12.2024, when
+these applications will be taken up for hearing, after conclusion of the
+arguments by all the learned counsel for the respective parties in Stage II.
+I.A. 6565/2024-Dir.
+7. After some arguments, Dr. Abhishek Manu Singhvi, Sr. Advocate
+and learned counsels appearing for the Apple Inc., seeks, and is granted
+four weeks to file written synopsis not exceeding five pages giving a
+chronological list of dates and events and relevant documents, if any,
+alongwith duly highlighted relevant judgments, which they wish to rely
+upon.
+8. Learned senior counsels appearing for the plaintiff shall likewise,
+also file the said written synopsis within the aforesaid period of four
+weeks.
+9. List for arguments on 02.12.2024, when this application will be
+taken up for hearing, after conclusion of the arguments by all the learned
+counsel for the respective parties in all the aforesaid applications.
+CS(COMM) 867/2023
+10. List on 07.10.2024 before the learned Joint Registrar for completion
+of pleadings.
+11. List before this Court on 02.12.2024.
+CC NO.--- /2024 (to be numbered)
+12. Let the counter claim be numbered by the Registry.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:32
+13. Issue summons
+14. Mr. Pravin Anand, learned counsel appearing for the plaintiff
+accepts summons. He seeks and is granted thirty days to file written
+statement. Written Statement be filed by the plaintiff along with
+affidavit(s) of admission/ denial of documents of the defendants, without
+which the written statement shall not be taken on record.
+15. Replication thereto, if any, be filed by the defendants within a
+period of thirty days from the date of receipt of written statement along
+with affidavit(s) of admission/ denial of documents of the plaintiff,
+without which the replication shall not be taken on record.
+16. In case any of the parties wish to seek inspection of any
+document(s), the same shall be sought and given within the requisite
+timelines in accordance with law.
+17. List before the Joint Registrar for marking exhibits on documents
+on 07.10.2024. It is made clear that if any party unjustifiably denies any
+document(s), then it would be liable to be burdened with costs.
+18. List before the Court on 02.12.2024.
+SAURABH BANERJEE, J
+JULY 31, 2024/akr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:32
+
+===== ORDER =====
+
+$~29
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 917/2023
+LARGAN PRECISION CO. LTD. .....Plaintiff
+Through: Mr. Shrawan Chopra,
+Mr. Vibhav Mithal, Ms. Samya
+Singh, Mr. Aayush Maheshwari,
+Advocates
+versus
+PEGATRON TECHNOLOGY INDIA PRIVATE
+LIMITED & ANR. .....Defendant
+Through: Mr. Ankit Rajgarhia, Mr. Rohit
+Kumar, Mr. Bhuvan Malhotra,
+Mr. Prashant Philips, Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 13.09.2024
+I.A. No. 39414/2024 filed by the plaintiff to condone the delay
+of 23 days in filing the rejoinders in I.A. No. 25744/2023
+(stay) and IA No.25745/2023 (for interrogatories).
+1. Issue notice. Notice accepted by ld. Counsel for the
+defendants who presses for an opportunity to file a response. Let
+the reply be filed within two weeks, with an advance copy of the
+same to the opposite side. Rejoinder thereto, if any, be filed
+thereafter within a week of receiving an advance copy of the
+reply.
+2. Put up for completion of pleadings on 07.10.2024, the date
+already fixed before this Court.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 13, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:32
+
+===== ORDER =====
+
+$~43
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 917/2023 & I.A. 40144/2024
+LARGAN PRECISION CO. LTD. .....Plaintiff
+Through: Mr. Pravin Anand, Mr. Shrawan
+Chopra, Mr. Vibhor Mittal,
+Mr. Achyut Tewari, Ms. Sanya
+Singh and Mr. Aayush Maheshwari,
+Advocates.
+versus
+PEGATRON TECHNOLOGY INDIA PRIVATE
+LIMITED & ANR. .....Defendants
+Through: Ms. Meghna Mishra, Ms. Tahira
+Karanjawala, Mr. Ankit Rajgarhia,
+Mr. Arjun Sharma, Ms. Varuna
+Juneja, Mr. Rohit Kumar,
+Mr. Prashant Phillips, Mr. Bhuvan
+Malhotra and Mr. Devesa Aswal,
+Advocates.
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 23.09.2024
+I.A.40144/2024 O 23 R 1
+1. By virtue of the present application, the plaintiff seeks withdrawal
+of the suit bearing no. CS(COMM) 917/2023.
+2. Permission as sought for, is granted.
+3. The application is allowed and disposed of.
+CS(COMM) 917/2023
+4. In view of the order passed in I.A. no.40144/2024, the present suit
+is accordingly dismissed as withdrawn.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:31
+5. File be consigned to record room.
+6. The earlier fixed date before Court of 02.12.2024 stands cancelled.
+CC(COMM) 23/2024
+7. List before the learned Joint Registrar on 07.10.2024, the date
+already fixed.
+SAURABH BANERJEE, J
+SEPTEMBER 23, 2024
+mk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:31
+
+===== ORDER =====
+
+$~2
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 917/2023
+LARGAN PRECISION CO. LTD.
+.....Plaintiff
+Through:
+versus
+PEGATRON TECHNOLOGY INDIA PRIVATE
+LIMITED & ANR.
+.....Defendant
+Through:
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 18.12.2024
+DELETED
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+DECEMBER 18, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:30:23

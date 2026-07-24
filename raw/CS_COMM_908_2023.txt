@@ -1,0 +1,1157 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_908_2023
+case_status: PENDING
+n_orders: 30
+
+$~50 & 51
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 908/2023, I.A. 25662/2023 -O-39, R-1,2&7 & I.A.
+25663/2023 -O-II, R-2.
++ CS(COMM) 909/2023, I.A. 25664/2023 -O-39, R-1,2&7 & I.A.
+25665/2023 -O-II, R-2.
+TEAM FRANCE 01 S A S
+SUNBIRD FRANCE 02 S A S ..... Plaintiffs
+Through: Mr.Rajshekhar Rao, Sr. Adv. with
+Mr.Anand Venkatramani, Mr.Saket Satyapathy,
+Mr.Anubhav Dutta, Ms.Priyal Shah, Ms.Akshita
+Totla, Ms.Mansi Tyagi, Mr.J.Shivam Kumar,
+Ms.Yamini Mukherjee & Ms.Pritha, Advs.
+versus
+SPICEJET LIMITED ..... Defendant
+Through: Mr.Sandeep Sethi, Sr. Adv. with
+Mr.K.R.Sasiprabhu, Mr.Kartikeya Asthana &
+Mr.Tushar Bhardwaj, Advs. along with the
+General Manager (Legal)
+CORAM:
+HON'BLE MS. JUSTICE REKHA PALLI
+O R D E R
+% 19.12.2023
+1. These two suits have been filed seeking decree of permanent
+injunction restraining the defendant and their directors, employees
+etc., who are in possession of three engines leased out by the plaintiff,
+from utilising the said engines any further. The plaintiff has also
+sought directions to the defendant to hand over these engines to them
+and compensate them for the costs associated with their re-possession
+as also paythem the outstanding lease charges.
+2. Learned senior counsel for the plaintiff, submits that the lease
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:03
+agreements vide which the engines were handed over the defendant,
+have already been cancelled and therefore, there is no reason as to
+why the defendant should continue to use these engines any further.
+He, therefore, prays that the defendant be restrained from using the
+engines any further and also be directed to forthwith handover the
+possession thereof to the plaintiff.
+3. Learned senior counsel for the defendant, who appears on advance
+notice, at the very outset, submits that while the defendant does not
+deny that a huge amount is still payable to the plaintiff, the actual
+amount can be determined only after reconciliation of the accounts.
+He, further, submits that the defendant has every intention to clear the
+outstanding dues of the plaintiffs and therefore, prays that time be
+granted to the defendant to show its bonafide. He assures the Court on
+instructions from the General Manager (Legal) of the defendant, that a
+sum of USD 50,000/- will be positively paid to the plaintiff on or
+before 21.12.2023 and a further sum of USD 200,000/- by 29.12.2023
+whereafter another sum of USD 200,000/- will be paid on or before
+03.01.2024. He, therefore prays that issuance of summons in the suits
+be deferred till then.
+4. Even though learned senior counsel for the plaintiff opposes this
+request by contending that the intention of the defendant is not
+bonafide as the defendant has failed to abide by its similar promises
+made in the past, taking into account that this assurance is being given
+before this Court, hearing being is deferred with a direction to the
+defendant to file an affidavit, within ten days, setting out the manner
+in which they intend to liquidate the outstanding dues of the plaintiff
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:03
+as also to restore the delivery of the engines to the plaintiff unless the
+lease is mutuallyextended.
+5. List on 04.01.2024.
+REKHA PALLI, J
+DECEMBER 19, 2023/kk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:03
+
+===== ORDER =====
+
+$~6 & 7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 908/2023, I.A. 25662/2023 & 25663/2023
+TEAM FRANCE 01 S A S ..... Plaintiff
+Through: Mr. Rajshekhar Rao, Sr. Adv. with
+Mr. Anandh Venkataramani, Mr.
+Saket Satapathy, Mr. Anubhav Dutta,
+Ms. Priyal Shah, Ms. Akshita Totla,
+Ms. Mansi Tyagi, Ms. Vishakha
+Gupta, Mr. J Shivam Kumar, Ms.
+Pritha Banerjee, Advs. (M.
+9079025647)
+versus
+SPICEJET LIMITED ..... Defendant
+Through: Mr. Sandeep Sethi Sr. Adv. Mr. K.R.
+Sasiprabhu, Mr. Kartikeya Asthana,
+Mr. Tushar Bhardwaj, Mr. Manan
+Shishodia, Advs along with General
+Manager Legal (M. 885138279)
+7 WITH
++ CS(COMM) 909/2023, I.A. 25664/2023 & 25665/2023
+SUNBIRD FRANCE 02 S A S ..... Plaintiff
+Through: Mr. Rajshekhar Rao, Sr. Adv. with
+Mr. Anandh Venkataramani, Mr.
+Saket Satapathy, Mr. Anubhav Dutta,
+Ms. Priyal Shah, Ms. Akshita Totla,
+Ms. Mansi Tyagi, Ms. Vishakha
+Gupta, Mr. J Shivam Kumar, Ms.
+Pritha Banerjee, Advs. (M.
+9079025647)
+versus
+SPICEJET LIMITED ..... Defendant
+Through: Mr. Sandeep Sethi Sr. Adv. Mr. K.R.
+Sasiprabhu, Mr. Kartikeya Asthana,
+CS(COMM)908/2023& CS(COMM)909/2023 Page1of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:02
+Mr. Tushar Bhardwaj, Mr Manan
+Shishodia, Advs along with General
+Manager Legal (M. 885138279)
+CORAM:
+JUSTICE PRATHIBAM. SINGH
+O R D E R
+% 04.01.2024
+1. This hearing has been done through hybrid mode.
+2. Ld. Counsels for both the parties submit that they have no objection to
+this Bench hearing the matter.
+3. CS (Comm) 908/2023 has been filed by the Plaintiff- Team France 01
+S.A.S against the Defendant-Spicejet Ltd. The Plaintiff, a French company
+and a subsidiary of Total Engine Asset Management, Singapore, specialises
+in providing spare engine sale and lease-back support packages for the
+commercial airline industry. It is averred that the Plaintiff leased two aircraft
+engines bearing nos. ESN 602805 and ESN 602776 to the Defendant, vide
+lease agreements dated 14th December, 2018. Aggrieved by the default in
+payment obligations, the Plaintiff seeks specific performance of the
+Defendant's contractual obligations to hand over possession of these
+engines, which are being held following the termination of the lease
+agreements.
+4. The second suit being CS(COMM) 909/2023, has been filed by the
+Plaintiff-Sunbird France 02 S.A.S against the same Defendant. It is averred
+that the Plaintiff had leased four aircraft engines, including engine bearing
+no. ESN 854096, to the Defendant vide lease agreement dated 29th March,
+2018. This suit seeks specific performance of the Defendant's obligation to
+hand over possession of the engines, which have been retained following the
+termination of the lease agreement.
+CS(COMM)908/2023& CS(COMM)909/2023 Page2of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:02
+5. Vide order dated 19th December, 2023, this Court directed as
+follows:-
+“3. Learned senior counsel for the defendant, who
+appears on advance notice, at the very outset, submits
+that while the defendant does not deny that a huge
+amount is still payable to the plaintiff, the actual
+amount can be determined only after reconciliation of
+the accounts. He, further, submits that the defendant
+has every intention to clear the outstanding dues of the
+plaintiffs and therefore, prays that time be granted to
+the defendant to show its bonafide. He assures the
+Court on instructions from the General Manager
+(Legal) of the defendant, that a sum of USD 50,000/-
+will be positively paid to the plaintiff on or before
+21.12.2023 and a further sum of USD 200,000/- by
+29.12.2023 whereafter another sum of USD 200,000/-
+will be paid on or before 03.01.2024. He, therefore
+prays that issuance of summons in the suits be deferred
+till then.
+4. Even though learned senior counsel for the plaintiff
+opposes this request by contending that the intention of
+the defendant is not bonafide as the defendant has
+failed to abide by its similar promises made in the past,
+taking into account that this assurance is being given
+before this Court, hearing being is deferred with a
+direction to the defendant to file an affidavit, within ten
+days, setting out the manner in which they intend to
+liquidate the outstanding dues of the plaintiff as also to
+restore the delivery of the engines to the plaintiff unless
+the lease is mutually extended.”
+6. In accordance with the previous order, certain payments were to be
+made by the Defendant to the Plaintiff. The payments as per the above order
+are stated to have been made but one such payment, due on 3rd January
+2024, is yet to be made. Mr. Sethi, ld. Senior Counsel, assures that this
+payment will be made by 5th January, 2024. An affidavit of compliance
+CS(COMM)908/2023& CS(COMM)909/2023 Page3of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:02
+dated 4th January, 2024, which includes a proposal, has been handed over to
+the Court.
+7. Heard. Let the said affidavit be placed on record. The Plaintiff also
+seeks time to receive instructions by the next date of hearing. It is made
+clear that if the payment, in terms of the previous order, is not paid by 5th
+January, 2024, the Court would have no option but to proceed further in the
+matter.
+8. Insofar as the engines and other aircrafts leased out by the Plaintiff are
+concerned, Mr. Rao, ld. Sr. Counsel expressed concern that some of the
+aircrafts and engines, which may not be the subject matter of these suits, are
+not being properly maintained by the Defendant, potentially leading to a loss
+in their value over time.
+9. Accordingly, if the Plaintiff wishes to carry out an inspection of any
+of the aircrafts or engines leased out to the Defendant, it is free to write a
+communication to the Defendant. Upon such communication being received,
+the inspection shall be offered within five working days.
+10. List on 29th January, 2024.
+PRATHIBA M. SINGH, J.
+JANURARY 04, 2024
+mr/dn
+CS(COMM)908/2023& CS(COMM)909/2023 Page4of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:02
+
+===== ORDER =====
+
+$~11 & 12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 908/2023, I.As. 25662/2023, 25663/2023
+TEAM FRANCE 01 S A S ..... Plaintiff
+Through: Mr Rajshekhar Rao, Sr Adv. with
+Mr Anandh Venkataramani, Mr
+Saket Satapathy, Mr Anubhav Dutta,
+Ms Priyal Shah, Ms Mansi Tyagi,
+Ms Akshita Totla, Ms Vishakha
+Gupta, Mr J Shivam Kumar, Advs.
+(M. 9079025647)
+versus
+SPICEJET LIMITED ..... Defendant
+Through: Mr. Sandeep Sethi, Sr. Adv. with
+Mr. R. S. Sasiprabhu, Mr. Kartikeya
+Asthana, Ms. Rhea, Advs. (M.
+9811180771)
+12 AND
++ CS(COMM) 909/2023, I.As. 25664/2023 & 25665/2023
+SUNBIRD FRANCE 02 S A S ..... Plaintiff
+Through: Mr Rajshekhar Rao, Sr Adv. with
+Mr Anandh Venkataramani, Mr
+Saket Satapathy, Mr Anubhav Dutta,
+Ms Priyal Shah, Ms Mansi Tyagi,
+Ms Akshita Totla, Ms Vishakha
+Gupta, Mr J Shivam Kumar, Advs.
+versus
+SPICEJET LIMITED ..... Defendant
+Through: Mr. Sandeep Sethi, Sr. Adv. with
+Mr. R. S. Sasiprabhu, Mr. Kartikeya
+Asthana, Ms. Rhea, Advs.
+CORAM:
+JUSTICE PRATHIBAM. SINGH
+O R D E R
+% 29.01.2024
+1. This hearing has been done through hybrid mode.
+2. The present suit bearing no. CS (Comm) 908/2023, has been filed by
+CS(COMM)908/2023&CS(COMM)909/2023 Page1of3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:02
+the Plaintiff- Team France 01 S.A.S against the Defendant-Spicejet Ltd. The
+Plaintiff, a French company and a subsidiary of Total Engine Asset
+Management, Singapore, specialises in providing spare engine sale and
+lease-back support packages for the commercial airline industry. It is
+averred that the Plaintiff leased two aircraft engines bearing nos. ESN
+602805 and ESN 602776 to the Defendant, vide lease agreements dated 14th
+December, 2018. Aggrieved by the default in payment obligations, the
+Plaintiff seeks specific performance of the Defendant’s contractual
+obligations to hand over possession of these engines, which are being held
+following the termination of the lease agreements.
+3. The second suit being CS(COMM) 909/2023, has been filed by the
+Plaintiff-Sunbird France 02 S.A.S against the same Defendant. It is averred
+that the Plaintiff had leased four aircraft engines, including engine bearing
+no. ESN 854096, to the Defendant vide lease agreement dated 29th March,
+2018. It is clarified that out of the four aircraft engines which were leased
+vide agreement dated 29th March, 2018, presently, the Defendant is using
+only one engine and the remaining have been returned. This suit seeks
+specific performance of the Defendant's obligation to hand over possession
+of the engines, which have been retained following the termination of the
+lease agreement.
+4. The Court has heard the parties. In terms of the order dated 19th
+December, 2023, it is submitted by ld. Senior Counsel that the amount of
+450,000 USD has been paid. However, no further amounts have been paid.
+It is noticed that the Defendant has also received some substantial funding
+and after having seen the settlement proposals which were exchanged
+between the parties, the Court is inclined to direct the Defendant to make a
+CS(COMM)908/2023&CS(COMM)909/2023 Page2of3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:02
+payment of 4 million USD by 15th February, 2024 to the Plaintiff in both
+the matters. Ordered accordingly.
+5. If the said payment is not made, the Court would be constrained to
+pass orders in respect of the engines which are being used as the admitted
+dues, are stated to be more than 20 million USD.
+6. List on 22nd February, 2024.
+PRATHIBA M. SINGH, J.
+JANUARY 29, 2024
+Rahul/ks
+CS(COMM)908/2023&CS(COMM)909/2023 Page3of3
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:02
+
+===== ORDER =====
+
+$~4 & 5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 908/2023 & I.As. 25662-63/2023
+TEAM FRANCE 01 S A S ..... Plaintiff
+Through: Mr. Rajshekhar Rao, Sr. Adv. with
+Mr. Anandh Venkataramani, Mr.
+Saket Satapathy, Mr. Vinay Kumar
+Misra, Mr. Priyal Shah, Ms. Mansi
+Tyagi, Ms. Akshita Totla, Ms.
+Vishakha Gupta, Mr. J Shivam
+Kumar & Ms. Pritha Banerjee, Advs.
+(M: 9079025647)
+versus
+SPICEJET LIMITED ..... Defendant
+Through: Mr. Sandeep Sethi, Sr Advocate with
+Mr. K.R. Sasiprabhu & Mr. Kartikeya
+Asthana, Advs. (M: 8851382791)
+5 AND
++ CS(COMM) 909/2023 & I.As. 25664-65/2023
+SUNBIRD FRANCE 02 S A S ..... Plaintiff
+Through: Mr. Rajshekhar Rao, Sr. Adv. with
+Mr. Anandh Venkataramani, Mr.
+Saket Satapathy, Mr. Vinay Kumar
+Misra, Mr. Priyal Shah, Ms. Mansi
+Tyagi, Ms. Akshita Totla, Ms.
+Vishakha Gupta, Mr. J Shivam
+Kumar & Ms. Pritha Banerjee, Advs.
+versus
+SPICEJET LIMITED ..... Defendant
+Through: Mr. Sandeep Sethi, Sr Advocate with
+sMr. K.R. Sasiprabhu & Mr.
+Kartikeya Asthana, Advs.
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 22.02.2024
+1. This hearing has been done through hybrid mode.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:01
+2. Vide order dated 29th January, 2024, this Court directed as follows:
+“4. The Court has heard the parties. In terms of
+the order dated 19th December, 2023, it is
+submitted by ld. Senior Counsel that the amount of
+450,000 USD has been paid. However, no further
+amounts have been paid. It is noticed that the
+Defendant has also received some substantial
+funding and after having seen the settlement
+proposals which were exchanged between the
+parties, the Court is inclined to direct the
+Defendant to make a payment of 4 million USD by
+15th February, 2024 to the Plaintiff in both the
+matters. Ordered accordingly.
+5. If the said payment is not made, the Court
+would be constrained to pass orders in respect of
+the engines which are being used as the admitted
+dues, are stated to be more than 20 million
+USD.”
+3. It is submitted on behalf of the Defendant that 2 million USD has
+been paid and remaining 2 million USD shall be paid on or before 29th
+February, 2024. The matter is held over.
+4. At the request of ld. Sr. Counsel for the Defendant, list on 13th
+March, 2024 at top of the Board.
+5. On the next date of hearing, interim application shall be taken up for
+hearing.
+PRATHIBA M. SINGH, J.
+FEBRUARY 22, 2024/dk/dn
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:01
+
+===== ORDER =====
+
+$~4 & 5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 908/2023 & I.As. 25662-63/2023
+TEAM FRANCE 01 S A S ..... Plaintiff
+Through: Mr Rajshekhar Rao, Sr. Adv. with
+Mr Anandh Venkataramani, Mr
+Saket Satapathy, Mr Anubhav Dutta,
+Ms Mansi Tyagi, Ms Akshita Totla,
+Mr J Shivam Kumar, Ms Pritha
+Banerjee, Advs. (M: 9079025647)
+versus
+SPICEJET LIMITED ..... Defendant
+Through: Mr. K.R. Sasiprabhu & Mr. Kartikeya
+Asthana, Advs. (M: 8851382791)
+5 AND
++ CS(COMM) 909/2023 & I.As. 25664-65/2023
+SUNBIRD FRANCE 02 S A S ..... Plaintiff
+Through: Mr Rajshekhar Rao, Sr. Adv. with
+Mr Anandh Venkataramani, Mr
+Saket Satapathy, Mr Anubhav Dutta,
+Ms Mansi Tyagi, Ms Akshita Totla,
+Mr J Shivam Kumar, Ms Pritha
+Banerjee, Advs.
+versus
+SPICEJET LIMITED ..... Defendant
+Through: Mr. K.R. Sasiprabhu & Mr. Kartikeya
+Asthana, Advs.
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 13.03.2024
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:01
+1. This hearing has been done through hybrid mode.
+2. Hon’ble Judge is not holding the Court today.
+3. List on 28th March, 2024 on top of Board.
+BY ORDER
+COURT MASTER
+MARCH 13, 2024
+dj
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:01
+
+===== ORDER =====
+
+$~2 & 3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 908/2023 and I.A. 25662/2023, 25663/2023
+TEAM FRANCE 01 S A S ..... Plaintiff
+Through: Mr Rajshekhar Rao, Sr. Adv. with
+Mr Anandh Venkataramani, Mr
+Saket Satapathy, Mr Anubhav Dutta,
+Ms Mansi Tyagi, Ms Akshita Totla,
+Mr J Shivam Kumar, Ms Pritha
+Banerjee, Advs. (M: 9079025647).
+versus
+SPICEJET LIMITED ..... Defendant
+Through: Mr. Sandeep Sethi Sr. Advocate
+with Mr. K.R. Sasiprabhu and Mr.
+Kartikeya Asthana, Advocates (M:
+8851282791).
+3 WITH
++ CS(COMM) 909/2023 and I.A. 25664/2023, 25665/2023
+SUNBIRD FRANCE 02 S A S ..... Plaintiff
+Through: Mr Rajshekhar Rao, Sr. Adv. with
+Mr Anandh Venkataramani, Mr
+Saket Satapathy, Mr Anubhav Dutta,
+Ms Mansi Tyagi, Ms Akshita Totla,
+Mr J Shivam Kumar, Ms Pritha
+Banerjee, Advs. (M: 9079025647).
+versus
+SPICEJET LIMITED ..... Defendant
+Through: Mr. Sandeep Sethi Sr. Advocate
+with Mr. K.R. Sasiprabhu and Mr.
+Kartikeya Asthana, Advocates (M:
+8851282791).
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:00
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 28.03.2024
+1. This hearing has been done through hybrid mode.
+2. On 22nd February, 2024, this Court had held as under:
+“2. Vide order dated 29th January, 2024, this Court
+directed as follows:
+“4. The Court has heard the parties. In terms of the
+order dated 19th December, 2023, it is submitted by ld.
+Senior Counsel that the amount of 450,000 USD has
+been paid. However, no further amounts have been
+paid. It is noticed that the Defendant has also received
+some substantial funding and after having seen the
+settlement proposals which were exchanged between
+the parties, the Court is inclined to direct the
+Defendant to make a payment of 4 million USD by 15th
+February, 2024 to the Plaintiff in both the matters.
+Ordered accordingly.
+5. If the said payment is not made, the Court would be
+constrained to pass orders in respect of the engines
+which are being used as the admitted dues, are stated
+to be more than 20 million USD.”
+3. It is submitted on behalf of the Defendant that 2
+million USD has been paid and remaining 2 million
+USD shall be paid on or before 29th February, 2024.
+The matter is held over.”
+3. A sum of US dollars 4 million in terms of order dated 29th January,
+2024 is stated to have been paid albeit with delay. Ld. Sr. Counsel for the
+Defendant submits that certain proposals for amicable resolution have been
+given, which are stated to be under consideration with the Plaintiff.
+4. In the meantime, on behalf of the Plaintiff, it is submitted that the
+monthly payments for the use of the three aircraft engines ought to be made
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:00
+so that concurrently the Plaintiff is receiving the amounts.
+5. Mr. Sethi, ld. Sr. Counsel submits that payment for the current month
+would now be made and the matter may be held over for another one month.
+6. Let the current payment for the month of March, 2024, for the use of
+three engines, be made within four weeks.
+7. As part of the negotiations, the manner in which the Defendant
+intends to pay the past outstanding amounts of more than 20 million dollars
+shall also be discussed.
+8. List on 29th April, 2024.
+PRATHIBA M. SINGH, J.
+MARCH 28, 2024
+mr/bh
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:00
+
+===== ORDER =====
+
+$~13 & 14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 908/2023 and I.A. 25662/2023, 25663/2023
+TEAM FRANCE 01 S A S ..... Plaintiff
+Through: Mr. Anandh Venkataramani, Mr.
+Saket Satapathy, Mr. Anubhav Dutta,
+Ms. Akshita Totla, Ms. Mansi Tyagi,
+J Shivam Kumar, Ms. Pritha Banerjee
+& Mr. Rishit Vimadalal, Advs. (M:
+9079025647)
+versus
+SPICEJET LIMITED ..... Defendant
+Through: Mr. Sandeep Sethi Sr. Adv. with Mr.
+K.R. Sasiprabhu, Mr. Kartikeya
+Asthana & Ms. Sherya Sethi, Advs.
+(M:8851382791)
+14 WITH
++ CS(COMM) 909/2023 and I.A. 25664/2023, 25665/2023
+SUNBIRD FRANCE 02 S A S ..... Plaintiff
+Through: Mr. Anandh Venkataramani, Mr.
+Saket Satapathy, Mr. Anubhav Dutta,
+Ms. Akshita Totla, Ms. Mansi Tyagi,
+J Shivam Kumar, Ms. Pritha Banerjee
+& Mr. Rishit Vimadalal, Advs.
+versus
+SPICEJET LIMITED ..... Defendant
+Through: Mr. Sandeep Sethi Sr. Adv. with Mr.
+K.R. Sasiprabhu, Mr. Kartikeya
+Asthana & Ms. Sherya Sethi, Advs.
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 29.04.2024
+1. This hearing has been done through hybrid mode.
+2. The present suits have been filed by the Plaintiffs seeking a decree for
+a permanent injunction to restrain the Defendant, as also its directors,
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:59
+employees, and others who are in possession of three engines leased by the
+Plaintiff, from further utilising these engines. In addition, the Plaintiff has
+also sought directions to be issued to the Defendant to return the engines of
+the Plaintiffs and to compensate them for the costs associated with their
+repossession, as well as to pay the outstanding lease charges.
+3. In CS (Comm) 908/2023, filed by the Plaintiff- Team France 01 S.A.S
+against the Defendant-Spicejet Ltd. The Plaintiff, a French company and a
+subsidiary of Total Engine Asset Management, Singapore, specialises in
+providing spare engine sale and lease-back support packages for the
+commercial airline industry. It is averred that the Plaintiff leased aircraft
+engines to the Defendant, vide lease agreements dated 14th December, 2018.
+Aggrieved by the default in payment obligations, the Plaintiff seeks specific
+performance of the Defendant’s contractual obligations to hand over
+possession of these engines, which are being held following the termination
+of the lease agreements. The second suit being CS(COMM) 909/2023, has
+been filed by the Plaintiff-Sunbird France 02 S.A.S against the same
+Defendant. It is averred that the Plaintiff had leased aircraft engines, to the
+Defendant vide lease agreement dated 29th March, 2018. This suit seeks
+specific performance of the Defendant’s obligation to hand over possession
+of the engines, which have been retained following the termination of the
+lease agreement.
+4. Vide order dated 28th March, 2024, the following order was passed by
+this Court:
+“2. On 22nd February, 2024, this Court had held as
+under:
+“2. Vide order dated 29th January, 2024, this
+Court directed as follows:
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:59
+“4. The Court has heard the parties. In
+terms of the order dated 19th December,
+2023, it is submitted by ld. Senior Counsel
+that the amount of 450,000 USD has been
+paid. However, no further amounts have
+been paid. It is noticed that the Defendant
+has also received some substantial funding
+and after having seen the settlement
+proposals which were exchanged between
+the parties, the Court is inclined to direct
+the Defendant to make a payment of 4
+million USD by 15th February, 2024 to
+the Plaintiff in both the matters. Ordered
+accordingly.
+5. If the said payment is not made, the
+Court would be constrained to pass orders
+in respect of the engines which are being
+used as the admitted dues, are stated to be
+more than 20 million USD.”
+3. A sum of US dollars 4 million in terms of order
+dated 29th January, 2024 is stated to have been paid
+albeit with delay. Ld. Sr. Counsel for the Defendant
+submits that certain proposals for amicable resolution
+have been given, which are stated to be under
+consideration with the Plaintiff.
+4. In the meantime, on behalf of the Plaintiff, it is
+submitted that the monthly payments for the use of the
+three aircraft engines ought to be made so that
+concurrently the Plaintiff is receiving the amounts.
+5. Mr. Sethi, ld. Sr. Counsel submits that payment for
+the current month would now be made and the matter
+may be held over for another one month.
+6. Let the current payment for the month of March,
+2024, for the use of three engines, be made within four
+weeks.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:59
+7. As part of the negotiations, the manner in which the
+Defendant intends to pay the past outstanding amounts
+of more than 20 million dollars shall also be discussed.
+8. List on 29th April, 2024.”
+5. As per the last order, payments for the three engines for the previous
+month i.e., March, 2024 were to be made. According to Mr. Sandeep Sethi,
+ld. Sr. Counsel appearing for Spice Jet a sum of 160,000 US Dollars has
+been made in compliance of the order passed by this Court on 28th March,
+2024, on the same day, i.e., 28th March, 2024 itself. This is refuted on behalf
+of the Plaintiff who submits that there was a settlement proposal which was
+made by Spice Jet for payment of 160,000 US Dollars per week. Ld.
+Counsel for the Plaintiffs further submits that only for three weeks, the said
+payment the said payment of 160,000 US Dollars has been made and no
+payment has been made for the month of March 2024 for either the basic
+rental or the usage charges.
+6. Mr. Om Kumar, General Manager, Legal, of the Defendant is unable
+to confirm if any payment for usage charges has been made for the month of
+March for all the three engines. It is submitted that one engine is grounded.
+Even then the usage charges for two engines ought to have been made which
+could not have been the amount of 160,000 US Dollars as the usage charges
+are completely different for the engines. Clearly, there has been non-
+compliance of the order passed by this Court on 28th March, 2024.
+7. Mr. Sethi, ld. Senior Counsel submits that he would file an affidavit
+by tomorrow i.e., 30th April, 2024 confirming as to how the payment for the
+month of March, 2024 has in fact being made.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:59
+8. If the Defendant has not made the payment for the month March,
+clearly, the three engines would be liable to be grounded.
+9. An authorised representative of SpiceJet, who is well versed with the
+financial transactions being undertaken with the Plaintiffs shall be present in
+Court on the next date of hearing, in person, so that if required, the statement
+of the authorised representative of SpiceJet can be recorded.
+10. List on 1st May, 2024.
+PRATHIBA M. SINGH, J
+APRIL 29, 2024
+dj/am
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:59
+
+===== ORDER =====
+
+$~32 & 33
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 908/2023 and I.A. 25662/2023, 25663/2023
+TEAM FRANCE 01 S A S ..... Plaintiff
+Through: Mr. Rajshekhar Rao, Sr. Adv. with
+Mr Anandh Venkataramani, Mr Saket
+Satapathy, Mr Anubhav Dutta, Ms
+Mansi Tyagi, Ms Akshita Totla, Mr J
+Shivam Kumar, Ms Pritha Banerjee,
+Advs. (M: 9079025647).
+versus
+SPICEJET LIMITED ..... Defendant
+Through: Mr. K.R. Sasiprabhu and Mr.
+Kartikeya Asthana Advocates (M:
+8851382791).
+33 WITH
++ CS(COMM) 909/2023 and I.A. 25664/2023, 25665/2023
+SUNBIRD FRANCE 02 S A S ..... Plaintiff
+Through: Mr. Rajshekhar Rao, Sr. Adv. with
+Mr Anandh Venkataramani, Mr Saket
+Satapathy, Mr Anubhav Dutta, Ms
+Mansi Tyagi, Ms Akshita Totla, Mr J
+Shivam Kumar, Ms Pritha Banerjee,
+Advs. (M: 9079025647).
+versus
+SPICEJET LIMITED ..... Defendant
+Through: Mr. K.R. Sasiprabhu and Mr.
+Kartikeya Asthana Advocates (M:
+8851382791).
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 01.05.2024
+CS(COMM)908/2023 &CS(COMM)909/2023 Page1of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:59
+1. This hearing has been done through hybrid mode.
+2. On 28th March, 2024 the Court had directed the Defendant-Spicejet
+Limited to make payments for the use of three aircraft engines for the month
+of March, 2024. The relevant portion of the order is extracted hereinunder:
+“6. Let the current payment for the month of March,
+2024, for the use of three engines, be made within four
+weeks.
+7. As part of the negotiations, the manner in which the
+Defendant intends to pay the past outstanding amounts
+of more than 20 million dollars shall also be
+discussed.”
+3. Vide order dated 29th April, 2024 the submission of Mr Sethi, ld.
+Senior Counsel was recorded wherein he stated that he would file an
+affidavit confirming as to how payments for the month of March, 2024 have
+been made. Further, vide the said order, the Court held that if the Defendant
+has not made any payment for the month of March, 2024, the three engines
+would be liable to be grounded. The relevant portion of the said order is
+hereinunder:
+“7. Mr. Sethi, Id. Senior Counsel submits that he would
+file an affidavit by tomorrow i.e., 30th April, 2024
+confirming as to how the payment for the month of
+March, 2024 has in fact being made.
+8. If the Defendant has not made the payment for the
+month March, clearly, the three engines would be
+liable to be grounded.”
+4. Today, Mr. Kartikeya Asthana, ld. Counsel with instructions from Mr.
+Devjeet Ghosh and Mr. Om Kumar submits that the Defendant has all
+intentions to make the payments to the Plaintiffs in accordance to the orders
+of this Court dated 28th March, 2024 and 29th April, 2024. The ld. Counsel
+CS(COMM)908/2023 &CS(COMM)909/2023 Page2of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:59
+further submits that grounding of the engines would cause irreparable
+injuries to the Airline and also cut out further resources of revenue as two
+aircrafts would have to be grounded by the Defendant.
+5. It is submitted by Mr. Kartikeya Asthana, ld. Counsel that payment
+for the month of March, 2024 has been made as a sum of 160,000 US
+Dollars has been paid on 1st March, 2024, 15th March, 2024, 28th March,
+2024 and 23rd April, 2024. Thus, a total of 680,000 US Dollars is paid. This
+itself establishes the bonafide of the Defendant. The ld. Counsel further
+submits that the Defendant has been actively negotiating with the Plaintiffs
+and has agreed for certain proposals as well.
+6. A perusal of the chart which has been handed over by the Plaintiffs
+today would show that the total dues including the past dues and the current
+dues is in the range of 10.84 million dollar i.e. approximately Rs. 90 crores.
+7. Considering the past conduct of the Defendant where there has been
+default on payment of even the monthly engine use charges, however,
+bearing in mind the recent payments of approximately 680,000/- US Dollars,
+the Court is inclined to give one last opportunity to the Defendant to pay a
+sum of Rs.50 crores within a reasonable time. If the said amount cannot be
+paid by the Defendant, the Court would have no option but to ground the
+three engines which belong to the Plaintiffs. In addition, it is recorded that
+out of the three engines, one engine has already been grounded by the
+Defendant.
+8. Ld. Counsel for the Defendant may, accordingly, take instructions on
+the following:-
+i) Time period for depositing Rs.50 crores.
+ii) Whether the one grounded engine can be returned to the
+CS(COMM)908/2023 &CS(COMM)909/2023 Page3of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:59
+Plaintiffs and if so, by when.
+9. List on 3rd May, 2024.
+10. Order dasti.
+PRATHIBA M. SINGH, J
+MAY 1, 2024
+mr/rks
+CS(COMM)908/2023 &CS(COMM)909/2023 Page4of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:59
+
+===== ORDER =====
+
+$~26 & 27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 908/2023 & I.As.25662-63/2023
+TEAM FRANCE 01 S A S ..... Plaintiff
+Through: Mr Rajshekhar Rao, Sr. Adv. with Mr
+Anandh Venkataramani, Mr. Saket
+Satapathy, Mr Anubhav Dutta, Ms
+Mansi Tyagi, Ms Akshita Totla, Mr J
+Shivam Kumar, Ms Pritha Banerjee,
+Mr. Dushyant Kaul & Ms Vishakha
+Gupta, Advs. (M: 8459235373)
+versus
+SPICEJET LIMITED ..... Defendant
+Through: Mr Sandeep Sethi, Sr.Advocate with
+Mr. K.R. Sasiprabhu & Mr. Kartikeya
+Asthana, Advocates. (M:
+8851382791)
+27 AND
++ CS(COMM) 909/2023 & I.As.25664-65/2023
+SUNBIRD FRANCE 02 S A S ..... Plaintiff
+Through: Mr Rajshekhar Rao, Sr. Adv. with Mr
+Anandh Venkataramani, Mr. Saket
+Satapathy, Mr Anubhav Dutta, Ms
+Mansi Tyagi, Ms Akshita Totla, Mr J
+Shivam Kumar, Ms Pritha Banerjee,
+Mr. Dushyant Kaul & Ms Vishakha
+Gupta, Advs.
+versus
+SPICEJET LIMITED ..... Defendant
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:58
+Through: Mr Sandeep Sethi, Sr.Advocate with
+Mr. K.R. Sasiprabhu & Mr. Kartikeya
+Asthana, Advocates.
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 03.05.2024
+1. This hearing has been done through hybrid mode.
+2. On 28th March, 2024 the Court had directed the Defendant-Spicejet
+Limited to make payments for the use of three aircraft engines for the month
+of March, 2024. The relevant portion of the order is extracted hereunder:
+"6. Let the current payment for the month of March,
+2024, for the use of three engines, be made within four
+weeks.
+7. As part of the negotiations, the manner in which the
+Defendant intends to pay the past outstanding amounts
+of more than 20 million dollars shall also be
+discussed."
+3. Vide order dated 29th April, 2024 the submission of Mr Sethi, ld.
+Senior Counsel was recorded wherein he stated that he would file an
+affidavit confirming as to how payments for the month of March, 2024 have
+been made. Further, vide the said order, the Court held that if the Defendant
+has not made any payment for the month of March, 2024, the three engines
+would be liable to be grounded. The relevant portion of the said order is
+hereinunder:
+"7. Mr. Sethi, Id. Senior Counsel submits that he would
+file an affidavit by tomorrow i.e., 30th April, 2024
+confirming as to how the payment for the month of
+March, 2024 has in fact been made.
+8. If the Defendant has not made the payment for the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:58
+month March, clearly, the three engines would be
+liable to be grounded. "
+4. Since, the payments in accordance to previous orders were not
+completed, vide order dated 1st May, 2024 directed as under:
+“7. Considering the past conduct of the Defendant
+where there has been default on payment of even the
+monthly engine use charges, however, bearing in mind
+the recent payments of approximately 680,000/- US
+Dollars, the Court is inclined to give one last
+opportunity to the Defendant to pay a sum of Rs.50
+crores within a reasonable time. If the said amount
+cannot be paid by the Defendant, the Court would have
+no option but to ground the three engines which belong
+to the Plaintiffs. In addition, it is recorded that out of
+the three engines, one engine has already been
+grounded by the Defendant.
+8. Ld. Counsel for the Defendant may, accordingly,
+take instructions on the following:-
+i) Time period for depositing Rs.50 crores.
+ii) Whether the one grounded engine can be
+returned to the Plaintiffs and if so, by when.”
+5. Some negotiations appear to have taken place now between the
+parties, as per the correspondence which has been placed on record.
+6. The Court does not wish to record all the terms and conditions of the
+settlement as discussions do not appear to have been finalized between the
+parties.
+7. However, based on the submissions made today, it is directed that a
+sum of 1.58 million USD shall be paid by the Defendant to the Plaintiff by
+22nd May, 2024. This is as per the suggestion made by the Plaintiff and
+agreeable to counsel for SpiceJet.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:58
+8. It is today clarified by Mr. Sandeep Sethi, ld. Senior Counsel
+appearing for the Defendant that all the three engines are being utilized and
+only one engine had been earlier grounded for maintenance purpose.
+9. List on 27th May, 2024.
+PRATHIBA M. SINGH, J.
+MAY 3, 2024/dk/bh
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:58
+
+===== ORDER =====
+
+$~7 & 8
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 908/2023&I.As. 25662/2023, 25663/2023
+TEAM FRANCE 01 S A S ..... Plaintiff
+Through: Mr. Rajshekhar, Sr. Adv. with Mr.
+Anandh Venkataramami, Mr. Saket
+Satapathy, Mr. Anubhav Dutta, Mr.
+Mansi Tyagi, Mr. Akshita Totla, Ms.
+Vishakha Gupta, Mr. J Shivam Kumar
+& Ms. Pritha Banerjee, Advs.
+versus
+SPICEJET LIMITED ..... Defendant
+Through: Mr. Sandeep Sethi, Sr. Advocate with
+Mr. K R Sasiprabhu & Mr. Karthikeya
+Asthana, Advocates. (M-
+8851382791)
+AND
++ CS(COMM) 909/2023 & I.As. 25664/2023, 25665/2023
+SUNBIRD FRANCE 02 S A S ..... Plaintiff
+Through: Mr. Rajshekhar, Sr. Adv. with Mr.
+Anandh Venkataramami, Mr. Saket
+Satapathy, Mr. Anubhav Dutta, Mr.
+Mansi Tyagi, Mr. Akshita Totla, Ms.
+Vishakha Gupta, Mr. J Shivam Kumar
+& Ms. Pritha Banerjee, Advs.
+versus
+SPICEJET LIMITED ..... Defendant
+Through: Mr. Sandeep Sethi, Sr. Advocate with
+Mr. K R Sasiprabhu & Mr. Karthikeya
+Asthana, Advocates.
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 27.05.2024
+1. This hearing has been done through hybrid mode.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:58
+2. Vide order dated 3rd May, 2024, this Court directed as follows:
+“5. Some negotiations appear to have taken place now
+between the parties, as per the correspondence which
+has been placed on record.
+6. The Court does not wish to record all the terms and
+conditions of the settlement as discussions do not
+appear to have been finalized between the parties.
+7. However, based onthe submissions made today, it is
+directed that a sum of 1.58 million USD shall be paid
+by the Defendant to the Plaintiff by 22nd May, 2024.
+This is as per the suggestion made by the Plaintiff and
+agreeable to counsel for SpiceJet.”
+3. With respect tothe above stated order,the amount of 1.58 millionUSD
+is acknowledged to have been paid to the Plaintiff by the Defendant, over a
+number of instalments with the final instalment having been paid today. In
+addition, Mr. Rao, ld. Senior Counsel has handed over a copy of the consent
+interim arrangement to be recorded by the Court.
+4. Mr. Sandeep Sethi, ld. Senior Counsel submits that he would like to
+confirm all the clauses and then revert.
+5. List for consideration of the interim arrangement on 29th May, 2024.
+PRATHIBA M. SINGH, J.
+MAY 27, 2024
+Rahul/dn
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:58
+
+===== ORDER =====
+
+$~32 & 33
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+Date of Decision: 29th May, 2024
++ CS(COMM) 908/2023 & I.As.25662-63/2023
+TEAM FRANCE 01 S A S ..... Plaintiff
+Through: Mr Rajshekhar Rao, Sr Adv. with
+Mr Anandh Venkataramani, Mr
+Saket Satapathy, Mr Anubha Dutta,
+Ms Mansi Tyagi, Ms Akshita Totla,
+Ms Vishakha Gupta, Mr J Shivam
+Kumar and Mr Rishit Vimadalal,
+Advocates (M: 9079025647).
+versus
+SPICEJET LIMITED .... Defendant
+Through: Mr. Sandeep Sethi, Sr. Advocate
+with Mr. K.R. Sasiprabhu, Mr.
+Kartikeya Asthana and Ms. Sherya
+Sethi, Advocates (M: 8851382791).
+33 AND
++ CS(COMM) 909/2023 & I.As.25664-65/2023
+SUNBIRD FRANCE 02 S A S ..... Plaintiff
+Through: Mr Rajshekhar Rao, Sr Adv. with
+Mr Anandh Venkataramani, Mr
+Saket Satapathy, Mr Anubha Dutta,
+Ms Mansi Tyagi, Ms Akshita Totla,
+Ms Vishakha Gupta, Mr J Shivam
+Kumar and Mr Rishit Vimadalal,
+Advocates (M: 9079025647).
+versus
+SPICEJET LIMITED ..... Defendant
+Through: Mr. Sandeep Sethi, Sr. Advocate
+with Mr. K.R. Sasiprabhu, Mr.
+CS(COMM)908/2023&909/2023 Page1of4
+Kartikeya Asthana and Ms. Sherya
+Sethi, Advocates (M: 8851382791).
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+Prathiba M. Singh, J. (Oral)
+1. This hearing has been done through hybrid mode.
+2. These are two connected matters filed by the Plaintiffs- Team France
+01 S.A.S and Sunbird France 02 S.A.S against the Defendant-Spicejet Ltd.
+with respect to the two lease agreements dated 14th December, 2018 and
+29th March, 2018 with respect to aircraft engines. Aggrieved by the default
+in payment obligations, the Plaintiffs’ seek specific performance of the
+Defendant’s contractual obligations to hand over possession of these
+engines, which are being held following the termination of the lease
+agreements.
+3. Vide order dated 29th January, 2024, the Court directed the Defendant
+to make a payment of 4 million USD by 15th February, 2024 to the Plaintiff
+and further negotiations were to be held in respect of the past outstanding
+amounts of more than 20 million dollars. Meanwhile, monthly payments for
+the use of three aircrafts were also to be concurrently made. Further, on 1st
+may, 2024, the Court observed that the past dues and current dues, range to
+10.84 million dollars i.e., Rs. 90 crores. The Court granted the Defendants
+some time for depositing Rs. 50 crores. However, it has been observed vide
+order dated 3rd May, 2024 that certain negotiations have taken place. The
+Court then directed that a sum of 1.58 million USD be paid by the
+Defendant to the Plaintiff by 22nd May, 2024.
+4. Thereafter, the proposals which were handed over by the Plaintiff
+CS(COMM)908/2023&909/2023 Page2of4
+have been considered by the Defendant. There is some objection to the text
+of the proposals. Accordingly, the Court broadly records the terms on which
+the parties have agreed as an interim arrangement. The said terms are set
+out below:-
+i) The Plaintiff is willing to accept a payment of US$ 4.8 million as
+an interim arrangement amount to allow the Defendant to continue
+to use the three engines. This is acceptable to the Defendant, who
+has agreed to pay the same in four separate instalments of US$ 1.2
+million as per the following payment schedule:-
+a) USD 1.2 M (Rs.9,96,70,500) by 30th June, 2024
+b) USD 1.2 M (Rs.9,96,70,500) by 31st July, 2024
+c) USD 1.2 M (Rs.9,96,70,500) by 31st August, 2024
+d) USD 1.2 M (Rs.9,96,70,500) by 30th September, 2024
+ii) In addition, the Defendant has also agreed to start making weekly
+payments of US $160,000 per week, which would include both the
+basic rent and maintenance accrual (usage charges) commencing
+from 8th June, 2024 on a weekly basis till 30th September, 2024.
+iii) If any of the payments set out above is missed by the Defendant,
+the Defendant would be liable to ground the three engines and
+return them within fifteen calendar days without the specific Court
+order to this effect, so long as there is no order to the contrary.
+iv) The payments in terms of Clause 1 and Clause 2 are mutually
+exclusive to each other.
+v) In the event that the Engine ESN 854096 becomes unserviceable,
+the Defendant would be required to immediately return the said
+Engine to the Plaintiff without any delay.
+CS(COMM)908/2023&909/2023 Page3of4
+vi) If the said engine is returned, the proportionate adjustment in the
+weekly payments shall acc
+
+[TRUNCATED — rights are established in the opening orders above]

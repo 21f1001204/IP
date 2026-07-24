@@ -1,0 +1,431 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_817_2023
+case_status: DISPOSED
+n_orders: 8
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 817/2023
+EMERALD ENTERPRISES
+..... Plaintiff
+Through: Mr. Harshit Thakur, Adv.(VC)
+versus
+EMERALD VALVES PRIVATE LIMITED
+..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. AJAY GULATI
+O R D E R
+% 15.01.2024
+Learned Presiding Officer is on leave today.
+Re-notify for purpose already fixed on 20.02.2024.
+Reader to
+SH. AJAY GULATI - I (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 15, 2024
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:23
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 817/2023
+EMERALD ENTERPRISES
+..... Plaintiff
+Through: Ms. Sucharu Garg, Adv.
+versus
+EMERALD VALVES PRIVATE LIMITED
+..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 29.02.2024
+Defendant could not be served through the ordinary process since it is
+stated to have left one of the 2 given addresses. However, as per the affidavit
+of service, defendant has been served on 20.12.2023 with the summons
+which were sent through speed post. No written statement has been filed by
+the defendant till now.
+Put up before the Hon’ble Court on 4.3.2024 which is the date already
+scheduled, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 29, 2024
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:21
+
+===== ORDER =====
+
+$~5 & 6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+C.O. (COMM.IPD-TM) 278/2023
+EMERALD ENTERPRISES .....Petitioner
+Through: Mr. Siddharth Bamba, Ms. Sucharu
+Garg and Ms. Nandana Menon,
+Advocates
+versus
+EMERALD VALVES PRIVATE LIMITED & ANR. .....Respondents
+Through: Mr. Harish Vaidyanathan Shankar,
+CGSC with Mr. Srish Kumar Mishra,
+Mr. Alexander Mathai Paikaday and
+Mr. Sagar Mehlawat, Advocates
+6
++ CS(COMM) 817/2023, I.A. 22563/2023-Stay
+EMERALD ENTERPRISES .....Plaintiff
+Through: Mr. Siddharth Bamba, Ms. Sucharu
+Garg and Ms. Nandana Menon,
+Advocates
+versus
+EMERALD VALVES PRIVATE LIMITED .....Defendant
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 13.09.2024
+1. Learned counsel Mr. Siddharth Bamba appearing for Emerald
+Enterprises seeks some more time for filing an appropriate application
+since the defendant has not been appearing.
+2. Renotify on 03.12.2024 before the Joint Registrar for admission/
+denial of documents.
+SAURABH BANERJEE, J
+SEPTEMBER 13, 2024/akr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:21
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 817/2023
+EMERALD ENTERPRISES ....Plaintiff
+Through: Mr. Rohit Bohra (VC), Advocate
+versus
+EMERALD VALVES PRIVATE LIMITED .....Defendant
+Through: Mr. Gautam Singh (VC),
+Advocate
+Phone no. : 9970179706
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 03.12.2024
+1. As per the directions of the Hon‟ble Court, the matter has
+been listed today for carrying out admission / denial of
+documents.
+2. Defendant was served on 20.12.2023 but no written
+statement has been filed till date. The maximum permissible
+period to file the same has expired. Right to file the written
+statement for defendant thus stands closed.
+3. Mr. Gautam Singh, ld. Advocate has put in appearance on
+behalf of the defendant. Ld. Counsel submits that since he has
+received instructions in the morning today to appear for the
+defendant he shall be filing his vakalatnama within a week. Ld.
+Counsel further informs the Court that defendant is likely to
+settle the matter with the plaintiff.
+4. Put up for further proceedings on 04.03.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+DECEMBER 3, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:20
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 817/2023
+EMERALD ENTERPRISES
+.....Plaintiff
+Through: Mr. Rohit Bohra, Ms. Nandana
+Menon, Advocates
+versus
+EMERALD VALVES PRIVATE LIMITED
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 04.03.2025
+1. Right of the defendant to file a written statement has
+already been closed. However, on the last date of hearing, ld.
+Counsel for the defendant had put in appearance and had
+submitted that the defendant is likely to settle the matter. The
+last date of hearing was 03.12.2024.
+2. So far as the status of settlement is concerned, ld. Counsel
+for the plaintiff submit that they have received an oral proposal
+today morning.
+3. In view of the above, and on request of ld. Counsel for the
+plaintiff, matter be placed before the Hon’ble Court on
+01.04.2025, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 4, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:19
+
+===== ORDER =====
+
+$~2 & 3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ C.O. (COMM.IPD-TM) 278/2023
+EMERALD ENTERPRISES .....Petitioner
+Through: Mr. Siddarth Bambha and Mr. Hardik
+Malik, Advocates
+versus
+EMERALD VALVES PRIVATE LIMITED & ANR. .....Respondents
+Through: Mr. Gautam Singh, Advocate
+(Through VC)
++ CS(COMM) 817/2023 & I.A. 22563/2023, 8316/2025
+EMERALD ENTERPRISES .....Plaintiff
+Through: Mr. Siddarth Bambha and Mr. Hardik
+Malik, Advocates
+versus
+EMERALD VALVES PRIVATE LIMITED .....Defendant
+Through: Mr. Gautam Singh, Advocate
+(Through VC)
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 01.08.2025
+Learned counsels for the parties state that the parties seek time to
+execute and place on record the duly executed settlement agreement.
+It is directed that after the settlement agreement is executed, parties
+are at liberty to move an appropriate application for early listing.
+List on 15.01.2026.
+MANMEET PRITAM SINGH ARORA, J
+AUGUST 1, 2025/rhc
+Page 1 of 1
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:18
+
+===== ORDER =====
+
+$~197
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 817/2023
+EMERALD ENTERPRISES
+.....Plaintiff
+Through: Ms. Aroshi Pal, Adv. (VC)
+versus
+EMERALD VALVES PRIVATE LIMITED
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the defendant when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:17
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 817/2023, I.A. 22563/2023 & I.A. 8316/2025
+EMERALD ENTERPRISES .....Plaintiff
+Through: Mr. Rohit Bohra, Advocate.
+versus
+EMERALD VALVES PRIVATE LIMITED .....Defendant
+Through: Mr. Gautam Singh, Advocate
+CORAM:
+HON'BLE MR. JUSTICE TUSHAR RAO GEDELA
+O R D E R
+% 15.01.2026
+1. Under the aegis of the Delhi High Court Mediation and Conciliation
+Centre, the parties have been able to successfully resolve their disputes and
+record their terms in writing in the Settlement Agreement dated 13.11.2025.
+The said Agreement is on record.
+2. The parties are bound by the said terms.
+3. This Court has also perused the terms of the Settlement Agreement and
+does not find any impediment in accepting the same and decreeing the Suit as
+per the said terms.
+4. The terms of the Settlement Agreement alongwith with Annexures A, B
+and C may be read as part of the decree.
+5. Learned counsel for the plaintiff submits that the defendant was to
+comply with the terms in para 3, 4 and 6 of the Settlement Agreement.
+6. Learned counsel for the defendant submits that so far as the condition
+no.3 is concerned, the winding process has been initiated and it may take a little
+while to conclude the same. He submits that as soon as the said process is
+completed, the relevant documents in proof thereof shall be furnished to the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:17
+plaintiff. In any case, he also submits that the name ‘Emerald Valves Private
+Limited’ has never been used since the company never commenced any
+operation at all.
+7. So far as condition no.4 is concerned, learned counsel for the defendant
+submits that though the domain name was registered, however, it was never
+used and he is under instructions to submit that the said domain name will be
+taken down and proof thereof would be furnished to the plaintiff.
+8. So far as condition no.6 is concerned, the learned counsel for the parties
+have submitted that Annexure C to the Settlement Agreement is the Deed of
+Assignment which has been executed between the parties. Learned counsel for
+the plaintiff, however, submits that the original of the said Deed of Assignment
+is with the defendant which needs to be handed over in original to the plaintiff
+and he seeks a direction in that regard.
+9. Having heard the learned counsel for the parties, this Court directs the
+defendant to comply with the condition no.4 within ten days from today.
+10. So far as condition no.3 is concerned, learned counsel for the defendant
+submits that the process for winding up has already been initiated and he
+would, within seven days, furnish copies of the said documents in relation to
+the steps taken for of winding up the company, to the plaintiff. He also submits
+that once the process of winding up is completed, the proof thereof shall also be
+submitted to the plaintiff, however the same may take a little while.
+11. Since three months outer limit was already provided in condition no.3
+with effect from 26.09.2025 and the process appears to be still going on, this
+Court extends the period to further three months from date.
+12. So far as condition no.6 is concerned, learned counsel for the defendant
+indicates that the defendant shall furnish the original Deed of Assignment to
+the plaintiff within ten days from date.
+13. In view of the above, considering the settlement terms in the Settlement
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:17
+Agreement dated 13.11.2025, the suit is decreed in terms thereof.
+14. The decree sheet may be drawn up accordingly.
+15. Court Fees in terms of Section 16 Court Fees Act, 1870 shall be refunded
+to the plaintiff upon completion of all formal requisites, and in terms of the
+statutory provisions.
+16. The Suit stands disposed of in aforesaid terms.
+TUSHAR RAO GEDELA, J
+JANUARY 15, 2026
+Sumit
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:23:17

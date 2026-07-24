@@ -1,0 +1,736 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_830_2023
+case_status: DISPOSED
+n_orders: 10
+
+$~73
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 830/2023 & I.A. 22928/2023, I.A. 22929/2023,
+I.A. 22930/2023, I.A. 22931/2023
+RAJEEV KUMAR JAIN ..... Plaintiff
+Through: Mr. Gurdeep Singh, Adv.
+versus
+SISARA SONAL HIMATBHAI & ANR. ..... Defendants
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 20.11.2023
+1. Mr. Gurdeep Singh, learned Counsel for the plaintiff, at the
+outset, prays that this matter may be re-notified for 24 November 2023
+so as to enable the plaintiff to effect advance service on the defendant.
+2. Re-notify on 24 November 2023 for preliminary hearing.
+3. As such, IA 22930/2023 which seeks exemption from advance
+service has been rendered infructuous and is disposed of as such.
+C.HARI SHANKAR, J
+NOVEMBER 20, 2023
+dsn
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:07
+
+===== ORDER =====
+
+$~8
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 830/2023, I.A. 22928/2023, I.A. 22929/2023 and
+I.A. 22931/2023
+RAJEEV KUMAR JAIN ..... Plaintiff
+Through: Mr. Gurdeep Singh, Adv.
+versus
+SISARA SONAL HIMATBHAI & ANR. ..... Defendants
+Through: Mr. Dharmesh Sisara on behalf
+of Defendant 1
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 24.11.2023
+1. Though no affidavit of service has been filed, Mr. Dharmesh
+Sisara, who represents Defendant 1 is present virtually during the
+hearing.
+2. As the Court had no opportunity to study the file, renotify on 28
+November 2023 for preliminary hearing.
+C.HARI SHANKAR, J
+NOVEMBER 24, 2023
+rb
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:06
+
+===== ORDER =====
+
+$~29
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 830/2023 & I.A. 22928/2023, I.A. 22929/2023,
+I.A. 22931/2023
+RAJEEV KUMAR JAIN ..... Plaintiff
+Through: Mr. Gurdeep Singh and Mr.
+Kumar Chitranshu, Advs.
+versus
+SISARA SONAL HIMATBHAI & ANR. ..... Defendants
+Through: Mr. Dharmesh Seesara for D-1
+Ms. Surbhi Pande and Ms. Arushi Mann,
+Advs. for D-2
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 28.11.2023
+1. Learned Counsel for Defendant 2 submits that she is not in
+possession of the entire copy of the suit paper.
+2. She is permitted to obtain a copy of the documents by providing
+a pen drive to the Court Master during the course of the day.
+3. Re-notify on 29 November 2023 for preliminary hearing.
+C. HARI SHANKAR, J.
+NOVEMBER 28, 2023
+dsn
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:05
+
+===== ORDER =====
+
+$~31
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 830/2023
+RAJEEV KUMAR JAIN ..... Plaintiff
+Through: Mr. Gurdeep Singh and Mr.
+Kumar Chitranshu, Advs.
+versus
+SISARA SONAL HIMATBHAI & ANR. ..... Defendants
+Through: Mr. Dharmesh Sisara on behalf
+of Defendant 1
+Ms. Shilpa Gupta, Adv. for Defendant 2
+CORAM:
+HON'BLE MR. JUSTICE C. HARI SHANKAR
+O R D E R
+% 29.11.2023
+CS(COMM) 830/2023
+1. The plaintiff manufactures and sells hosiery, including women’s
+innerwear, and is the proprietor of the registered trade marks
+and . The plaintiff
+claims to be selling garments, innerwear and hosiery under the said
+marks since 1 December 2007. It is also claimed that on the Flipkart
+platform of Defendant 2, the plaintiff has been selling its products for
+over eight years and has become a reputed brand. The plaintiff holds
+registrations for the marks , under the Trade
+Marks Act, 1999, since 6 April 2010 and
+since 7 June 2021, in Class 25. The plaintiff has also provided details
+of its turnover, by sale of the products under the said marks which,
+CS(COMM)830/2023 Page1of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:05
+during the year 2021-22, is to the tune of ₹ 9.46 crores. The plaintiff
+also claims to have invested considerable amounts in advertising and
+promotion of goods sold under the said marks. The expenses so
+invested in the year 2021-22 alone is to the tune of ₹ 7.34 lakhs.
+2. The plaintiff alleges that Defendant 1 is, on the Flipkart
+platform of Defendant 2, selling counterfeit hosiery and innerwear
+using the mark “RC. ROYAL CLASS”, identical to the plaintiff’s
+mark, with no authorization from the plaintiff. The plaintiff has
+provided the following screenshots of the display of Defendant 1’s
+and the plaintiff’s products on the Flipkart platform of Defendant 2,
+which clearly indicate that Defendant 1 has not only infringed the
+plaintiff’s registered trade marks /
+, but is selling identical products on the
+Flipkart platform at different prices:
+CS(COMM)830/2023 Page2of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:05
+CS(COMM)830/2023 Page3of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:05
+3. The plaintiff has also provided, in para 16 of the plaint, the list
+of Defendant 1’s infringing products which are listed and sold on
+Defendant 2’s website along with relevant URLs, in a tabular form
+thus:
+S. URL's of
+No Defendant
+no.1’s infringing
+products
+1 https://www.flipka
+rt.com/rc-royal-
+class-women-
+hipster-multicolor-
+panty/p/itmfendw
+wh7hwtfp
+CS(COMM)830/2023 Page4of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:05
+2. https://www.flipka
+rt.com/rc-royal-
+class-women-
+hipster-multicolor-
+panty/p/itmfek7cy
+ymbqjpu
+3. https://www.flipka
+rt.com/rc-royal-
+class-women-
+hipster-multicolor-
+panty/p/itmfezkh2
+wfkhzsk
+CS(COMM)830/2023 Page5of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:05
+4. https://www.flipka
+rt.com/rc-royal-
+class-women-
+hipster-multicolor-
+panty/p/itm33706
+2f4c7eec
+5. https://www.flipka
+rt.com/rc-royal-
+class-women-
+hipster-multicolor-
+panty/p/itmfevjhh
+zt7rgah
+4. The activities of the defendants, the plaintiff alleges, has
+resulted in erosion of the plaintiff’s goodwill as well as in dilution of
+the plaintiff’s brand.
+CS(COMM)830/2023 Page6of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:05
+5. In accordance with the policy of Defendant 2 regarding
+infringing products being listed on its platform, the plaintiff claims to
+have written emails to Defendant 2 on 1 May 2023, 16 May 2023, 23
+May 2023, 31 May 2023, 14 June 2023, 22 June 2023, 9 July 2023
+and 14 July 2023 calling upon Defendant 2 to take down the aforesaid
+infringing listings. Defendant 2 did not, however, do so, as a result of
+which the plaintiff has approached this Court.
+6. The plaint, however, candidly acknowledges that another mark
+stands registered in favour of a third party, who, according
+to the plaintiff, is doing no business in the said mark, and against
+which a rectification has been filed by the plaintiff.
+7. The plaintiff addressed a legal notice to Defendants 1 and 2 on
+27 June 2023. Defendant 1 has not responded. Defendant 2, vide its
+response dated 3 September 2023, claimed to have removed four of
+the URLs under which the allegedly infringing products of Defendant
+1 were being sold on the Flipkart platform. The plaintiff addressed a
+further representation to Defendant 2 on 8 September 2023, calling on
+Defendant 2 to remove additional URLs, but there is no response to
+the said representation.
+8. It is in these circumstances that the plaintiff has approached this
+Court by means of the present suit, seeking a decree of permanent
+injunction restraining Defendant 1 as well as all others acting on their
+behalf from manufacturing, selling, importing, offering for sale,
+advertising, directly or indirectly dealing in any products, including
+hosiery, undergarments and other such products while using RC.
+CS(COMM)830/2023 Page7of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:05
+ROYAL CLASS or in any other form or any other mark which is
+confusingly or deceptively similar to the plaintiff’s registered trade
+marks, apart from other reliefs of delivery-up, rendition of accounts,
+costs and damages.
+9. Let the plaint be registered as a suit. Issue summons in the suit.
+Summons are accepted on behalf of Defendant 1 by Mr. Dharmesh
+Sisara, who is virtually present in person during the proceedings and
+on behalf of Defendant 2 by Ms. Shilpa Gupta.
+10. Written statement, accompanied by affidavit of admission and
+denial of the documents filed by the plaintiff be filed within 30 days
+with advance copy to learned Counsel for the plaintiff who may file
+replication thereto, accompanied by affidavit of admission and denial
+of the documents filed by the defendant within 30 days thereof.
+11. List before the learned Joint Registrar (Judicial) for completion
+of the pleadings, admission and denial of documents and marking of
+exhibits on 30 January 2024, whereafter the matter would be placed
+before the Court for case management hearing and further
+proceedings.
+I.A. 22928/2023 (Order XXXIX Rules 1 and 2 of the CPC)
+12. This is an application by the plaintiff under Order XXXIX
+Rules 1 and 2 of the Code of Civil Procedure, 1908 (CPC), seeking
+interlocutory injunctive reliefs.
+CS(COMM)830/2023 Page8of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:05
+13. I have heard Mr. Gurdeep Singh, learned Counsel for the
+plaintiff, Mr. Dharmesh Sisara, who has appeared in person on behalf
+of Defendant 1. Mr. Sisara’s submission is that he has been
+authorized to use the “RC ROYAL CLASS” mark by the proprietor of
+the registered mark, and that Defendant 2 is aware of the
+said fact.
+14. He further submits that he has discontinued selling the products
+on the Flipkart platform.
+15. Ms. Shilpa Gupta, learned Counsel for Defendant 2 Flipkart,
+also submits that, in fact, investigations revealed that Defendant 1
+possessed an authorisation from M/s. Aldi Einkauf Se & Co. Ohg.,
+who is the registered proprietor of the mark. She submits
+that, however, Defendant 1 was allowed to sell its products by
+latching on to the plaintiff’s URLs because of a mistaken impression
+that they were associated.
+16. If that is the position, there can be no injunction against
+Defendant 1 using the mark “RC. ROYAL CLASS”, per se, as M/s.
+Aldi Einkauf Se & Co. Ohg. is admittedly the registered holder of the
+trade mark .
+17. Though Mr. Gurdeep Singh submits that, even in that case,
+remedy of passing off would stand saved, passing off would require an
+examination of the aspect of goodwill and reputation of the plaintiff,
+CS(COMM)830/2023 Page9of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:05
+among other things.
+18. It appears that confusion has arisen because Defendant 2
+permitted Defendant 1 to latch on to the listings of the plaintiff’s
+URLs, whereunder the plaintiff’s products were listed on the website
+of Defendant 2, which is why the very same images figured in the
+listings of the plaintiff and of Defendant 1.
+19. At the highest, therefore, the Court can only, at this juncture,
+restrain Defendant 2 from reflecting the products of Defendant 1 on its
+website by allowing Defendant 1 to latch on to the URLs whereunder
+the plaintiff’s products are sold.
+20. Issue notice, returnable before the Court on 29 February 2024.
+21. Notice is accepted on behalf of Defendant 1 by Mr. Dharmesh
+Sisara and on behalf of Defendant 2 by Ms. Shilpa Gupta.
+22. Reply be filed within a period of four weeks with advance copy
+to learned Counsel for the plaintiff who may file rejoinder thereto, if
+any, within a period of four weeks thereof.
+23. Till the next date of hearing, the defendants shall ensure that
+products of Defendant 1 are not permitted to be sold on the platform
+of Defendant 2 Flipkart by permitting Defendant 1 to latch on to the
+URLs whereunder the products of the plaintiff are sold or in any other
+manner which would confuse the buyers into believing that products
+of Defendant 1 are the products of the plaintiff.
+CS(COMM)830/2023 Page10of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:05
+24. Ms. Shilpa Gupta submits that the plaintiff may be directed to
+provide the original URLs to Defendant 2. Mr. Gurdeep Singh,
+learned Counsel for the plaintiff undertakes to do so within 48 hours
+from today.
+I.A. 22929/2023 (Exemption)
+25. Subject to the plaintiff filing legible copies of any dim or
+illegible documents within 30 days, exemption is granted for the
+present.
+26. The application is disposed of.
+I.A. 22931/2023 (Section 12A of the Commercial Courts Act, 2015)
+27. This is an application seeking exemption from the requirement
+of pre-institution mediation. Given the nature of the disputes and the
+fact that the defendants, in any case, are present in the Court, the
+exemption is granted for the present.
+28. The application is allowed accordingly.
+C.HARI SHANKAR, J
+NOVEMBER 29, 2023
+rb
+Click here to check corrigendum, if any
+CS(COMM)830/2023 Page11of11
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:05
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 830/2023
+RAJEEV KUMAR JAIN
+..... Plaintiff
+Through: None.
+versus
+SISARA SONAL HIMATBHAI & ANR.
+..... Defendant
+Through: Mr. Dharmesh Sisara in
+person for D-1 through VC.
+Mr. Nama Tandon, Adv. for
+D-2 through VC.
+(M-9811289656).
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 30.01.2024
+The summons were accepted by the defendants before the
+Hon'ble Court on 29.11.2023. They are yet to file their written
+statements. Those be filed in accordance with law, whereafter the
+replications be also filed as per law.
+The counsel for the defendant no. 2 states that he had
+complied with the directions contained in para no. 23 and 24 of the
+order dated 29.11.2023. The compliance affidavit be now filed
+within two weeks.
+List the matter for completion of pleadings on 01.04.2024.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 30, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:04
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 830/2023 & I.A. 22928/2023
+RAJEEV KUMAR JAIN ..... Plaintiff
+Through: Mr. Gurdeep Singh and Mr. Kumar
+Chitranshu, Advocates.
+versus
+SISARA SONAL HIMATBHAI & ANR. ..... Defendants
+Through: Ms. Shilpa Gupta and Ms. Surabhi
+Pande, Advocates for D-2.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 29.02.2024
+1. At joint request, renotify on 03rd May, 2024.
+2. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+FEBRUARY 29, 2024/
+kct
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:03
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 830/2023
+RAJEEV KUMAR JAIN ..... Plaintiff
+Through: None
+versus
+SISARA SONAL HIMATBHAI & ANR. ..... Defendant
+Through: Mr. Naman Tandon (VC),
+Advocate for D-2
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 12.03.2024
+I.A. No. 5734/2024 filed by D-2 seeking condonation of delay
+of 66 days in filing written statement and admission/denial
+affidavit.
+Issue notice to the plaintiff, to be served to the ld. Counsel
+for the plaintiff on his email only. No need to file PF.
+Let reply be filed within a week, with an advance copy to
+the opposite side. Rejoinder thereto, if any, be filed thereafter
+within a week of receiving the copy of advance reply.
+Put up for completion of pleadings and arguments on
+01.04.2024, the date already fixed.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 12, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:03
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 830/2023
+RAJEEV KUMAR JAIN
+..... Plaintiff
+Through: Mr. Kumar Chitranshu (VC),
+Advocate
+versus
+SISARA SONAL HIMATBHAI & ANR.
+..... Defendant
+Through: Mr. Maheshwari (VC),
+Advocate for D-1.
+Mr. Naman (VC), Advocate for
+D-2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 01.04.2024
+Learned Presiding Officer has gone to Delhi Judicial
+Academy, Dwarka, New Delhi.
+Re-notify for the purpose already fixed for 26.04.2024.
+(Reader)
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 1, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:02
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 830/2023
+RAJEEV KUMAR JAIN .... Plaintiff
+Through: Mr. Kumar Chitranshu, Advocate
+versus
+SISARA SONAL HIMATBHAI & ANR. ..... Defendant
+Through: Mr. Rajeev Kumar Jain (VC),
+Advocate for D-2.
+Mr. Dharmesh Sisara,
+Proprietor of defendant no. 1 has
+appeared through VC.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 26.04.2024
+I.A. No. 5734/2024 filed by D-2 seeking condonation of delay
+of 66 days in filing written statement and admission/denial
+affidavit.
+Ld. Counsel for the plaintiff submits that he has no
+objection if the application is allowed.
+For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the plaintiff, application is
+allowed. Delay stands condoned. Written statement is taken on
+record. Replication be filed within the period permissible, as
+worked out from today. Copy of the replication be supplied to
+ld. Counsel for defendant no. 2.
+IA stands disposed off.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:02
+I.A. No. 22928/2023 filed by the plaintiff under Order 39 Rule
+1 & 2.
+Ld. Counsel for defendant no. 2 submits that no reply is to
+be filed to this IA and the written statement of defendant no. 2 be
+treated as reply to this IA. Allowed as requested.
+Pleadings are complete.
+CS(COMM)- 830/2023:
+Defendant no. 1 was served with summons on 29.11.2023.
+No written statement however has been filed till date. Maximum
+permissible period to file the written statement has expired.
+Consequently, right of defendant no. 1 to file the written
+statement stands closed. Proprietor of defendant no. 1 who has
+appeared through VC (and is a resident of Surat) submits that he
+has stopped selling the impugned goods and wishes to settle the
+matter with the plaintiff.
+Matter is already listed before the Hon’ble Court for
+03.05.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 03.05.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 26, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:02
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 830/2023 & I.A. 22928/2023.
+RAJEEV KUMAR JAIN ..... Plaintiff
+Through: Mr. Gurdeep Singh, Advocate with Mr.
+Kumar Cmitranshu, Advocates.
+versus
+SISARA SONAL HIMATBHAI & ANR. ..... Defendant
+Through: Mr. Shilpa Gupta, Mr. Naman Tandon,
+Advocate for D-2.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 03.05.2024
+1. An ad interim restraint order was passed by this Court on 29th November,
+2023, in favour of plaintiff, in the following context:
+i. The plaintiff claims to be manufacturing and selling hosiery, including
+women’s innerwear and proprietor of the registered trademark
+and has been using the
+same for selling garments, innerwear, and hosiery since 01st December,
+2007.
+ii. The sale of plaintiff’s products is also on the e-commerce platform
+defendant no.2 [Flipkart].
+iii. The registrations in these marks are in class 25 effective since April,
+2010 and June, 2021, respectively.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:01
+iv. The turn over claimed by plaintiff in 2021-22 was to the tune of Rs. 9.46
+Crores.
+v. Plaintiff’s grievance was against the defendant no.1 who was selling
+identical products on defendant no.2’s platform by latching on to the
+plaintiff’s listings, in that products of defendant no.1 were being listed
+along with the plaintiff’s products using the same trade name ‘RC
+ROYAL CLASS’.
+2. Notice had been issued to defendants and Mr. Dharmesh Sisara had
+appeared on behalf of defendant no.1 before the Court through VC. Defendant
+no.2 is being represented by Ms. Shilpa Gupta, Advocate.
+3. On 29th November, 2023, after recording background facts of the case, it
+transpired that there was another mark which stood registered in
+favour of a third party, and as per the trademark registration status, is a German
+company.
+4. Counsel for plaintiff states and confirms that even today that the said
+mark is not being utilized by that party, and they have already moved a
+cancellation/rectification petition in that regard.
+5. Be that as it may, Mr. Sisara, who appears through VC, states that they
+had discontinued selling products on defendant no.2’s platform and confirms
+that position even today.
+6. Counsel for defendant no.2 has filed a written statement placing on
+record brand authorization letter which has been presented by defendant no.1,
+on the basis of which they had permitted him to latch on to the listings. A bare
+perusal of the brand authorisation letter does not convince the Court that it is an
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:01
+authentic document, since there is no signature of the German proprietor.
+However, the issue of authenticity can only be determined in an appropriate
+proceeding.
+7. At this stage, counsel for plaintiff Mr. Gurdeep Singh, states that as long
+as long as the listings by defendant no.1 are taken down and deleted by
+defendant no.2, his relief would have worked out.
+8. A direction was passed in para 23of order dated 29th November, 2024 in
+this regard; same is extracted as under:
+“23. Till the next date of hearing, the defendants shall ensure
+that products of Defendant 1 are not permitted to be sold on
+the platform of Defendant 2 Flipkart by permitting Defendant
+1 to latch on to the URLs whereunder the products of the
+plaintiff are sold or in any other manner which would confuse
+the buyers into believing that products of Defendant 1 are the
+products of the plaintiff.”
+9. Accordingly, in these circumstances, counsel for plaintiff prays for a
+decree in his favour considering that there was no opposition by the defendant
+regarding the plaintiff’s marks.
+10. Accordingly, a decree is passed in in favour of the plaintiff in terms of
+prayer in para 36(a) and (b) of the plaint, qua defendant no.1.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:01
+11. As regards defendant no.2, it is directed that in the event the plaintiff
+comes across any further listings by defendant no.1 using the mark ‘RC
+ROYAL CLASS’, the same shall be communicated by plaintiff to defendant
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:01
+no.2 who shall then take down said listings/URLs within 48 hours thereafter.
+12. Decree is passed in the above terms.
+13. Decree sheet be drawn up accordingly.
+14. In these circumstances, nominal cost of Rs. 50,000/- [Rupees Fifty
+Thousand only] is granted in favour of plaintiff and against defendant no.1.
+15. The suit is disposed of.
+16. Order be uploaded on the website of this Court
+ANISH DAYAL, J
+MAY 3, 2024/RK/sc
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:25:01

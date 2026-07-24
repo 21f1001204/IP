@@ -1,0 +1,1261 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_805_2023
+case_status: PENDING
+n_orders: 26
+
+$~26
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN ..... Plaintiff
+Through: Mr. J.H. Jafri, Mr. Beni Prasad
+Rathore, Advs.
+versus
+SNNR PRIVATE LIMITED & ORS. ..... Defendants
+Through: None.
+CORAM:
+HON'BLE MR. JUSTICE DINESH KUMAR SHARMA
+O R D E R
+% 07.11.2023
+I.A. 22152/2023
+1. Allowed, subject to all just exceptions.
+2. The present application is disposed of.
+I.A. 22153/2023
+3. The present application has been filed under Section 151 for
+Condonation of Delay in re-filing of accompanying suit for eviction,
+recovery of possession, for arrears of rent and for grant of mesne
+profits/damages.
+4. For the reasons stated in the application, the delay of 51 days in re-
+filing of the suit is condoned.
+5. The application stands disposed of.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:36
+CS(COMM) 805/2023
+6. The present suit has been filed for eviction, recovery of possession, for
+arrears of rent and for grant of mesne profits/damages etc. with the
+following prayer:
+“A. Pass a decree of eviction against Defendant Nos. 1, 2
+and 3, jointly & severally, for recovery of peaceful and
+vacant possession of the Suit Property, being Property No.
+D-169, Okhla Industrial Area, Phase I, New Delhi, in
+favour of the Plaintiff and against the Defendant Nos. 1, 2
+& 3;
+B. Pass a decree for payment of arrears of rent against the
+Defendant Nos. 1, 2 and 3 and in favour of the Plaintiff for
+a sum of Rs. 1,72,50,000/- (Rupees One Crore and Seventy-
+Two lakhs Fifty Thousand Only) along with interest @ 10%
+per month computed from 01.04.2017 to 30.09.2023
+excluding for the period in respect whereof the rent has
+been paid by the Defendant No.1.
+C. Pass a decree for payment of rent @ Rs. 2,50,000/- per
+month, from the date of institution of suit till the date of
+recovery of possession along with interest @ 10% per
+month.
+D. Pass a decree for payment of mesne profits @ 6% per
+annum, in favour of the Plaintiff from 25.03.2023 until
+physical possession is handed over by the Defendant Nos. 1,
+2 & 3 to the Plaintiff,
+E. Pass a decree, thereby directing the Defendant Nos. 1, 2
+& 3, jointly and severally, to pay the compensation in the
+form of damages quantified to the tune of Rs. 30,00,000/- to
+the Plaintiff;
+F. Pass a decree of permanent injunction in favour of the
+Plaintiff and against the Defendant Nos. 1, 2 & 3 thereby
+restraining the Defendant Nos. 1, 2 & 3, their agents,
+servants, employees, associates, assignees, successors,
+representatives etc. or anyone acting in their behalf from
+selling, parting with possession, subletting, creating any
+third-party interest in respect of suit property;
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:36
+G. Award the cost of litigation in favour of the plaintiff, H.
+Pass any other or further order as this Hon'ble Court deems
+fit and proper.”
+7. Learned counsel for the plaintiff submits that the plaintiff is the owner
+of the property in dispute and the same was let out to defendant No.1
+through an oral lease.
+8. Learned counsel submits that defendant Nos. 2 and 3 are the directors
+of the company who are closely related to the plaintiff.
+9. Learned counsel further submits that defendant No.4 is the real brother
+of the plaintiff and initially, it was agreed on account of the weak
+economic condition of defendant No.4 that the rent may be paid by
+defendant No.1 to defendant No.4. Learned counsel also submits that
+however later the defendant No.1 has refused to pay the rent to the
+plaintiff and has also failed to vacate the premises and hand over the
+possession.
+10. Learned counsel submits that the tenancy has duly been terminated vide
+notice dated 25.03.2023.
+11. Let the plaint be registered as a suit.
+12. Summons be issued to the defendants by all permissible modes, which
+shall indicate that the written statements must be filed within thirty
+days from the date of receipt of the summons.
+13. The defendants are directed to file an affidavit of admission/denial
+against the documents filed by the plaintiff, failing which the written
+statement shall not be taken on record.
+14. The plaintiff is at liberty to file replications thereto within fifteen days
+of the filing of the written statements, which shall be accompanied by
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:36
+affidavits of admission/denial, in respect of the documents filed by the
+defendants, failing which the replications shall not be taken on record.
+15. It is made clear that any unjustified denial of documents may lead to an
+order of costs against the concerned party.
+16. Any party seeking inspection of documents may do so in accordance
+with the Delhi High Court (Original Side) Rules, 2018.
+17. List before the Joint Registrar on 09.01.2024
+18. List before the Court on 01.03.2024.
+I.A. 22151/2023
+19. The present application has been filed on behalf of the plaintiff under
+Order XXXIX Rule 1, 2 and 10 read with Section 151 CPC.
+20. Learned counsel submits that defendant No.1 is running a store under
+the title “Super99”.
+21. Learned counsel further submits that the defendants may be restrained
+from parting with / handing over the possession to any third party of
+the rented premises i.e., D-169, Okhla Industrial Area, Phase-1, New
+Delhi.
+22. In view of the submissions made in the application, this Court deems it
+appropriate to appoint Ms. Manushree Nair, Advocate, (Mobile
+No.9739400644) as Local Commissioner (LC) who shall visit the
+aforementioned premises and ascertain the possession of the premises
+bearing No. D-169, Okhla Industrial Area, Phase-1, New Delhi. LC
+shall be at liberty to take photographs as well as videos of the
+proceedings. LC shall also be at liberty to take assistance of the SHO of
+the concerned Police Station, who shall provide all such assistance as
+may be required. The defendant shall cooperate in the execution of the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:36
+commission. Fee of the LC is fixed at Rs.1,00,000/- (Rupees One Lakh
+only) which shall be paid by the plaintiff. LC shall file the report within
+one week.
+23. Parties are directed to maintain the status quo in terms of the report
+submitted by the LC.
+24. Application is disposed of in the above terms.
+DINESH KUMAR SHARMA, J
+NOVEMBER 7, 2023/AR..
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:36
+
+===== ORDER =====
+
+$~35
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN
+..... Plaintiff
+Through: Mr. J.H. Jafri, Mr. Beni Prasad
+Rahtore, Advs.
+versus
+SNNR PRIVATE LIMITED & ORS. ..... Defendants
+Through:
+CORAM:
+HON'BLE MR. JUSTICE DINESH KUMAR SHARMA
+O R D E R
+% 21.12.2023
+I.A. 25964/2023 in CS(COMM) 805/2023
+1. The present application has been moved under Order VI Rule 17 read
+with Section 151 of CPC seeking following prayer;
+(a) Allow the present Application and consequently allow the
+amendment of plaint of the suit in terms of the Para 4 of the present
+Application, and/or;
+(b)Pass any further Order which this Hon'ble Court may deem fit
+and proper in the facts and circumstances of the present case.
+2. Issue notice to the defendant/non-applicant through all permissible
+modes upon filing PF by the plaintiff, returnable on 09.01.2024, i.e., the date
+already fixed before the Joint Registrar.
+DINESH KUMAR SHARMA, J
+DECEMBER 21, 2023/
+Pallavi
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:35
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN
+..... Plaintiff
+Through: Ms. Jyotsana Singh, Adv.
+versus
+SNNR PRIVATE LIMITED & ORS.
+..... Defendant
+Through: Mr. Rohit Gandhi, Ms. Yachika
+Mendiratta & Ms. Akshita
+Nigam, Advs. for D-1 to 3
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. MANISH
+SHARMA, (DHJS)
+O R D E R
+% 09.01.2024
+Ld. Presiding Officer is on half day leave in pre-
+lunch session today.
+As per directions, re-notify the matter for the
+purpose already fixed on 19th February, 2024.
+Reader to
+SH. MANISH SHARMA, (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 9, 2024/nk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:34
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN
+..... Plaintiff
+Through: Dr. Farrukh Khan, Mr. Prakash
+Priyadarshi & Mr. Beni Prasad
+Rathore, Advs. (Mobile
+No.7732880527)
+versus
+SNNR PRIVATE LIMITED & ORS.
+..... Defendant
+Through: Mr. Rohit Gandhi & Ms. Akshita
+Nigam, Advs. for D-1 to 3
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. MANISH
+SHARMA, (DHJS)
+O R D E R
+% 19.02.2024
+Ld. Presiding Officer is on half day leave in pre-lunch
+sessions.
+As per directions, re-notify the matter for the purpose
+already fixed on 27th February, 2024.
+Reader to
+SH. MANISH SHARMA, (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 19, 2024/nk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:34
+
+===== ORDER =====
+
+$~2
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN
+..... Plaintiff
+Through: Mr. Beni Prasad Rathore, Adv.
+(appeared through VC)
+versus
+SNNR PRIVATE LIMITED & ORS.
+..... Defendant
+Through: Mr. Rohit Gandhi, Ms. Akshita
+Nigam & Mr. Yachika
+Mendiratta, Advs. for D-1 to 3
+(Mobile No.9818610321)
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. MANISH
+SHARMA, (DHJS)
+O R D E R
+% 27.02.2024
+CS(COMM) 805/2023 & I.A.No.25964/2023 (under
+Order VI Rule 17 r/w Section 151 CPC filed on behalf
+of the plaintiff seeking amendment in the plaint)
+1. As per office note, defendant no.1, 2 & 3 have been
+served. Service report of the summons sent to defendant
+no.4 & 5 is awaited. Compliance affidavit filed by the
+plaintiff.
+2. Learned counsel for defendant nos.1, 2 & 3 submits that
+he is unable to file written statement as an application
+seeking amendment in the plaint filed by the plaintiff
+pending consideration.
+3. Learned counsel for plaintiff submits that the matter is
+coming up before the Hon’ble Court on 01/03/2024 and
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:33
+date is too short to serve the defendant nos.4 & 5 prior
+to the date already fixed.
+4. Learned counsels for the parties submit that the matter
+may be placed before the Hon’ble Court on the date
+already fixed and they will make appropriate
+submissions before the Hon’ble Court.
+5. At joint request, list the matter before the Hon’ble
+Court for further directions on the date already fixed i.e.
+01st March, 2024.
+MANISH SHARMA, (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 27, 2024/nk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:33
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN ..... Plaintiff
+Through: Mr.Amique Khalid, Mr.Baasir Aziz,
+Mr.Beni Prasad Rathore and
+Ms.Garima Rai Singhani, Advts.
+versus
+SNNR PRIVATE LIMITED & ORS. ..... Defendants
+Through: Mr.Hargun Singh Kalra and
+Ms.Yashika Mendiratta, Advts.
+CORAM:
+HON'BLE MR. JUSTICE DINESH KUMAR SHARMA
+O R D E R
+% 01.03.2024
+I.A.25964/2023
+Present application has been moved for amendment of the plaint.
+Learned counsel for the plaintiff submits that the present suit was filed for
+eviction/possession, arrears of rent, grant of mesne profit/damages.
+However, learned submits that inadvertently the valuation with regard to
+relief for eviction and consequent recovery of possession have been left out
+and therefore an amendment has been has been sought in respect of the
+proper valuation towards the relief for eviction and the consequent
+possession by way of the present application. The amendment has been
+sought only in para 16 of the plaint.
+Learned counsel for defendants no.1 to 3 seeks time to file the reply.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:33
+Let reply be filed within four weeks with copy to the learned counsel
+for the plaintiff.
+List before the Joint Registrar (Judicial) for completion of pleadings
+on 22.03.2024.
+DINESH KUMAR SHARMA, J
+MARCH 1, 2024
+rb
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:33
+
+===== ORDER =====
+
+$~1
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN
+..... Plaintiff
+Through: Mr. J. H. Jafri, Mr. Beni Prasad
+Rothore , Adv.
+versus
+SNNR PRIVATE LIMITED & ORS.
+..... Defendant
+Through: Mr. Rohit Gandhi & Ms. Akshita
+Nigam, Advs. for D-1 to 3
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. MANISH
+SHARMA, (DHJS)
+O R D E R
+% 22.03.2024
+Ld. Presiding Officer is on leave today.
+As per directions, re-notify the matter for the purpose
+already fixed on 24/04/2024.
+Reader to
+SH. MANISH SHARMA, (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+MARCH 22, 2024
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:32
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN
+..... Plaintiff
+Through: Mr. Amique Khalid & Ms.
+Jyotsana Singh, Advs.
+versus
+SNNR PRIVATE LIMITED & ORS.
+..... Defendant
+Through: Mr. Rohit Gandhi & Ms. Akshita
+Nigam, Advs. for D-1 to 3
+Mohd. Affan, Adv. for D-4 & 5
+(appeared through VC)
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. MANISH
+SHARMA, (DHJS)
+O R D E R
+% 24.04.2024
+I.A.No.8977/2024 (under Section 5 of Limitation Act
+r/w Order VIII Rule 1 CPC filed on behalf of defendant
+no.1 to 3 seeking condonation of delay in filing the
+written statement)
+1. Learned counsel for plaintiff accepts notice of the
+captioned IA and seeks time to file reply.
+2. Let reply be filed within four weeks with advance copy
+to the opposite side.
+3. Rejoinder, if any, be filed within two weeks thereafter.
+4. Re-notify the matter for consideration on the captioned
+IA on 16th July, 2024.
+CS(COMM) 805/2023 & I.A.No.25964/2023 (under
+Order VI Rule 17 r/w Section 151 CPC filed on behalf
+of the plaintiff seeking amendment in the plaint)
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:32
+5. As per office note, vakalatnama and reply to the
+captioned IA have been e-filed on behalf of defendant
+no.1 to 3.
+6. Learned counsel for defendant nos.1 to 3 submits that
+she has filed written statement and affidavit of
+admission/denial of documents vide diary
+no.1094496/24. However, the same have not come on
+record. Learned counsel for defendant nos.1 to 3 is
+requested to check it up with the Registry and have the
+same placed on record.
+7. An application seeking condonation of delay in filing
+written statement by defendant nos.1 to 3 is pending
+consideration.
+8. Let the pleadings be completed as per law.
+9. Re-notify the matter for completion of pleadings and
+admission/denial of documents on 16th July, 2024.
+MANISH SHARMA, (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+APRIL 24, 2024/nk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:32
+
+===== ORDER =====
+
+$~33
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN
+.....Plaintiff
+Through: Ms. Jyotsana Singh, Adv.
+versus
+SNNR PRIVATE LIMITED & ORS.
+.....Defendants
+Through: Mr. Rohit Gandhi, Ms. Akshita
+Nigam, Ms. Yachika Mendiratta, Ms.
+Nikita Sharma, Advs. for D1 to 3
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 16.07.2024
+I.A. No. 8977/2024
+This is an application for condonation of delay in filing the written
+statement on behalf of defendant no. 1 to 3.
+Learned counsel for plaintiff opposed the application and had also
+filed reply of the same. Rejoinder has also been filed.
+Heard. As per learned counsel for defendants, the written statement
+could not be filed within the stipulated period as there were multiple
+disputes between the families of the parties and much time was consumed to
+collect the necessary documents. The delay was not intentional. Therefore,
+same may be condoned.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:31
+Learned counsel for plaintiff opposed the application stating that there
+is no any reasonable ground for condoning the delay. The documents along
+with the written statement were filed beyond the period of even 120 days.
+The written statement as well as the documents filed on behalf of the
+applicant may not be taken on record and the application is liable to be
+dismissed.
+I have considered the submissions. As per office noting, defendant no.
+2 & 3 were served on 13.12.2023 whereas defendant no. 1 was served on
+03.01.2024. The joint written statement was filed on behalf of all the
+applicant defendants on 08.04.2024. Therefore, the same is beyond the
+period of 90 days but within the period of 120 days. As far as documents are
+concerned, as per the case history the same were filed on 08.04.2024 but due
+to certain objections, same were not taken on record and thereafter, the same
+were re-filed on 22.04.2024 i.e. within the aggregate period of 30 days from
+the date of objections.
+Keeping in view the submissions of learned counsels and content of
+the application, the delay in filing the written statement stands condoned
+subject to a cost of Rs. 5,000/- to be given to the opposite party.
+The captioned IA accordingly stands allowed and disposed of.
+I.A. No. 25964/2023(Application under Order VI Rule 17 by the
+plaintiff.)
+Reply has already been filed on behalf of the defendant no. 1 to 3.
+No reply has been filed on behalf of defendant no. 4 & 5. Right to file
+reply on behalf of defendant no. 4 & 5 stands closed. No rejoinder is to be
+filed on behalf of the plaintiff.
+Therefore, pleadings are complete.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:31
+At joint request, put up before the Hon’ble Court for further directions
+on 23.08.2024.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JULY 16, 2024/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:31
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN .....Plaintiff
+Through: Mr. J. H. Jafri and Ms. Jyotsana
+Singh, Advocates
+versus
+SNNR PRIVATE LIMITED & ORS. .....Defendants
+Through: Mr. Rohit Gandhi, Mr. Hargun Singh
+Kalra, Ms. Akshita Nigam, Advocates
+for D-1 to D-3
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 23.08.2024
+I.A. 25964/2023
+1. Since there is special Division Bench with Hon’ble the Acting Chief
+Justice for specially assigned matters, so it will not be possible to take up the
+present matter today.
+2. List on 08.10.2024.
+MANMEET PRITAM SINGH ARORA, J
+AUGUST 23, 2024/rhc
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:30
+
+===== ORDER =====
+
+$~1
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN .....Plaintiff
+Through: Mr. J. H. Jafri, Ms. Ridhima Goyal
+and Ms. Aditi Tayal, Advocates
+versus
+SNNR PRIVATE LIMITED & ORS. .....Defendants
+Through: Mr. Rohit Gandhi and Ms. Akshita
+Nigam, Advs. for D-1 to D-3
+Mr. Shahid Khan and Mr. Hitesh,
+Advocates for R-4 & R-5
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 08.10.2024
+I.A. 25964/2023 (Application under Order VI Rule 17 seeking amendment
+in the plaint)
+1. This is an application filed by the plaintiff under Order VI Rule 17 of
+Code of Civil Procedure (‘CPC’) seeking amendment in the plaint.
+2. Learned counsel for the applicant/plaintiff states that by way of the
+captioned application, amendment is sought only with respect to paragraph
+‘16’ of the plaint, which pertains to court fee.
+2.1. He states that the plaintiff in the original plaint had only valued the
+relief for recovery of arrears of rentals and had inadvertently not valued the
+relief for recovery of possession. He seeks leave of this Court to rectify the
+said defects in the amended paragraph ‘16’.
+3. In reply, learned counsel for the defendant nos. 1 to 3 states that the
+amendment proposed may be allowed without prejudice to the objection
+CS(COMM) 805/2023 Page 1 of 4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:30
+with respect to the valuation and court fee already raised by defendant nos. 1
+to 3 in their filed written statement.
+4. Learned counsel for the defendant nos. 4 and 5 states that the said
+defendants are ex-directors of defendant no. 1 and he states that he does not
+have any objection to the amendment proposed.
+5. In view of the submissions recorded hereinabove, the application is
+allowed and amendment limited to the extent of paragraph ‘16’ to the plaint
+is allowed. Accordingly, amended plaint is taken on record.
+6. The statement made by learned counsel on behalf defendant nos. 1 to
+3 states that he does not wish to file any additional pleadings to the aforesaid
+amendment is also taken on record.
+7. With the aforesaid directions, the application stands allowed.
+I.A. 41711/2024 (On behalf of plaintiff seeking condonation of delay in
+filing replication)
+8. This is an application filed by the plaintiff seeking condonation of
+delay of 58 days in filing the replication.
+9. Learned counsel for the applicant/plaintiff states that he has filed his
+replication to the written statement defendant nos. 1 to 3. He states that the
+replication has been duly served on defendant nos. 1 to 3.
+9.1. He states that the written statement of the plaintiff was filed beyond
+the statutory period of limitation. He states that delay in filing the written
+statement was condoned by the Ld. Joint Registrar vide order dated
+16.07.2024, subject to the defendant nos. 1 to 3 making payment of cost of
+Rs. 5,000/-. He states that defendant nos. 1 to 3 have not paid the cost till
+date.
+10. In reply, learned counsel for the defendant nos. 1 to 3 states that he is
+CS(COMM) 805/2023 Page 2 of 4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:30
+paying the cost imposed vide order dated 16.07.2024 during the course of
+the hearing.
+11. In view of the aforesaid facts, the written statement is taken on record
+today. Consequently, the time of the plaintiff to file replication commences
+today and since the replication has already been filed, the relief sought in the
+application is superfluous.
+12. The plaintiff shall ensure that his replication filed vide e-diary no.
+4203799/2024 is placed on record after removing all objections within one
+(1) week. The replication is directed to be taken on record.
+13. With the aforesaid observations, the application is disposed of.
+CS(COMM) 805/2023
+14. Learned counsel for defendant nos. 4 and 5 states that the said
+defendants were served through summons on 06.01.2024. He states,
+however, the written statement could be filed only on 05.10.2024 as
+defendant nos. 4 and 5 are citizens of USA. He states that the delay in filing
+the written statement be condoned on his oral prayer.
+15. Learned counsel for the plaintiff states that defendant nos. 4 and 5 are
+proper parties and no relief has been sought against defendant nos. 4 and 5.
+16. The statutory period of limitation of 30 days had already expired in
+February, 2024 and moreover the grace period of additional 90 days also
+expired in May, 2024. The written statement filed on 05.10.2024 is beyond
+the period of 120 days. The ground urged by the counsel for defendant nos.
+4 and 5 do not justify the non-filing of the written statement within the
+statutory period. Therefore, the rights of defendant nos. 4 and 5 to file
+written statement stands closed and the oral request of the counsel for the
+said defendants to condone the delay in filling the written statement vide e-
+CS(COMM) 805/2023 Page 3 of 4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:30
+diary no. 4207439/2024 is hereby rejected.
+17. The plaintiff is directed to file the Joint Document Schedule and
+parties are directed to appear before the learned Joint Registrar (J) for
+marking of exhibits and admission/denial of the documents on 13.11.2024.
+18. List the matter before the Court on 14.02.2025 for framing of issues.
+MANMEET PRITAM SINGH ARORA, J
+OCTOBER 8, 2024/rhc/AKT
+CS(COMM) 805/2023 Page 4 of 4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:30
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN
+.....Plaintiff
+Through: None
+versus
+SNNR PRIVATE LIMITED & ORS.
+.....Defendants
+Through: Mr. Hitesh Lodwal, Adv. for D4 & 5
+(M: 9990724704) (Through VC)
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 15.10.2024
+1. Matter is taken up on fresh IA.
+I.A. No. 42183/2024(by defendant no. 4 for condonation of delay of 234
+days in filing the written statement)
+2. Vide order Dated 08.10.2024, right of defendant no. 4 & 5 to file
+written statement already closed.
+3. Hence, the captioned IA is disposed of being infructuous.
+4. Put up on the date already fixed i.e. 13.11.2024.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+OCTOBER 15, 2024/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:29
+
+===== ORDER =====
+
+$~25
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023 & I.A. 42590/2024
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN .....Plaintiff
+Through: Mr. J.H. Jafri and Mr. Saifuddin
+Khan, Advs.
+versus
+SNNR PRIVATE LIMITED & ORS. .....Defendants
+Through: None
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 18.10.2024
+The Hon’ble Judge is not holding the Court today as the Hon’ble
+Judge is presiding over a Tribunal constituted under the Unlawful Activities
+(Prevention) Act.
+List on 21.11.2024.
+BY ORDER
+COURT MASTER
+OCTOBER 18, 2024/hp
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:28
+
+===== ORDER =====
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN
+.....Plaintiff
+Through: Ms. Aditi Tayal, Adv. (Through VC)
+versus
+SNNR PRIVATE LIMITED & ORS.
+.....Defendants
+Through: Mr. Hargun Singh Kalra, Ms. Akshita
+Nigam, Advs. For D1 to 3
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 13.11.2024
+CS(COMM) 805/2023
+1. Joint Document Schedule not filed.
+2. As per learned counsel for defendant, the Joint Document Schedule
+has been received by her but the same has not been signed as certain
+plaintiff wants to place on record certain additional documents to which
+learned counsel for plaintiff stated that plaintiff’s application regarding
+additional documents is pending before the Hon’ble Court and she will take
+the appropriate steps as per the adjudication upon the said application.
+I.A. No. 42590/2024(by plaintiff u/O XI R 1(5) CCA leave to produce
+additional documents)
+3. As submitted by learned counsel for plaintiff, this IA is pending for
+consideration before the Hon’ble Court for 21.11.2024.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:28
+4. Hence, at request, put up before the Hon’ble Court on the date already
+fixed i.e. 21.11.2024 for further directions.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 12, 2024/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:28
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN .....Plaintiff
+Through: Ms. Aditi Tayal, Advocate (through
+VC)
+versus
+SNNR PRIVATE LIMITED & ORS. .....Defendants
+Through: Ms. Akshita Nigam, Advocate for D-
+1 to D-3
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 21.11.2024
+I.A. 42590/2024 (on behalf of the plaintiff under Order XI Rule 1(5) of the
+Commercial Courts Act, 2015 seeking leave to produce additional
+documents)
+1. This is an application filed by the plaintiff seeking to place on record
+four documents filed with the replication. It is stated in the application that
+the said documents were filed with the replication and are in response to the
+case set up by the defendant in the written statement.
+2. The documents have been enlisted at paragraph no. 2 of the
+application and as is evident that they form part of the order sheet of judicial
+record.
+3. Considering the nature of the documents and the stage of the suit, the
+application is allowed and the documents are directed to be taken on record.
+4. With aforesaid directions application stands disposed of.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:26
+CS(COMM) 805/2023
+5. The defendant shall file affidavit of admission/denial of the aforesaid
+additional documents within three (3) weeks.
+6. List the matter before the learned Joint Registrar (J) for recording
+admission/denial of documents and marking of exhibits. The plaintiff is
+directed to file a joint document schedule within a period of three (3) weeks
+7. List on 28.01.2025 before Joint Registrar (J).
+MANMEET PRITAM SINGH ARORA, J
+NOVEMBER 21, 2024/msh/AKT
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:26
+
+===== ORDER =====
+
+$~1
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN
+.....Plaintiff
+Through: Ms. Aditi Tayal, Advocate (Through
+VC)
+versus
+SNNR PRIVATE LIMITED & ORS.
+.....Defendants
+Through: None
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 28.01.2025
+Affidavit of admission denial filed by defendant No. 1, 2 and 3 has
+been returned under objection.
+JDS and hard copy of documents not filed by both the parties.
+As per learned counsel for the plaintiff, she had already sent JDS
+through emails multiple times but defendants are not responding.
+Defendants are directed to complete the formalities for signing of the
+JDS and return the same to the plaintiff within one week.
+Put up for completion of process of filing of Joint Document Schedule
+in terms of Rule7A of Chapter VII of The Delhi High Court (Original
+Side) Rules, 2018 physically by plaintiff after getting it signed from
+defendants, admission / denial of documents and marking of Exhibits in
+accordance with law on 10.02.2024.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:26
+Documents, if e-filed be filed physically by parties so as to mark the
+Exhibits.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 28, 2025/SD
+AT 12:15 PM
+At this stage, Mr. Rohit Gandhi & Ms. Akshita Nigam, Advocates
+appeared on behalf of Defendant No. 1 to 3 and are apprised of the order.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 28, 2025/SD
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:26
+
+===== ORDER =====
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN .....Plaintiff
+Through: Mr. Saif Uddin Khan & Ms. Ridhima
+Goyal, Advocates.
+versus
+SNNR PRIVATE LIMITED & ORS.
+.....Defendant
+Through: Ms. Akshita Nigam, Advocate for D-
+1 to D-3.
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 10.02.2025
+Joint Document Schedule and hard copy of documents not filed by
+both parties. Learned counsel for plaintiff submitted that he could not filed
+the hard copy of documents as the originals were in the possession of his
+head clerk who was busy in the treatment of his widow sister and will do the
+needful within one week.
+As the date is already fixed before the Hon’ble Court on 14.02.2025,
+put up before the Hon’ble Court for further direction on 14.02.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 10, 2025/DA
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:25
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN .....Plaintiff
+Through: Ms. Aditi Tayal, Advocate (Through
+VC)
+versus
+SNNR PRIVATE LIMITED & ORS. .....Defendants
+Through:
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 14.02.2025
+1. List before the Joint Registrar (Judicial) for marking of exhibits on
+21st March, 2025.
+2. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+FEBRUARY 14, 2025/RK
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:25
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN .....Plaintiff
+Through: Ms. Aditi Tayal, Adv.
+versus
+SNNR PRIVATE LIMITED & ORS. .....Defendants
+Through: Ms. Akshita Nigam, Adv. for D-1 to
+3.
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 19.02.2025
+On fresh I.A. 4433/2025 (by defendant no. 1 to 3 for condonation of
+delay of 40 days in filing the affidavit of admission denial to the
+document filed by plaintiff)
+1. Learned counsel for plaintiff accepts notice and submitted that she is
+having no objection if delay is condoned but subject to appropriate cost.
+2. I have considered the submissions. In view of the circumstances, the
+delay in filing the affidavit of admission/ denial by defendant no. 1 stands
+condoned, subject to cost of Rs. 3,000/- to be given to opposite party. The
+captioned IA stands disposed of.
+3. Put up for completion of process of filing of Joint Document Schedule
+in terms of Rule7A of Chapter VII of The Delhi High Court (Original
+Side) Rules, 2018 physically by plaintiff after getting it signed from
+defendants, admission / denial of documents and marking of Exhibits in
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:24
+accordance with law on 21.03.2025.
+Documents, if e-filed be filed physically by parties so as to mark the
+Exhibits.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 19, 2025/NG
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:24
+
+===== ORDER =====
+
+$~16
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN .....Plaintiff
+Through: Mr. JH Jafri, Ms. Ridhima Goyal and
+Mr. Abhinav Aggarwal, Advs.
+versus
+SNNR PRIVATE LIMITED & ORS. .....Defendants
+Through: Ms. Akshita Nigam, Adv. for D-1 to
+3.
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 21.03.2025
+1. Hard copy of document filed on behalf of plaintiff. Learned counsel
+for defendant submitted that she had also filed the hard copy of documents
+yesterday itself but the same are not shown on record.
+2. She further requested that main counsel is not available today and
+requested for an adjournment.
+3. Put up on 30.04.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+MARCH 21, 2025/NG
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:23
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN
+.....Plaintiff
+Through: Mr. J.H. Jafri, Ms. Ridhima Goyal,
+Mr. Saifoddin Khan and Mr.
+Mohammed Affan
+versus
+SNNR PRIVATE LIMITED & ORS.
+.....Defendants
+Through: Mr. Rohit Gandhi and Ms. Akshita
+Nigam, Advs. for D-1 to 3
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL
+O R D E R
+% 30.04.2025
+CS(COMM) 805/2023
+1. Cost in furtherance of order dated 19.02.2025 paid today on behalf of
+D-1 to 3 to the learned opposite counsel.
+2. Process of admission/denial and marking of exhibits completed on
+behalf of parties.
+3. It is clarified and agreed by learned counsels for both parties that due
+to inadvertent error numbering of documents and numbering of pages was
+marked incorrect on two documents i.e. Documents 3 & 4 in JDS and index,
+therefore, the documents which are marked today, i.e. ‘Document 3 be read
+as ‘Document 4’ and visa versa.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:22
+4. At joint request, list the matter before the Hon'ble Court for further
+directions on 07.05.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+APRIL 30, 2025/tp
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:22
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN .....Plaintiff
+Through: Ms. Ridhima Goyal and Mr.
+Saifuddin Khan, Advs.
+versus
+SNNR PRIVATE LIMITED & ORS. .....Defendants
+Through: Mr. Rohit Gandhi and Ms. Akshita
+Nigam, Advs. for D-1 to D-3
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 07.05.2025
+CS(COMM) 805/2023
+1. The present suit is listed for framing of issues.
+2. The following are the issues framed on behalf of plaintiff which reads
+as under:
+i. Whether the Defendant no. 1 is the lessee of the Plaintiff in
+respect is of the Suit Premises under the Plaintiff? (OPP)
+ii. Whether the Plaintiff is entitled to decree of eviction against
+Defendant No.1 to 3 and handover of vacant and peaceful
+possession? (OPP)
+iii. Whether the Defendant Nos. 1 to 3 are liable to pay
+Rs.1,72,50,000/- outstanding rent for a period 01.04.2017 to
+30.04.2023, excluding the period for which rent is paid? If yes,
+whether the said defendants are liable to pay interest, if so, at
+what rate? (OPP)
+iv. Whether the Defendant No.1 to 3 are liable to pay mesne
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:22
+profits at Rs.2,50,000/- p.m. from 01.05.2023 till recovery of
+the vacant possession of the suit premises? If yes, whether the
+said defendants are liable to pay interest, if so, at what rate?
+(OPP)
+v. Whether the Plaintiff is entitled to claim damages from the
+Defendant. No. I to 3, quantified as Rs.30,00,000/-7 (OPP)
+vi. Whether the defense raised by the Defendant No. 1 to 3, is
+permissible under Section 3 and 4 of the Prohibition of Benami
+Properties Transaction Act, 1988 (as amended up to date)?
+(Onus of proof on parties)
+vii. Whether the suit property was bought exclusively from the
+funds of Mr. Mohammad Sajid Javed, father of Defendant
+No.2? (OPD)
+viii.Whether the suit property fell to the share of Mr. Mohammad
+Sajid Javed, by virtue of alleged oral family understanding?
+(OPD)
+ix. Whether the suit is not maintainable and liable to be dismissed
+for the want of pecuniary jurisdiction? (OPD)
+x. Whether the suit is barred for non-rejoinder of necessary parties
+i.e., the other legal heirs of Mr. Mohammed Sajid Javed?
+(OPD)
+xi. Whether the reliefs sought in this suit has been properly valued
+in the plaint and appropriate court fee paid thereon? (Onus of
+proof on parties)
+xii. Whether the present suit is an inter-se dispute between families
+and does not satisfy the test of a commercial transaction and is
+therefore not maintainable under Commercial Courts Act,
+2015? If the answer is yes, its effect. (OPD)
+xiii.Relief and cost.
+3. No other issues are pressed by the learned counsel for the parties.
+4. Parties are directed to file their list of witnesses within four (4) weeks.
+The plaintiff will file evidence by way of affidavits of all its witnesses
+within eight (8) weeks.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:22
+5. Learned counsel for the plaintiff states that some of documents relied
+upon by the plaintiff are un-stamped, and defendant reserves his right to
+seek production of original documents at the stage of trial and avail its
+remedy qua the said documents vis-à-vis impounding, in accordance with
+law.
+6. Learned counsels for the parties state that they will take instructions
+before the next date of hearing with respect to appointment of former Judge
+as a Local Commissioner for recording of evidence.
+7. In case, parties are agreeable to appointment of Local Commissioner,
+the matter will be placed before the Court for issuance of appropriate
+directions.
+8. Considering that parties are family members, it has also been
+suggested to the parties to take instructions, if they would like to consider
+mediation, before next date of hearing.
+9. List before learned Joint Registrar (J) for further directions on
+11.07.2025.
+MANMEET PRITAM SINGH ARORA, J
+MAY 7, 2025/hp/akp
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:21:22
+
+===== ORDER =====
+
+$~1
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 805/2023
+MOHAMMED ABDULLAH THROUGH SPA HOLDER
+CHANGHEZ KHAN .....Plaintiff
+Through: Mr. Saif Uddin Khan and Ms. Ridima
+Goyal, Advs.
+versus
+SNNR PRIVATE LIMITED & ORS. .....Defendants
+Through: Mr. Rohit Gandhi, Adv. for D-1 & 3
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 11.07.2025
+1. List of witnesses and evidence affidavit not filed by the parties. Let
+the same be filed in compliance of previous order.
+2. Learned counsel for the parties submitted that they do not want to get
+appoint the Local Commissioner.
+3. Learned counsel for plaintiff requested for some more time to comply
+the previous order to file the list of witnesses and evidence affidavit. Let
+same be filed within four weeks with copy to opposite party.
+4. Put up for PE on 08.10.2025.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JULY 11, 2025/tp
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by s
+
+[TRUNCATED — rights are established in the opening orders above]

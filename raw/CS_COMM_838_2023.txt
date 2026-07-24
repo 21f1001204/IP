@@ -1,0 +1,655 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_838_2023
+case_status: PENDING
+n_orders: 14
+
+$~28
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 838/2023
+MARKO AGRO HOUSING AND FINANCE PRIVATE LTD.
+..... Plaintiff
+Through: Mr. Prashant Bajaj, Adv.
+versus
+CHANSON HOSPITALITY PVT. LTD. & ORS. ..... Defendants
+Through: Mr. (appearance not given)
+CORAM:
+HON'BLE MR. JUSTICE DINESH KUMAR SHARMA
+O R D E R
+% 22.11.2023
+I.A. 23210/2023 (exemption)
+Exemption is allowed subject to all just exceptions.
+CS(COMM) 838/2023
+1. The present suit is for recovery of arrears of rent and electricity
+charges along with interest pendente lite and future seeking following
+prayers;
+a) to pass a decree of money for a sum of Rs.2,45,20,273/- (Rupees
+Two Crores Forty Five Lakhs Twenty Thousand Two Hundred Seventy
+Three) in favour of plaintiff and against the defendants; AND
+b) To pass a decree awarding interest pendent-lite and future till
+realization, on a sum of Rs. 2,45,20,273/- (Rupees Two Crores Forty
+Five Lakhs Twenty Thousand Two Hundred SGventy Three) in favour
+of plaintiff and against the defendants @ 18% per annum; AND
+c) To award cost of the suit and expenses incurred by the plaintiff, in
+favour of plaintiff and against the defendants.”
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:36
+2. Let the plaint be registered as a suit.
+3. Let summons be issued.
+4. Learned counsel appears and accepts summons on behalf of the
+defendant. Let written statements be filed within thirty days from
+today.
+5. The defendant is directed to file an affidavit of admission/denial
+against the documents filed by the plaintiff, failing which the written
+statement shall not be taken on record.
+6. The plaintiff is at liberty to file replications thereto within fifteen days
+of the filing of the written statements, which shall be accompanied by
+affidavits of admission/denial, in respect of the documents filed by the
+defendant, failing which the replications shall not be taken on record.
+7. It is made clear that any unjustified denial of documents may lead to
+an order of costs against the concerned party.
+8. Any party seeking inspection of documents may do so in accordance
+with the Delhi High Court (Original Side) Rules, 2018.
+9. List before the Joint Registrar on 12.12.2023.
+10. List before the Court on 05.04.2024.
+DINESH KUMAR SHARMA, J
+NOVEMBER 22, 2023
+Pallavi
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:36
+
+===== ORDER =====
+
+$~4
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 838/2023
+MARKO AGRO HOUSING AND FINANCE PRIVATE
+LTD.
+.....Plaintiff
+Through: Mr. Parmod K. Sharma & Mr.
+Prashant Bajaj, Advs.
+versus
+CHANSON HOSPITALITY PVT. LTD. & ORS.
+.....Defendant
+Through:
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. MANISH
+SHARMA, (DHJS)
+O R D E R
+% 12.12.2023
+1. As per office note, nothing fresh has been filed.
+2. Learned counsel for the plaintiff submits that
+inadvertently summons was not issued in the present
+matter by the Hon‟ble Court on 22/11/2023. He further
+submits that it was inadvertently recorded in the last
+order that „learned counsel appears and accepts
+summons on behalf of the defendant‟, however, none
+had appeared for the defendant before the Hon‟ble
+Court on 22/11/2023.
+3. Learned counsel for plaintiff submits that in view of
+the above circumstances, the matter may be placed
+before the Hon‟ble Court and he will make appropriate
+submissions before the Hon‟ble Court.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:35
+4. At request, list the matter before the Hon‟ble Court for
+further directions on 22nd December, 2023.
+MANISH SHARMA, (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+DECEMBER 12, 2023/nk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:35
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 838/2023
+MARKO AGRO HOUSING AND FINANCE PRIVATE LTD.
+..... Plaintiff
+Through: Mr. Prashant Bajaj, Adv.
+versus
+CHANSON HOSPITALITY PVT. LTD. & ORS. ..... Defendants
+Through: None.
+CORAM:
+HON'BLE MR. JUSTICE DINESH KUMAR SHARMA
+O R D E R
+% 22.12.2023
+The present suit has been filed for recovery of arrears of rent and
+electricity charges along with interest pendente-lite and future with the
+following prayer:
+“a) to pass a decree of money for a sum of Rs.
+2,45,20,273/- (Rupees Two Crores Forty Five Lakhs
+Twenty Thousand Two Hundred Seventy Three) in favour
+of plaintiff and against the defendants; AND
+b) To pass a decree awarding interest pendent-lite and
+future till realization, on a sum of Rs. 2,45,20,273/-
+(Rupees Two Crores Forty Five Lakhs Twenty Thousand
+Two Hundred Seventy Three) in favour of plaintiff and
+against the defendants @ 18% per annum; AND c) To
+award cost of the suit and expenses incurred by the
+plaintiff, in favour of plaintiff and against the defendants;
+AND
+d) Any other or further order/relief which this Hon'ble
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:35
+Court may deem fit, just and proper be passed in favour
+of plaintiff and against the defendants in the facts and
+circumstances of the case and in the interest of justice.”
+Issue notice to the defendants through all permissible modes.
+List before Joint Registrar (Judicial) on 02.02.2024.
+DINESH KUMAR SHARMA, J
+DECEMBER 22, 2023/AR/AJ..
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:35
+
+===== ORDER =====
+
+$~1
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 838/2023
+MARKO AGRO HOUSING AND FINANCE PRIVATE
+LTD. ..... Plaintiff
+Through: Mr. Prashant Bajaj
+Advocate for Plaintiff.
+versus
+CHANSON HOSPITALITY PVT. LTD. & ORS.
+..... Defendant
+Through: Mr. Sachin Chaudhary,
+Advocate for R-1 to R-4.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. MANISH SHARMA,
+(DHJS)
+O R D E R
+% 02.02.2024
+Regular Steno is on leave today.
+1. As per office note, summons issued to defendant nos. 1 to
+4 received back with the report of served.
+2. Vakalatnama is filed by D-1 to D-4.
+3. Learned counsel for defendants seeks time to file written
+statement and affidavit of admission/denial of documents.
+4. Re-notify the matter on 20th March, 2024.
+MANISH SHARMA, (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 2, 2024/K
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:34
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 838/2023
+MARKO AGRO HOUSING AND FINANCE PRIVATE
+LTD.
+..... Plaintiff
+Through: Mr. Parmod K Sharma and
+Prashant Bajaj, Adv. (Through
+VC)
+versus
+CHANSON HOSPITALITY PVT. LTD. & ORS.
+..... Defendant
+Through: Mr. Sachin Chaudhary,
+Advocate for R-1 to R-4.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. MANISH
+SHARMA, (DHJS)
+O R D E R
+% 20.03.2024
+Ld. Presiding Officer is on leave today.
+As per directions, re-notify the matter for the purpose
+already fixed on 01/04/2024.
+Reader to
+SH. MANISH SHARMA, (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+MARCH 20, 2024
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:34
+
+===== ORDER =====
+
+$~2
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 838/2023
+MARKO AGRO HOUSING AND FINANCE PRIVATE
+LTD.
+..... Plaintiff
+Through: Mr. Prashant Bajaj, Adv.
+(appeared through VC)
+versus
+CHANSON HOSPITALITY PVT. LTD. & ORS.
+..... Defendant
+Through: Mr. Arvind Chaudhary & Mr.
+Sachin Chaudhary, Adv. for D-1
+to 4
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. MANISH
+SHARMA, (DHJS)
+O R D E R
+% 01.04.2024
+1. As per office note, written statement and affidavit of
+admission/denial have been filed on behalf of the
+defendants.
+2. Learned counsel for plaintiff submits that he has filed
+replication and affidavit of admission/denial of documents
+vide diary no.950895/24. However, the same have not
+come on record. Learned counsel for plaintiff is requested
+to check it up with the Registry and have the same placed
+on record.
+3. Learned counsels for the parties submit that the matter may
+be placed before the Hon’ble Court on the date already
+fixed and they will make appropriate submissions before
+the Hon’ble Court.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:33
+4. At joint request, list the matter before the Hon’ble Court
+for further directions on the date already fixed i.e. 05th
+April, 2024.
+MANISH SHARMA, (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+APRIL 01, 2024/nk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:33
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 838/2023
+MARKO AGRO HOUSING AND FINANCE PRIVATE LTD.
+..... Plaintiff
+Through:
+versus
+CHANSON HOSPITALITY PVT. LTD. & ORS. ..... Defendants
+Through: Mr. Arvind Chaudhary, Adv. (VC).
+CORAM:
+HON’BLE MR. JUSTICE DINESH KUMAR SHARMA
+O R D E R
+% 05.04.2024
+Replication has been brought on record.
+List before Joint Registrar (Judicial) for admission / denial of
+documents on 06.05.2024.
+DINESH KUMAR SHARMA, J
+APRIL 5, 2024/AR..
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:32
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 838/2023
+MARKO AGRO HOUSING AND FINANCE PRIVATE
+LTD.
+..... Plaintiff
+Through: Mr. Prashant Bajaj, Adv.
+(appeared through VC)
+versus
+CHANSON HOSPITALITY PVT. LTD. & ORS.
+..... Defendant
+Through: Mr.Sachin Chaudhary, Adv. for
+D-1 to 4
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. MANISH
+SHARMA, (DHJS)
+O R D E R
+% 06.05.2024
+1. Pleadings are complete.
+2. The matter is at the stage of admission/denial of
+documents.
+3. ‘Joint Document Schedule’ in terms of Rule 7A
+Chapter VII of Delhi High Court (Original Side) Rules,
+2018 be filed at least a week prior to the next date. A
+hard copy of the Joint Document Schedule, in addition
+to e-filing, be also filed.
+4. Re-notify the matter for admission/denial of documents
+on 20th August, 2024.
+MANISH SHARMA, (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+MAY 6, 2024/nk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:32
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 838/2023
+MARKO AGRO HOUSING AND FINANCE PRIVATE LTD.
+.....Plaintiff
+Through: Mr. Parnod K. Sharma, Mr. Prashant
+Bajaj, Mr. Chander Shekhar Sharma,
+Mr. Prakhar Vashisht, Advs.
+versus
+CHANSON HOSPITALITY PVT. LTD. & ORS.
+.....Defendants
+Through: Mr. Sachin Chaudhary, Mr. Himanshu
+Pal, Advs. for D1 to 4
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 20.08.2024
+Joint Document Schedule not filed. As per learned counsel for plaintiff,
+affidavit of admission / denial qua defendant no. 3 & 4 has not been filed and
+learned counsel for defendant no. 1 to 4 seeks time to clarify about this.
+Put up for aforesaid clarification as well as for completion of process of
+filing of Joint Document Schedule in terms of Rule7A of Chapter VII of The
+Delhi High Court (Original Side) Rules, 2018 physically by plaintiff after
+getting it signed from defendants, admission / denial of documents and marking
+of Exhibits in accordance with law on 16.12.2024.
+Documents, if e-filed be filed physically by parties so as to mark the
+Exhibits.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 20, 2024/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:31
+
+===== ORDER =====
+
+$~10
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 838/2023
+MARKO AGRO HOUSING AND FINANCE PRIVATE LTD.
+.....Plaintiff
+Through: Mr. Prakhar Vashisht and Mr. Prashant
+Bajaj, Advocates (through VC)
+Versus
+CHANSON HOSPITALITY PVT. LTD. & ORS. .....Defendants
+Through: Mr. Sachin Chaudhary, Advocate for
+D-1 to 4
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 16.12.2024
+Regular stenographer is on leave today.
+1. Ld. Counsel for defendant nos. 1 to 4 submitted that due to the fact that
+he is suffering from typhoid he require some more time to do the needful
+regarding the affidavit of admission denial qua respondent nos. 3 & 4. One
+more opportunity is granted to do the needful in accordance with law within
+two weeks.
+2. Put up for completion of process of filing of Joint Document Schedule in
+terms of Rule7A of Chapter VII of The Delhi High Court (Original Side)
+Rules, 2018 physically by plaintiff after getting it signed from defendants,
+admission / denial of documents and marking of Exhibits in accordance with
+law on 02.04.2025.
+3. Documents, if e-filed be filed physically by parties so as to mark the
+Exhibits.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+DECEMBER 16, 2024/PU
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:31
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 838/2023
+MARKO AGRO HOUSING AND FINANCE PRIVATE LTD.
+.....Plaintiff
+Through: Mr. Prashant Bajaj, Advocate
+versus
+CHANSON HOSPITALITY PVT. LTD. & ORS.
+.....Defendants
+Through: Mr. Sachin Chaudhary, Advocate
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 02.04.2025
+CS(COMM) 838/2023
+1. Learned counsel for defendants submitted that he could not file
+affidavit of admission/denial qua the defendants no. 3 & 4 as the same was
+misplaced and prepared fresh yesterday itself.
+2. Learned counsel for plaintiff opposed the request. In the interest of
+justice, one more opportunity is granted to file the affidavit of
+admission/denial within two weeks, subject to a cost of Rs. 3000/- to be
+given to the opposite party on sharing the necessary particulars.
+3. Put up for completion of process of filing of Joint Document Schedule
+in terms of Rule7A of Chapter VII of The Delhi High Court (Original
+Side) Rules, 2018 physically by plaintiff after getting it signed from
+defendants, admission / denial of documents and marking of Exhibits in
+accordance with law on 04.08.2025.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:30
+4. Documents, if e-filed be filed physically by parties so as to mark the
+Exhibits.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+APRIL 2, 2025/tp
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:30
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 838/2023
+MARKO AGRO HOUSING AND FINANCE PRIVATE LTD.
+.....Plaintiff
+Through: Mr. Prashant Bajaj and Mr. Prakhar
+Vashisht, Advs.
+versus
+CHANSON HOSPITALITY PVT. LTD. & ORS.
+.....Defendants
+Through: Mr. Sachin Chowdhary, Adv. for D-3
+& 4
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 04.08.2025
+1. Affidavit of admission/denial not filed on behalf of defendants no. 3
+& 4.
+2. It is submitted by learned counsel for defendants no. 3 & 4 that he had
+filed the affidavit of admission/denial yesterday itself. Cost has been paid.
+3. As requested and not opposed, let the affidavit of admission/denial
+filed on behalf of defendants no. 3 & 4 be taken on record and delay in filing
+the same stands condoned. Copy of same be supplied to learned opposite
+counsel through e-mail on sharing the same.
+4. Put up for completion of pleadings qua defendant, 6, 7, 8, 16 & 17 in
+accordance with law and thereafter for completion of process of filing of
+Joint Document Schedule in terms of Rule 7A of Chapter VII of The Delhi
+High Court (Original Side) Rules, 2018 physically by plaintiff after
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:29
+getting it signed from defendants, admission / denial of documents and
+marking of Exhibits in accordance with law on 17.11.2025.
+5. Documents, if e-filed be filed physically by parties so as to mark the
+Exhibits.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 4, 2025/tp
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:29
+
+===== ORDER =====
+
+$~73
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 838/2023
+MARKO AGRO HOUSING AND FINANCE PRIVATE LTD.
+.....Plaintiff
+Through: None
+versus
+CHANSON HOSPITALITY PVT. LTD. & ORS.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 08.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared on behalf of both the parties.
+Let this matter be sent back to the Hon’ble Court for further
+directions.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 8, 2025/ak
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:29
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 838/2023
+MARKO AGRO HOUSING AND FINANCE PRIVATE LTD.
+.....Plaintiff
+Through: Mr.Prakhar Vashisht, Adv.
+versus
+CHANSON HOSPITALITY PVT. LTD. & ORS.
+.....Defendants
+Through: Mr. Sachin Chaudhary, Adv.
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 17.11.2025
+Learned Presiding Officer is on first half leave today.
+At joint request, put up for the purpose already fixed on 25.02.2026.
+READER TO JR (JUDICIAL)
+NOVEMBER 17, 2025/tp
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:26:28

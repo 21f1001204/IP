@@ -1,0 +1,1056 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_949_2023
+case_status: PENDING
+n_orders: 16
+
+$~33
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 949/2023 and I.A. 26291-295/2023
+LIVING MEDIA INDIA LIMITED & ANR...... Plaintiffs
+Through: Mr. Rahul Beruar and Ms.
+Jyotsana Sinha, Advocates.
+versus
+JAY JAYESHBHAI TANK & ORS. ..... Defendants
+Through:
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 22.12.2023
+Re-notify on 4 January 2024 in order to enable the plaintiff to
+effect advance service.
+C.HARI SHANKAR, J
+DECEMBER 22, 2023
+kd
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:03
+
+===== ORDER =====
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 949/2023, I.A. 26291/2023, I.A. 26292/2023, I.A.
+26293/2023, I.A. 26294/2023 & I.A. 26295/2023.
+LIVING MEDIA INDIA LIMITED & ANR. ..... Plaintiffs
+Through: Mr. Rahul Beruar and Ms. Jyotsana
+Sinha, Advs.
+versus
+JAY JAYESHBHAI TANK & ORS. ..... Defendants
+Through: Ms. Mamta Jha, Ms. Shruttima
+Ehersha and Mr. Roshan Ahuja,
+Advs. for D-4.
+Mr. Ninad Dogra, Adv. for D-11.
+Ms. Geetanjali Visvanathan, Adv. for
+D-2.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 04.01.2024
+1. Pursuant to the previous order dated 22nd December, 2023, the
+counsel for the plaintiff states that the service was effected through
+registered post on 29th December, 2023 and by email as well. However, the
+tracking report of the registered post notes that the service is awaited.
+2. List on 12th January, 2024.
+3. Counsels have entered appearance for defendant Nos.2, 3, 4 and 11.
+Counsel for defendant No.8 states that they have not received the copy of
+the plaint. Counsel for the plaintiff may supply the same during the next
+two days by email.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:03
+4. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+JANUARY 4, 2024/MK/ig
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:03
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW
+DELHI
++ CS(COMM) 949/2023 & I.A. 26295/2023
+LIVING MEDIA INDIA LIMITED & ANR. ..... Plaintiffs
+Through: Mr. Rahul Beruar and Ms. Jyotsana
+Sinha, Advs.
+versus
+JAY JAYESHBHAI TANK & ORS. ..... Defendants
+Through: Mr. Kunal Rakwar, Advocate for D-
+1
+Ms. Geetanjali Visvanathan, Adv.
+for
+D-2.
+Ms. Mamta Jha, Ms. Shruttima
+Ehersha and Mr. Roshan Ahuja,
+Advs. for D-4.
+Mr. Ninad Dogra, Adv. for D-11.
+Mr. Saurabh Kumar and Ms. Rose
+Sebi, Advocates for Defendant No. 8
+- LinkedIn(saurabhk@luthra.com)
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 12.01.2024
+I.A. 26292/2023 (under Order XXXIX Rule 1 & 2 CPC)
+1. Pursuant to the previous order directing plaintiff to ensure service of
+notice on the defendants, Mr. Kunal Rakwar, Advocate has appeared through
+VC on behalf of defendant no.1.
+2. Defendant nos. 2 and 3, domain name Registrars (DNRs) and
+defendant no. 4, 5 and 6, social media platforms are represented through
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:01
+counsel before the Court. Counsel for defendant no. 8, Linkedin Corporation
+is also present through VC. Rest of the defendants are served, as per the
+counsel for the plaintiff, but no one appears on their behalf.
+3. The essential grievance of the plaintiff is against the defendant no.1
+using trademark “AAJ TAK WATCH NEWS” (YouTube channel)
+(impugned mark) and multiple social media profiles under ‘AAJ TAK
+WATCH NEWS ’ (impugned mark) under the domain names
+www.aajtakwatch.in and www.aajtakwatchnews.com and publication titled
+"AAJTAK WATCH". As per the plaintiff, use of said marks is infringing
+the trademarks of the plaintiff as they are deceptively similar. The
+plaintiffs claim to be a part of the well-reputed and well-established India
+Today Group which is one of India's most respected and diversified media
+conglomerate, available in both print and electronic media. It is engaged in
+diverse business activities ranging from printing and publishing of
+magazines, journals, periodicals and newspapers, infotainment programmes,
+organizing conferences, seminars, music shows, and other related activities.
+Plaintiff no. 2, in particular is a subsidiary of plaintiff no. 1, operates popular
+electronic news channels, including the news channel ' AAJ TAK' as well as
+FM radio channels.
+4. The marks of the plaintiffs "AAJ TAK"/ आज तक” have all been
+registered vide the following details :
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:01
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:01
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:01
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:01
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:01
+5. Further, the plaintiff has applied for declaration of their trademark
+"AAJ TAK"/ आज तक” as a well-known trademark. The Trademark
+Registry had issued an advertisement in Trademarks Journal dated 12th June,
+2023 allowing a period of 30 days for any opposition. Counsel for the
+plaintiff informs that, as per their instructions, no such opposition was
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:01
+received and the mark being declared as a "well-known" trademark is now a
+mere formality.
+6. Further, the counsel has drawn attention to the fact that infringing
+mark being used by the defendant, who is broadcasting on a YouTube
+Channel, as well as publishing a newspaper in the name of "AAJTAK
+WATCH", through State of Gujarat, has also applied for a trademark vide
+application No. 5553325 in class 16", on "proposed to be used basis". The
+same was discovered in November, 2023 by the plaintiff during a review of
+the Trademark Registry’s online records. The said search revealed that the
+application was filed on 1st August, 2022 and as mentioned, was on
+"proposed to be used basis". The website www.aajtakwatch.in also uses the
+infringing mark and through the WHOIS records it was learnt to be registered
+in the name of defendant no.1 organization only since 6th July 2022. On
+further investigation it was revealed that the defendant no.1’s YouTube
+channel “AAJ TAK WATCH NEWS” was also available on the platform
+hosting a number of news programmes. The About’ section of the said
+YouTube channel reveals that the said YouTube channel was established on
+17th October 2022. An email id aajtakwatch07@gmail.com was also
+discovered on the YouTube page which also mentioned an associated
+website www.aajtakwatchnews.com . Defendant No. 3, DNR is listed as the
+Registrar of the impugned domain name aajtakwatchnews.com and
+defendant No.2, is DNR for aajtakwatch.in.
+7. The plaintiff further discovered defendant no.1’s social media profiles
+on Facebook, X (Twitter), Instagram, Linkedln, Telegram, Koo and other
+social media channels, which have been duly arrayed as defendants. The
+details of the said handles are listed as under in para 60 of the petition:
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:01
+“a. Facebook profile titled "AAJTAK WATCH NEWS", created in February
+2023 and operating under the handle "@AajTakWatchNews" and
+accessible at
+https://www.facebook.com/profile.php?id=100089936876935;
+b. Twitter profile titled "Aajtak Watch News", established in October 2022
+and operating under the handle "@Aajtakwatch07'' and accessible at
+https://twitter.com/Aajtakwatch07?t=81cnXKBTlaR6KTG8AHi3Vg&s=09;
+c. Instagram profile titled "aajtakwatchnews" accessible at
+https://www.instagram.com/aajtakwatchnews/?igshid=Mzc0YWU1OWY%3
+D;
+d. Linkedln profile titled "Aajtak Watch News", established in February
+2023 and accessible at
+https://www.linkedin.com/in/aajtak-watch-news-aa9a6a265;
+e. Telegram group titled "Aajtak Watch News", accessible at
+https://t.me/+zZBWVAjUGgJhMGNl;
+f. Kooapp profile titled "Aajtaj Watch News", operating under the handle
+"@aajtak_watch_news" and accessible at
+https://www.kooapp.com/profile/aajtak_watch_news;
+g. Moj app profile titled "Aajtak Watch News", operating under the handle
+"@aajtakwatchnews" and accessible at
+https://mojapp.in/@aajtakwatchnews?referrer=TX9MkcbC75XCx;
+h. Vimeo, content sharing app, profile titled "Aajtak Watch News",
+accessible at https://vimeo.com/797982083;
+i. ShareChat profile titled "Aajtak Watch News", accessible at
+https://sharechat.com/profile/2122394398?d=n;
+J. Tumblr profile titled "Aajtak Watch News", accessible at
+https://www.tumblr.com/aajtakwatchnews?source=branch;
+k. Chingari profile titled "Aajtak Watch News", accessible at
+https://chingari.io/aajtakwatchnews. “
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:01
+8. Counsel for the plaintiff states that the device which is sought to be
+registered by the defendant no.1, is in fact deceptively similar not only to the
+plaintiff’s mark but uses the logo that is used by ABP News, ABP Pvt.
+Ltd., registration details of which have been handed up in the Court today.
+9. Counsel for the plaintiff further contends that similar orders relating
+to correction of the mark of the plaintiff have been passed by this Court, inter
+alia, in Living Media India Ltd v. Satbir Bhardwaj & Ors, CS (COMM)
+235/2022 and in Living Media India Ltd v. www.news-aajtak.co.in & Ors.,
+CS (COMM) 395/2020.
+10. Counsel for the defendant no.1, on instruction, states that they have
+been publishing the newspaper "AAJ TAK WATCH" since 2015 from Surat,
+Gujarat. He further states that defendant no.1 is registered with RNI for the
+purposes of newspaper. Defendant no.1 shall furnish details of registration
+and use in their reply. Counsel for the defendant no.1 further states that as
+regards the digital media, they have been broadcasting news on these digital
+platforms since 2022. Defendant no.1 shall file a reply to this application
+within next 4 weeks with a copy to the opposing counsel, who may file
+rejoinder thereafter, before the next date.
+11. In view of the above contentions and post perusal of the pleadings and
+documents, this Court is of the view that the plaintiff has made out prima
+facie case for grant of ad interim injunction, balance of convenience lies in
+favour of plaintiff and it is likely to suffer irreparable loss in case injunction,
+as prayed for, is not granted.
+12. Accordingly, till the next date of hearing, defendant no.1, through
+their promoters, partners, managers, employees, principals, agents,
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:01
+associates, affiliates, licensees, distributors, or any and all others acting on
+its behalf, directly or indirectly, are restrained from using the plaintiff’s
+marks "AAJ TAK"/ आज तक”, or any other trademark identical or deceptively
+similar to plaintiff’s registered trademarks, in any manner, in relation to any
+digital media platform including websites, social media and any other
+content sharing digital platform. In this regard, defendant is further restrained
+from using the said impugned marks in any promotional material for their
+digital platform, till the next date of hearing.
+13. The defendant no.1 is further restrained from using the said mark
+"AAJ TAK" as part of their domain name and as also their email address,
+and will immediately de-activate the same. Defendant no.1 is further directed
+to immediately de-activate all social media handles which use the impugned
+marks of plaintiff. Defendant no.1 shall file an affidavit of compliance in
+this regard within the next 2 weeks before this Court with a copy to the
+counsel for the plaintiff.
+14. In the event defendant no.1 does not comply with these directions in
+para 12 above, for any reason whatsoever, the DNRs, being defendant nos.2
+and 3 are directed to take steps to suspend / de-activate / block the said
+domain names of defendant no.1 which are using word mark "AAJ TAK "
+as part of their domain names i.e. 'aajtakwatch.in' and
+'aajtakwatchnews.com'. Also, defendant nos. 4 shall ensure that the YouTube
+channel of the defendant no. 1 is accordingly de-activated/ suspended till the
+next date of hearing. Defendant nos. 5, 6, 8-14 shall ensure that social media
+handles of the defendant no. 1, as noted above, are accordingly de-activated/
+suspended till the next date of hearing. In this regard, plaintiff is entitled to
+address a communication through email to the said defendants, in the event
+of lack of compliance by defendant no.1.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:01
+15. List before the Joint Registrar on 19th March, 2024.
+16. List before this Court on 6th May 2024.
+I.A. 26291/2024 (exemption from pre-litigation mediation)
+1. This application has been filed seeking exemption from pre-litigation
+mediation, as the same will defeat the very purpose of the relief claimed by
+the plaintiffs.
+2. Having regard to the facts of the present case and in light of the
+judgement of Division Bench of this Court in Chandra Kishore Chaurasia
+v. R.A. Perfumery Works Private Ltd. FAO (COMM) 128/2021, exemption
+from attempting pre-institution mediation is allowed.
+3. Accordingly, the application stands disposed of.
+I.A. No.26293/2024 (seeking leave to file additional documents)
+1. By this application under Order XI Rule 1(4), Code of Civil
+Procedure, 1908 (“CPC”) as applicable to commercial suits under the
+Commercial Courts Act, 2015, plaintiff seeks time to place on record
+additional documents.
+2. The plaintiffs, if they wish to file additional documents at a later stage,
+shall do so strictly as per the provisions of the Commercial Courts Act, 2015
+and the Delhi High Court (Original Side) Rules, 2018.
+3. Application stands disposed of accordingly.
+I.A. No.26294/2024 (exemption)
+1. Exemption is granted, subject to all just exceptions.
+2. Applicant shall file legible, clear, and original copies of the documents
+on which the applicant may seek to place reliance within four weeks from
+today/before the next date of hearing.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:01
+3. Application stands disposed of accordingly.
+CS(COMM) 949/2023
+1. Let the plaint be registered as suit.
+2. Mr. Kunal Rakwar, Advocate on behalf of defendant no.1, counsel for
+defendant nos. 2 and 3, counsel for defendant no.4, counsel for defendant
+nos. 5 and 6, counsel for defendant no.8 accept notice.
+3. Upon filing of process fee, issue summons to remaining defendants by
+all permissible modes. All served and unserved defendants, upon completion
+of service, shall file their respective written statement within 30 days from
+the date of receipt of summons. Along with the written statements, the
+defendants shall also file affidavits of admission/denial of the documents of
+the plaintiff, without which the written statement shall not be taken on
+record.
+4. Liberty is given to the plaintiff to file replications within 15 days of
+receipt of the written statements. Along with the replications, if any, filed by
+the plaintiff, affidavit(s) of admission/denial of documents of the defendants
+be filed by the plaintiff, without which the replications shall not be taken on
+record. If any of the parties wish to seek inspection of any documents, the
+same shall be sought and given within the timelines.
+5. As requested by counsel for defendant no.8, who appears through VC,
+copy of plaint be supplied to him during the course of the day.
+5. List before the Joint Registrar for marking of exhibits on 19th March,
+2024.
+6. It is made clear that any party unjustifiably denying documents would
+be liable to be burdened with costs.
+7. List before the Court on 6th May, 2024.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:01
+8. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+JANUARY 12, 2024/sm/vp
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:01
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 949/2023
+LIVING MEDIA INDIA LIMITED & ANR. ..... Plaintiff
+Through: Mr. Mr. Rahul Beruar (VC),
+Ms. Jyotsana Sinha, Advocates
+versus
+JAY JAYESHBHAI TANK & ORS. ..... Defendant
+Through: Mr. Kunal Raikwar,
+Mr. Anshuman Mayak,
+Mr. Rahil Kulhare, Advocates
+for D-1.
+Mr. Rahul Bajaj, Advocate for
+D-2/Hosting Concepts BV.
+Mr. Parva Khare, Advocate for
+D-3 / GoDaddy.com LLC
+Mr. Rohan Ahuja (VC),
+Ms. Shruttima Ehersa, Ms. Diya
+Viswanath (VC), Advocates for
+D-4.
+Ms. Amee Rana (VC), Mr. Yash
+Karunakaran, Ms. Sana Banyal,
+Advocates for D-5 / Meta
+Paltforms.
+Mr. Aadhar Nautiyal, Advocate
+for D-6/ X Corp.
+Mr. Saurabh Kumar (VC)
+Ms. Rose Sebi (VC), Advocate
+for D-8.
+Mr. Sandeep Das, Ms. Anandini
+Kumari Rathore, Ms. Anurima
+Sood, Advocates for D-11/
+Mohalla Tech Pvt. Ltd.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:01
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 19.03.2024
+I.A. No. 6433/2024 filed by D-8 seeking condonation of delay
+of 30 days in filing the written statement.
+Issue notice. Notice accepted by the ld. Counsel for the
+plaintiff who submits that an opportunity maybe granted to file
+response.
+Let reply be filed within three weeks, with an advance
+copy to the opposite side. Rejoinder thereto, if any, be filed
+thereafter within two weeks of receiving the copy of advance
+reply.
+I.A. No. 26292/2023 (under Order XXXIX Rule 1 & 2 CPC-
+injunction notice issued to defendant nos. 1 to 14 through all
+modes.
+Reply on behalf of defendant no. 6 alone is on record.
+CS(COMM)-949/2023:
+Ld. Counsel for the plaintiff submits that steps have been
+taken to serve the summons to the defendants. Ld. Counsel is
+directed to file the affidavit of service within four weeks. It
+needs a highlight that on 12.01.2024, appearance had been put in
+before the Hon’ble Court on behalf of defendant nos. 1 to 6, 8 &
+11. However, notice was accepted on behalf of defendant nos. 1
+to 6 & 8. Written statement on behalf of defendant no. 6 is on
+record. Replication to the same may be filed as per rules.
+Plaintiff’s Counsel submits that she has not received a copy of
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:01
+the written statement which assertion is disputed by ld. Counsel
+for defendant no. 6 on the submissions that without proof of
+advance service, Registry does not accept the written statement.
+Summons are also accepted today on behalf of defendant no. 11.
+Let written statement be filed within the statutory period.
+Ld. Counsels for the defendant nos. 2, 3, 4, 5, 6 & 8
+submit that they were not required to do anything except in the
+eventuality of defendant no. 1 failing to act as per the directions
+of the Hon’ble Court and communication being sent to it by the
+plaintiff in this regard. Counsel further submits that no
+communication has been received from the plaintiff. Further,
+defendant no. 1 has filed its compliance affidavit.
+Put up for completion of pleadings on 30.04.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 19, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:01
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 949/2023
+LIVING MEDIA INDIA LIMITED & ANR. ..... Plaintiff
+Through: Mr. Rahul Beruar, Ms. Nidhi
+Jain, Ms. Jyotsana Sinha,
+Mr. Deepesh Bharadwaj,
+Ms. Akanksha Satpathy,
+Ms. Manini Sidhu, Advocates
+versus
+JAY JAYESHBHAI TANK & ORS. ..... Defendant
+Through: Mr. Rahul Bajaj (VC), Advocate
+for D-2.
+Mr. Parva Khare (VC),
+Advocate for D-3.
+Ms. Amee Rana, Mr. Yash
+Karunakaran, Ms. Sana Banyal
+(VC), Advocates for D-5.
+Mr. Rohan Ahuja, Ms. Shruttima
+Ehersa, Ms. Diya Viswanath,
+Advocates for D-4/Google LLC.
+Mr. Udit Tewari, Advocate for
+D-6.
+Mr. Ripu Daman Bhardwaj
+CGSC, Mr. Kushagra Kumar,
+Mr. K.Manaswini, Advocates for
+D-7.
+Mr. Saurabh Kumar, Ms. Rose
+Sebi (VC), Advocates for D-8.
+Mr. Madhav Khosla, Ms. Smriti
+Nair, Mr. Hardik Malik (VC),
+Advocates for D-9.
+Mr. Sandeep Das, Ms. Anandini
+Rathore, Ms. Anurima Sood,
+Advocates for D-11.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 30.04.2024
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:00
+I.A. No. 9484/2024 filed by D-4 for condoning delay of 74
+days beyond 30 days, in filing the written statement.
+Issue notice. Notice accepted by the ld. Counsel for the
+plaintiff. Ld. Counsel presses for an opportunity to file a reply.
+Let the reply be filed within two weeks, with an advance
+copy of the same to the opposite side. Rejoinder thereto, if any,
+be filed thereafter within a week of receiving an advance copy of
+the reply by defendant no. 4.
+I.A. No. 6433/2024 filed by D-8 seeking condonation of delay
+of 30 days in filing the written statement.
+Ld. Counsel for the plaintiff seeks some more time to file
+reply. Let the same be filed within a week failing which right to
+file reply shall stand closed.
+I.A. No. 26292/2023 (under Order XXXIX Rule 1 & 2 CPC.
+Reply has been filed on behalf of defendant nos. 4, 6 & 8.
+Rejoinders be filed within a week. The remaining defendants are
+also permitted to file their reply within a week.
+CS(COMM) 949/2023:
+Written statement on behalf of defendant nos. 4 & 8 is yet
+to be formally taken on record in view of pending IAs for seeking
+condonation of delay.
+Written statement on behalf of defendant no. 6 is on
+record. Replication be filed, if the rules permit.
+Ld. Counsel for defendant nos. 2, 7, 9 & 11 submit that
+written statement shall be filed as per rules.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:00
+Matter is already listed before the Hon’ble Court for
+06.05.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 06.05.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 30, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:35:00
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 949/2023, I.A. 6433/2024 & I.A. 9484/2024
+LIVING MEDIA INDIA LIMITED & ANR. ..... Plaintiffs
+Through: Mr. Rahul Beruar, Ms. Nidhi Jain,
+Ms. Jyotsana Sinha, Mr. Deepesh
+Bharadwaj, Ms. Akanksha Satpathy
+and Ms. Manini Sidhu, Advocates.
+versus
+JAY JAYESHBHAI TANK & ORS. ..... Defendants
+Through: Mr. Rahul Bajaj, Advocate for D-2.
+Ms. Mamta Jha, Ms. Shruttima
+Ehersa and Ms. Diya Viswanath,
+Advocates for D-4.
+Mr. Varun Pathak, Ms. Amee Rana,
+Mr. Yash Karunakaran and Ms. Sana
+Banyal, Advocates for D-5.
+Mr. Deepak Gogia and Mr. Aadhar
+Nautiyal, Advocates for D-6.
+Mr. Ripu Daman Bhardwaj, CGSC
+with Mr. Kushagra Kumar, Advocate
+for D-7.
+Ms. Anushka Sharda, Mr. Madhav
+Khosla and Ms. Smriti Nair,
+Advocates for D-9.
+Mr. Sandeep Das, Ms. Anandini
+Kumari and Ms. Anurima Sood,
+Advocates for D-11.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 06.05.2024
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:59
+I.A. 26292/2023 (under Order XXXIX Rules 1 & 2 of CPC)
+1. Pursuant to previous order dated 12th January, 2024, an ad interim
+injunction was passed in favour of plaintiffs.
+2. It is stated by counsel for plaintiffs that defendant no.1 has already
+complied with the said order.
+3. No counsel appears on behalf of defendant no.1, nor does defendant
+no.1 in person. Be that as it may, considering that defendant no.1 itself has
+complied with directions passed in Para 13 of the said order, the default
+directions which were given in Para 14 of the order were not necessary. In
+this regard, the role of defendant nos. 2 and 3 (Domain Name Registrars)
+may not be necessary and, therefore, they shall be deleted from the array of
+parties. As regards defendants nos. 4-6 and 8-14, which are various
+platforms, their role may also not be necessary considering there has been
+deactivation by defendant no.1 itself of the social media handles. Defendant
+nos. 6 and 8 have also filed a written statement in this regard.
+4. Accordingly, as per the directions above, only defendant no.1 (the
+contesting defendant) and defendant no.7 will be arrayed as parties.
+5. Mr. Bhardwaj, appearing on behalf of defendant no.7 (Office of
+Registrar of Newspapers for India) states that he shall seek instructions in
+relation to the relief sought under Para 113 (g) by plaintiff in relation to the
+RNI Registration of defendant no.1 of a newspaper, under the impugned
+mark ‘AAJTAK WATCH’. In any event, it is directed, that defendant no.7
+shall cancel defendant no.1’s RNI Registration bearing No.
+GUJGUJ/201560871 under impugned mark 'AAJTAK WATCH'/
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:59
+6. Plainiff shall file an amended memo of parties in this regard, within a
+period of 8 weeks.
+7. In these circumstances, injunction passed by this Court on 12th
+January, 2024, is made absolute.
+8. This application is accordingly, disposed of, with the above
+directions.
+CS(COMM) 949/2023
+9. Re-notify on 07th October, 2024.
+10. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+MAY 6, 2024/
+MR/na
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:59
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 949/2023
+LIVING MEDIA INDIA LIMITED & ANR. ..... Plaintiff
+Through: Mr. Rahul Beruar, Ms. Nidhi
+Jain, Ms. Jyotsana Sinha,
+Mr. Deepesh Bhardwaj,
+Ms. Manini Siddhu,
+Ms. Akanksha Satpathy,
+Advocates
+versus
+JAY JAYESHBHAI TANK & ORS. ..... Defendant
+Through: Mr. Yash Karunakaran (VC),
+Advocate for D-5
+Mr. Ripu Daman Bharadwaj
+(CGSC), Advocate for D-7.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 08.05.2024
+I.A. No. 10434/2024 filed by defendant no. 5 for condonation
+of delay of 56 days in filing the written statement.
+Ld. Counsel for defendant no. 5 submits that present
+application has become infructuous as defendant no. 5 was
+deleted from the array by the Hon’ble Court vide order dated
+06.05.2024.
+In view of the submissions, present IA stands disposed off
+as being infructuous.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 8, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:59
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 949/2023
+LIVING MEDIA INDIA LIMITED & ANR. ..... Plaintiff
+Through: Mr. Rahul Beruar, Ms. Nidhi
+Jain, Ms. Jyotsana Sinha,
+Mr. Deepesh Bhardwaj,
+Ms. Akanksha Satpathy,
+Ms. Manini Sidhu (VC),
+Advocates
+versus
+JAY JAYESHBHAI TANK & ORS. ..... Defendant
+Through: Kunal Raikwar, Mr. Rahul
+Kulhare (VC), Advocates for
+D-1.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 09.05.2024
+I.A. No. 10577/2024 filed by D-2 seeking condonation of delay
+of 88 days in filing the written statement.
+Ld. Counsel for the plaintiff submits that present
+application has become infructuous as defendant no. 2 has been
+deleted by the Hon’ble Court vide order dated 06.05.2024.
+In view of the submissions, present IA stands disposed off
+as being infructuous.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 9, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:58
+
+===== ORDER =====
+
+$~34
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 949/2023, I.A. 6433/2024 & I.A. 9484/2024
+LIVING MEDIA INDIA LIMITED & ANR. .....Plaintiffs
+Through: Mr. Rahul Beruar, Ms. Nidhi Jain,
+Ms. Jyotsana Sinha and Ms. Manini
+Sidhu, Advs.
+M: 9910044787
+Email: beruar@beruar.com
+versus
+JAY JAYESHBHAI TANK & ORS. .....Defendants
+Through: Mr. Ripu Daman Bhardwaj, CGSC
+with Mr. Kushagra Kumar, Mr.
+Abhinav Bhardwaj, Advocates for D-
+7.
+Mob: 9818030700
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 07.10.2024
+1. List before the Joint Registrar (Judicial) for admission-denial of
+documents and marking of exhibits, on 3rd December, 2024.
+MINI PUSHKARNA, J
+OCTOBER 7, 2024
+ak
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:58
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 949/2023
+LIVING MEDIA INDIA LIMITED & ANR. ....Plaintiff
+Through: Mr. Rahul Beruar, Ms. Nidhi
+Jain, Ms. Jyotsana Sinha,
+Advocates
+versus
+JAY JAYESHBHAI TANK & ORS. .....Defendant
+Through: Mr. Ripudaman Bhardwaj
+CGSC, Mr. Kushagra Kumar,
+Mr. Abhinav Bhardwaj,
+Advocates for D-7 /UOI
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 03.12.2024
+1. The matter has been listed today for carrying out
+admission / denial of documents.
+2. Of the initial 14 defendants, only defendants no. 1 & 7
+remain in the array. The contesting defendant is defendant no. 1,
+who has till date not filed its written statement nor has entered
+appearance after 19.03.2024. Summons in the suit were accepted
+by defendant no. 1 way back on 12.01.2024. Consequently, right
+of defendant no.1 to file written statement stands closed, given
+that maximum permissible period to do so has expired.
+3. Ld. Counsel for defendant no. 7 submits that defendant no.
+7 has already complied with the directions of the Hon‟ble Court
+passed in the order dated 06.05.2024 and has already cancelled
+the RNI registration of defendant no. 1. Ld. Counsel further
+submits that a compliance affidavit in this regard shall be filed
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:57
+with the Registry within two weeks and a compliance intimation
+shall be sent to ld. Counsel for the plaintiff within two weeks.
+4. In view of the above, put up before the Hon‟ble Court on
+18.12.2024, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+DECEMBER 3, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:57
+
+===== ORDER =====
+
+$~25
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 949/2023, I.A. 6433/2024 & I.A. 9484/2024
+LIVING MEDIA INDIA LIMITED & ANR. .....Plaintiffs
+Through: Mr. Rahul Beruar, Ms. Nidhi Jain,
+Ms. Jyotsana Sinha, Ms. Manini
+Sidhu and Ms. Aayushi Tiwari, Advs.
+M: 991004787
+versus
+JAY JAYESHBHAI TANK & ORS. .....Defendants
+Through: Mr. Ripu Daman Bhardwaj, CGSC
+with Mr. Kushagra Kumar and Mr.
+Abhinav Bhardwaj, Advs. for D-7
+(Through VC)
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 18.12.2024
+1. Learned counsel appearing for the plaintiffs submits that she may be
+granted libertyto file an application for summaryjudgment.
+2. Mr. Ripu Daman Bhardwaj, learned counsel appearing for defendant
+no.7 submits that compliance affidavit shall be filed within one week from
+today. He further submits that the registration of defendant no.1, has been
+cancelled.
+3. Accordingly, at request, re-notifyon 18th March, 2025.
+MINI PUSHKARNA, J
+DECEMBER 18, 2024/kr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:56
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 949/2023 & I.As. 6433/2024, 9484/2024
+LIVING MEDIA INDIA LIMITED & ANR. .....Plaintiffs
+Through: Ms. Nidhi Jain and Ms. Jyotsana
+Sinha, Advocates.
+versus
+JAY JAYESHBHAI TANK & ORS. .....Defendants
+Through: Mr. Ripudaman Bhardwaj, CGSC
+with Mr. Kushagara Kumar, Mr. Abhinav
+Bhardwaj and Mr. Amit Kumar Rana, Advocates
+for D-7/UoI.
+CORAM:
+HON'BLE MS. JUSTICE JYOTI SINGH
+O R D E R
+% 18.03.2025
+1. Learned counsel for the Plaintiffs submits that Plaintiffs shall be
+moving an application seeking summary judgment and seeks some time to
+do the needful as there is a change of authorised representative of the
+Plaintiffs.
+2. Learned Central Government Standing Counsel for the Defendant No.
+7 submits that action has been taken in terms of paragraph-5 of order dated
+06.05.2024 and Defendant No. 1’s RNI Registration bearing No.
+GUJGUJ/201560871 under impugned Mark ‘AAJTAK WATCH’/‘आजतक
+वाच’ and an affidavit on this aspect has been filed, however, the same is not
+on record.
+3. Let the affidavit be brought on record before the next date of hearing
+with another copy being furnished to learned counsel for the Plaintiffs.
+4. List on 11.07.2025.
+JYOTI SINGH, J
+MARCH 18, 2025/S.Sharma
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:56
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 949/2023
+LIVING MEDIA INDIA LIMITED & ANR. .....Plaintiffs
+Through: Ms. Jyotsana Sinha, Mr. Rahul Beruar
+and Ms. Nidhi Jain, Advocates
+versus
+JAY JAYESHBHAI TANK & ORS. .....Defendants
+Through: Mr. Ripu Daman Bhardwaj, CGSC
+with Mr. Kushagra Kumar, Mr.
+Abhinav Bhardwaj and Mr. Amit
+Kumar Rana, Advocates for UOI.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 01.04.2025
+Regular Stenographer is on leave today.
+I.A. No. 8383/2025 on behalf of plaintiffs seeking leave of this Hon’ble
+Court to bring on record change of authorised representative of
+plaintiffs (Ms.AntaraPachauri)
+1. There is no appearance on behalf of defendant no. 1. None has
+appeared on its behalf after May, 2024. Ld. Counsel for defendant no. 7
+submits that there is no objection to the present application.
+2. I have gone through the contents of the application. The application
+has been necessitated on account of the earlier AR having left the
+employment of the plaintiff. Plaintiffs now wish to move an application for
+passing a summary judgement and consequently it is important to have a
+new AR on record. The application is supported with the relevant
+documents. For the reasons mentioned above, the same is allowed. Ms.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:55
+Antara Pachauri is brought on record as AR of the plaintiff.
+3. Application stands disposed off.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL
+APRIL 1, 2025/pu
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:55
+
+===== ORDER =====
+
+$~15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 949/2023, I.A. 6433/2024-Delay 30 days in filing
+written statement by D-8, I.A. 9484/2024-Delay 74 days beyond 30
+days in filing written statement by D-4
+LIVING MEDIA INDIA LIMITED & ANR. .....Plaintiffs
+Through: Mr. Rahul Beruar, Ms. Nidhi Jain
+and Mr. Apoorv Bansal, Advocates.
+versus
+JAY JAYESHBHAI TANK & ORS. .....Defendants
+Through: Mr. Ripudaman Bhardwaj, CGSC
+with Mr. Kushagra Kumar and Mr.
+Amit Kumar Rana, Advocates for
+UOI.
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 11.07.2025
+1. Learned counsel for the plaintiffs seeks accommodation for today.
+2. Accordingly, in the interest of justice, renotify on 14.10.2025.
+SAURABH BANERJEE, J
+JULY 11, 2025
+NA
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:55
+
+===== ORDER =====
+
+$~248
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 949/2023
+LIVING MEDIA INDIA LIMITED & ANR.
+.....Plaintiff
+Through: None
+versus
+JAY JAYESHBHAI TANK & ORS.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared on behalf of the parties.
+Let this matter be sent back to the Hon’ble Court for further
+directions.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:54
+
+===== ORDER =====
+
+$~10
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 949/2023 & I.As. 6433/2024, 9484/2024
+LIVING MEDIA INDIA LIMITED & ANR. .....Plaintiffs
+Through: Mr. Rahul Beruar, Ms. Nidhi Jain and
+Ms. Aeshna Raghuwanshi, Advocates
+(Through VC)
+versus
+JAY JAYESHBHAI TANK & ORS. .....Defendants
+Through: Mr. Ripu Daman Bhardwaj, CGSC
+with Mr. Kushagra Kumar and Mr.
+Kumar Rana, Advocates for UOI
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 14.10.2025
+1. An adjournment slip has been circulated by the plaintiff.
+2. Learned counsel for the plaintiff states that none of the contesting
+defendants are appearing in this matter.
+3. At request, list on 22.01.2026.
+MANMEET PRITAM SINGH ARORA, J
+OCTOBER 14, 2025/rhc
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:54

@@ -1,0 +1,565 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_823_2023
+case_status: DISPOSED
+n_orders: 6
+
+$~2
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 823/2023 & I.As. 22669-22674/2023
+SMITHKLINE BEECHAM LIMITED ..... Plaintiff
+Through: Ms. Tanya Varma, Adv. with
+Mr. Vardaan Anand, Ms. Aiswarya
+Debarshini and Urvitripathi, Advs.
+versus
+RGSK LIFE BIOTECH PRIVATE LIMITED & ANR.
+..... Defendants
+Through: None
+CORAM:
+HON'BLE MR. JUSTICE C. HARI SHANKAR
+O R D E R
+% 10.11.2023
+CS(COMM) 823/2023
+1. The plaintiff is the proprietor of the following registered trade
+marks:
+Mark Registration/ Class Registration Status
+Application date
+No. – class
+GSK 930863 10 9 June 2000 Registered
+GSK 1236679 41,42 15 Registered
+September
+2003
+944362 5 2 August Registered
+2000
+CS(COMM) 823/2023 Page 1 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:13
+1294579 35,41,42 6 July 2004 Registered
+IR No. 1, 3, 5, 9, 23 August Registered
+1205093 10, 16, 2013
+21, 29,
+30, 32,
+35, 41,
+42, 44
+IR No. 1, 3, 5, 9, 23 August Registered
+1204936 10, 16, 2013
+21, 29,
+30, 32,
+35, 41,
+42, 44
+2. The plaintiff is aggrieved by the use, by the defendants, of the
+marks RGSK Life Biotech Pvt. Ltd. of which the defendants hold
+registration w.e.f. 28 January 2019.
+3. The plaintiff’s and the defendants’ marks are both used for
+pharmaceutical preparations.
+4. Ms. Tanya Varma, learned Counsel for the plaintiff, submits
+that, as the entire GSK mark of the plaintiff is subsumed in the
+defendants’ mark, and both marks are used for pharmaceutical
+products, there is every likelihood of confusion in the market, if they
+are allowed to co-exist.
+5. Nonetheless, as the Defendant 1 has a registration in respect of
+its mark, Ms. Varma is agreeable to a short notice being granted to the
+defendants to respond to the request for interlocutory injunction before
+the application is taken up for hearing.
+CS(COMM) 823/2023 Page 2 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:13
+6. In the circumstances, let the plaint be registered as a suit.
+7. Issue summons in the suit. Summons be served by all modes.
+8. Written statement, accompanied by affidavit of admission and
+denial of the documents filed by the plaintiff be filed within 30 days
+with advance copy to learned Counsel for the plaintiff who may file
+replication thereto, accompanied by affidavit of admission and denial
+of the documents filed by the defendants within 30 days thereof.
+9. List before the learned Joint Registrar (Judicial) for completion
+of the pleadings, admission and denial of documents and marking of
+exhibits on 11 January 2024, whereafter the matter would be placed
+before the Court for case management hearing and further
+proceedings.
+IA 22669/2023 (Under Order XXXIX Rules 1 & 2 of the CPC)
+10. This is an application by the plaintiff under Order XXXIX
+Rules 1 and 2 of the CPC for interlocutory injunctive reliefs.
+11. Issue notice. Reply, if any, be filed within four weeks with
+advance copy to leaned Counsel for the plaintiff who may file
+rejoinder thereto, if any, within two weeks thereafter.
+12. List before the Court for hearing and disposal of this application
+on 21 December 2023.
+CS(COMM) 823/2023 Page 3 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:13
+13. No extension of time for filing reply or rejoinder would be
+granted and the matter would be taken up for hearing and disposal of
+this application on the next date of hearing.
+I.A. 22670/2023 (under Section 12A of the Commercial Courts Act)
+14. This is an application seeking exemption from complying with
+the requirement of pre-institution mediation.
+15. Ms. Varma points out that the plaintiff has addressed as many
+as three cease and desist notices to the defendants and that the
+defendants, nonetheless, continued to use the infringing products.
+16. Inasmuch as the marks are being used for pharmaceutical
+products, she prays for exemption from the requirement of pre-
+institution mediation which, she submits, would not result in anything
+fruitful.
+17. Having heard Ms. Varma and examined the facts, I am of the
+opinion that relegating the plaintiff to the exercise of pre-institution
+mediation in the present case, especially in the face of the fact that as
+many as three cease and desist notices were issued by the plaintiff to
+the defendants, is likely to be an exercise in futility.
+18. As the defendants are continuing to use the impugned marks, I
+am inclined to allow the institution of the present suit without the
+requirement of exhausting the avenue of pre-institution mediation.
+19. Accordingly, the application is allowed.
+CS(COMM) 823/2023 Page 4 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:13
+IA 22671/2023 (under Order XI Rule 1(4) of the CPC)
+20. This is an application by the plaintiff seeking permission to
+place certain additional documents on record. The plaintiff would be
+at liberty to place additional documents on record, in accordance with
+the protocol envisaged under Order XI Rule 1(4) of the CPC, as
+amended by the Commercial Courts Act 2015.
+21. The application is disposed of accordingly.
+IA 22672/2023 (exemption)
+22. Subject to the plaintiff’s filing legible copies of any dim or
+illegible documents on which it may seek to place reliance within 30
+days from today, exemption is granted for the present.
+23. The application stands disposed of.
+I.A. 22673/2023 (exemption from advance serving on defendant 2)
+24. This is an application for exemption from advance service.
+25. Inasmuch as the court is issuing summons and notice and is not
+passing any ex-parte order against the defendants, this application
+does not really survive for consideration. It is disposed of as such.
+IA 22674/2023 (under Section 149 of the CPC)
+26. Ms. Varma submits that the court fees has been deposited.
+CS(COMM) 823/2023 Page 5 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:13
+27. Accordingly, this application does not survive for consideration
+and is accordingly disposed of.
+C. HARI SHANKAR, J.
+NOVEMBER 10, 2023
+dsn
+Click here to check corrigendum, if any
+CS(COMM) 823/2023 Page 6 of 6
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:13
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 823/2023
+SMITHKLINE BEECHAM LIMITED ..... Plaintiff
+Through: Ms. Tanya Varma, Mr. Vardaan
+Anand and Ms. Aiswarya Debadarshini,
+Advs.
+versus
+RGSK LIFE BIOTECH
+PRIVATE LIMITED & ANR. ..... Defendants
+Through: Mr. Achal Shekhar and Mr.
+Aayushi Pandey, Advs.
+CORAM:
+HON'BLE MR. JUSTICE C. HARI SHANKAR
+O R D E R
+% 21.12.2023
+I.A. 22669/2023 (Order XXXIX Rules 1 and 2 of the CPC)
+1. Mr. Achal Shekhar, learned Counsel for the defendants submits
+that his client, is a man of meagre means and is not interested in
+contesting this litigation. He also submits that his client would be
+willing to give up use of the allegedly infringing mark.
+2. In order to ascertain the present stock of goods bearing the
+infringing mark available with his client, Mr. Shekhar is directed to
+provide a table of the stock of products present available with his
+client along with batch numbers and expiry dates.
+3. Let a copy of the tabular statement be emailed to learned
+Counsel for the plaintiff today itself, as well as to the Court Master.
+CS(COMM)823/2023 Page1of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:12
+4. Renotify on 22 December 2023.
+C.HARI SHANKAR, J
+DECEMBER 21, 2023
+rb
+Click here to check corrigendum, if any
+CS(COMM)823/2023 Page2of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:12
+
+===== ORDER =====
+
+$~35
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 823/2023
+SMITHKLINE BEECHAM LIMITED ..... Plaintiff
+Through: Ms. Tanya Varma, Mr. Vardaan
+Anand and Ms. Aiswarya D., Advocates.
+versus
+RGSK LIFE BIOTECH
+PRIVATE LIMITED & ANR. ..... Defendants
+Through: Mr. Achal Shekhar, Mr.
+Prashant Srivastava and Ms. Aayushi
+Pandey, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 22.12.2023
+I.A. 22669/2023
+1. Given the order which is being passed, it is not necessary to
+advert in detail to the facts. Suffice it to state that the plaintiff is the
+proprietor of the following registered trade marks:
+Mark Registration/Application Registration Date
+No.
+-
+Class
+GSK 930871 9 June 2000
+-
+5
+GSK 930863 9 June 2000
+-
+10
+GSK 1236679 15 September 2003
+-
+41, 42
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:12
+944362 2 August
+- 2000
+5
+1294579 6 July 2004
+-
+35, 41, 42
+IR No. 1205093 23 August 2013
+-
+1, 3, 5, 9, 10, 16, 21, 29,
+30, 32, 35, 41, 42, 44
+2. The plaintiff is aggrieved by the use, by the defendants of the
+mark RGSK/ .
+3. Defendant 1 is the proprietor of “RGSK Life Biotech”
+registered as a word mark in Class 35 under the Trade Marks Act,
+1999. Defendant 2 is engaged in business of manufacture of
+pharmaceutical products under the impugned marks RGSK/ .
+4. In these circumstances, the plaintiff has approached this Court
+by means of the present suit, seeking a decree of permanent
+injunction, restraining the defendants, as well as all others acting on
+their behalf from using the mark RGSK/ as well as the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:12
+trade name RGSK Life Biotech Private Limited, as the plaintiff
+submits that they infringe the plaintiff’s registered trade marks and,
+owing to the common GSK element, are likely to create confusion in
+the minds of the consumers between Defendant 1’s and the plaintiff’s
+products, especially as both operate in the pharmaceutical segment.
+5. Mr. Achal Shekhar, who appears on behalf of Defendant 1,
+submits that Defendant 1 was using the impugned marks for
+pharmaceutical products bona fide, and is a very small player in the
+field with a recorded profit of ₹ 320 for the FY 2020-21 and ₹ 72 for
+the FY 2021-22. He also submits that, in so far as the impugned mark
+is concerned, his client is presently holding a stock of only the product
+‘Gi-Safe’ which is the combination of Rabeprazole and Domperidone.
+6. He prays that his client may be permitted to exhaust the said
+stock with the undertaking that he will not use the impugned mark in
+future for any product.
+7. Ms. Varma is agreeable to the suit being decreed in the
+aforesaid terms but prays that some token costs may be imposed on
+Defendant 1.
+8. Mr. Achal Shekhar submits that, as Defendant 1 is a man of
+very modest means, he would not be able to bear any costs imposed
+by this Court.
+9. Costs cannot be imposed as a mere formality. The Court trusts
+the statement of counsel. If, in fact, Defendant 1 is a man of such
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:12
+modest means, no purpose would be served in imposing costs on him.
+10. In any event, the defendant has come forth at the very outset
+with an offer that he would not use this mark in future. Given the
+financial condition of Defendant 1 as stated by Mr. Shekhar, that, in
+my view, should assuae the grievance of the plaintiff in the matter of
+infringement in so far as Defendant 1 is concerned.
+11. In view of the aforesaid, the suit stands decreed against
+Defendant 1 in the following terms:
+(i) Defendant 1 is restrained permanently from using, in any
+manner the word mark “RGSK” or the device mark
+for any goods or services whatsoever.
+(ii) Defendant 1 shall also apply to the Registrar of Trade
+Marks seeking cancellation of registration No. 4069876 dated
+28 January 2019 granted to it for the mark “RGSK Life
+Biotech” within a period of one week from today. Such
+application, as and when filed, shall be processed by the
+Registrar of Trade Marks.
+(iii) Defendant 1 shall also apply to the Registrar of
+Companies for changing of its corporate name from the name
+“RGSK Life Biotech” to another name which does not
+incorporate “GSK” and would not, therefore, infringe the
+plaintiff’s registered trade marks, within four weeks from today.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:12
+The Registrar of Companies, as and when the application is
+moved, and at any rate within four weeks of its filing, shall
+proceed to decided the application.
+12. Mr. Shekhar also undertakes that his client would permanently
+delete its Face Book page in which it uses the impugned mark
+“RGSK”.
+13. No further orders are required to be passed in the suit qua
+Defendant 1.
+14. The suit stands decreed qua Defendant 1 in the aforesaid terms.
+15. Let a decree sheet be drawn up accordingly.
+16. Qua Defendant 2, let the matter be listed before the Joint
+Registrar (Judicial) on 11 January 2024, the date already fixed.
+C.HARI SHANKAR, J
+DECEMBER 22, 2023
+kd
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:12
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 823/2023
+SMITHKLINE BEECHAM LIMITED
+..... Plaintiff
+Through: Ms. Aiswarya Debadarshini,
+Adv.
+versus
+RGSK LIFE BIOTECH PRIVATE LIMITED & ANR.
+..... Defendant
+Through: None.
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 11.01.2024
+The suit has already been decreed qua defendant no.1 on
+22.12.2023.
+The service-affidavit filed, via diary no.2313022/23 shows
+that the defendant no.2 was served on 12.12.2023, vide registered
+post. This defendant may now file the written statement in due
+course, whereafter the replication be accordingly filed.
+List the matter for completion of pleadings qua defendant
+no.2 on 26.04.2024.
+IA No.22669/2023 (u/order 39 Rule 1 & 2 r/w Section 151 CPC)
+The defendant no.2 may file the reply within six weeks,
+whereafter the rejoinder be filed before the next hearing.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 11, 2024/ss
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:11
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 823/2023
+SMITHKLINE BEECHAM LIMITED ... Plaintiff
+Through: Mr. Vardaan Anand,
+Ms. Shilpi Sinha, Advocates
+versus
+RGSK LIFE BIOTECH PRIVATE LIMITED & ANR.
+..... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 26.04.2024
+CS(COMM)-913/2023 and IA No. 22669/2023 (u/order 39
+Rule 1 & 2 r/w Section 151 CPC).
+Suit has already been decreed qua defendant no. 1.
+Defendant no. 2 however has not filed any written
+statement or a reply to the above listed IA despite being served
+on 12.12.2023. Maximum permissible period to file the written
+statement has expired. Consequently, its right to file the written
+statement stands closed. Additionally, since sufficient time has
+been afforded to file a reply by defendant no. 2, right to file reply
+to IA No. 22669/2023 also stands closed.
+Put up before the Hon’ble Court on 28.05.2024, for further
+directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 26, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:10
+
+===== ORDER =====
+
+$~10
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 823/2023 & I.A. 22669/2023
+SMITHKLINE BEECHAM LIMITED ..... Plaintiff
+Through: Ms. Shilpi Sinha, Advocate
+versus
+RGSK LIFE BIOTECH PRIVATE LIMITED & ANR.
+..... Defendants
+Through: None.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 28.05.2024
+1. The suit has already been decreed against Defendant No. 1 on 22nd
+December, 2023. Defendant No. 2 has been served but they have not filed
+any written statement. Their right to file written statement, as well as their
+right to file reply to I.A. 22669/2023 (filed by Plaintiff under Order XXXIX
+Rule 1 & 2) stands closed as on 26th April, 2024. They have also not
+appeared in the matter at any stage and accordingly, are proceeded ex-parte.
+2. Counsel for Plaintiff presses only for the relief of permanent
+injunction, as contained in Paragraph No. 50(a) and (b) of the plaint.
+3. In the instant suit, Plaintiff is the registered proprietor of the
+trademark “GSK”, for which they have several registrations in different
+classes. Their grievance in the present suit pertains to Defendant No. 1’s use
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:10
+of the trademark “RGSK/ ” Defendant No. 2 was impleaded in the
+capacity of the third-party manufacturer for Defendant No. 1.
+4. As noted above, Defendant No. 1 has voluntarily agreed not to use the
+impugned trademark. In these circumstances and having regard to Plaintiff’s
+trademark rights in “GSK” and other formative marks, the Court accepts
+Plaintiff’s request for grant of a decree. Particularly, since Defendant No. 2
+has not contested the present proceedings and was earlier engaged in
+manufacturing of the product under the impugned mark at the behest of
+Defendant No. 1.
+5. Thus, the present suit is decreed in favour of Plaintiff and against
+Defendant No. 2 under Order VIII Rule 10 read with Order XIII-A of CPC
+in respect of Paragraph Nos. 50(a) and (b) of the plaint.
+6. None of the other reliefs are being pressed against Defendant No. 2
+7. Decree sheet be drawn up.
+8. Suit and pending application stand disposed of.
+SANJEEV NARULA, J
+MAY 28, 2024
+d.negi
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:24:10

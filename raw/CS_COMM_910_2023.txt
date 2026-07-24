@@ -1,0 +1,713 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_910_2023
+case_status: PENDING
+n_orders: 16
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM)-910/2023
+M/S REFLECT SCULPT PRIVATE LTD. & ANR...... Plaintiffs
+Through: Mr. Siddharth Bambha and
+Mr.Abhirath Prashar Advocates.
+versus
+HAFEEZ KHAN & ANR. ..... Defendants
+Through: None.
+CORAM:
+HON'BLE MS. JUSTICE NEENA BANSAL KRISHNA
+O R D E R
+% 29.12.2023
+I.A. 26341/2023
+1. The present application has been filed on behalf of the
+applicants/plaintiffs for the change of name of the Local Commissioner Ms.
+Shreya Sethi since she is not available in India and the Commission has to
+be executed within one week the time of which is expiring today.
+2. Learned counsel for the applicants/ plaintiffs, on instructions, submits
+that he has telephonically contacted Ms. Shreya Sethi, Local Commissioner,
+who has stated that she would return to India and execute the Commission
+on 03.01.2024.
+3. In view of the submissions made, the time for execution of
+Commission is extended till 04.01.2024.
+4. Application is accordingly disposed of.
+5. Copy of order be given dasti under signature of the Court Master.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:22
+6. Copy of order be not uploaded, till the commission is executed.
+NEENA BANSAL KRISHNA
+(VACATION JUDGE)
+DECEMBER 29, 2023
+kd/ck
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:22
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 910/2023
+M/S REFLECT SCULPT PRIVATE LTD. & ANR.
+..... Plaintiff
+Through: Ms. Sucharu Garg, Mr. Abhirath
+Parashar (VC), Advocates
+versus
+HAFEEZ KHAN & ANR. ..... Defendant
+Through: Mr. Rahul Kumar Jain,
+Mr. Sheikh Imran Alam (VC),
+Advocates for D-1
+Mr. Chiranjeev Sugandh (VC),
+Advocate for D-2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 15.02.2024
+CS(COMM) 910/2023 & I.A. 25670/2023 (u/O XXXIX Rules
+1 & 2 CPC).
+Defendant no. 2 has been served on 18.01.2024. However
+there is no formal service report regarding defendant no. 1
+though appearance has been put in today on behalf of defendant
+no. 1 who is deemed to have been served today. Ld. Counsel for
+defendant no. 1 submits that defendant no. 1 has not received the
+complete paper book since he has not been formally served with
+summons. Ld. Counsel for plaintiff is directed to send the
+complete paper book on the email of ld. Counsel for the
+defendant no. 1 i.e. Imranalam66@gmail.com. The statutory
+period of 30 days to file written statement shall commence from
+the date on which complete paper book is supplied to ld. Counsel
+for defendant no. 1.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:21
+Ld. Counsel for defendant no. 2 submits that written
+statement filed on behalf of defendant no. 2 which was returned
+under office objections has been re-filed yesterday alongwith
+reply to application under Order 39 Rule 1 & 2 and affidavit of
+admission / denial of documents. The same however is not on
+record. Let the ld. Counsel check up with the Registry and take
+steps to bring the same on record.
+Ld. Counsel for defendant no. 2 is further directed to
+supply a fresh copy of documents which have been filed
+yesterday i.e. written statement / reply / affidavit of admission /
+denial of documents on the email of ld. Counsel for the plaintiff
+i.e. sucharu@bambhaandnandan.in.
+Put up for completion of pleadings on 25.04.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 15, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:21
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 910/2023
+M/S REFLECT SCULPT PRIVATE LTD. & ANR.
+..... Plaintiff
+Through: Mr. Siddharth Bambha,
+Mr. Harshit Thakur, Advocates
+versus
+HAFEEZ KHAN & ANR. ..... Defendant
+Through: Mr. Chiranjeev Sugandh,
+Mr. Sunny Choudhary (VC),
+Advocates for D-2
+E-mail : sugandhsandco@gmail.com
+Mobile No. +91-9999660587
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 25.04.2024
+CS(COMM) 910/2023 & I.A. 25670/2023 (u/O XXXIX Rules
+1 & 2 CPC).
+Written statement / reply on behalf of defendant no. 2 is on
+record. A copy of the same has been supplied on 08.04.2024 to
+ld. Counsel for the plaintiff. Let the replication be filed within
+the period permissible, as worked out from 08.04.2024.
+Defendant no. 1 was supplied with the complete paper
+book as directed, on 15.02.2024. However, no written statement
+has been filed till now neither anyone has appeared on behalf of
+defendant no. 1. Reply to IA has also not been filed by defendant
+no. 1.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 14.05.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 25, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:21
+
+===== ORDER =====
+
+$~25
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 910/2023 & I.A. 25670/2023, I.A. 25671/2023
+M/S REFLECT SCULPT PRIVATE LTD. & ANR. ..... Plaintiffs
+Through: Mr. Siddharth Bambha, Ms. Sucharu
+Garg and Mr. Harshit Thakur,
+Advocates.
+versus
+HAFEEZ KHAN & ANR. ..... Defendants
+Through: Mr. Chiranjeev Sugandh and Mr.
+Sunny Choudhary, Advocates for D-
+2.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 14.05.2024
+1. It is already 04:40 PM. Due to paucity of time, it is not possible to
+take up this matter today.
+2. Re-notify on 03rd October, 2024.
+SANJEEV NARULA, J
+MAY 14, 2024
+d.negi
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:20
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 910/2023
+M/S REFLECT SCULPT PRIVATE LTD. & ANR.
+..... Plaintiff
+Through: Ms. Sucharu Garg (VC),
+Advocate
+versus
+HAFEEZ KHAN & ANR. .... Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 17.05.2024
+I.A. No. 29490/2024 on behalf of the plaintiffs to condone the
+delay of 1 day in filing the replication.
+Plaintiff was permitted to file replication within the period
+permissible, as worked out from 08.04.2024 which is the date
+when copy of the written statement on behalf of defendant no. 2
+was supplied to ld. Counsel for the plaintiff. The replication has
+been filed on 10.05.2024 and consequently the filing is delayed
+by one day.
+In view of the minor delay, delay stands condoned.
+Replication is taken on record.
+IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 17, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:20
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 910/2023 with I.A. 25670/2023, I.A. 25671/2023
+M/S REFLECT SCULPT PRIVATE LTD. & ANR. .....Plaintiffs
+Through: Mr Siddharth Bambha and
+Mr Abhirath Parashar, Advocates
+versus
+HAFEEZ KHAN & ANR. .....Defendants
+Through: Mr. Chiranjeev Sugandh, Advocate
+for D-2
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 03.10.2024
+1. Counsel for the parties request that the matter be referred to Delhi
+High Court Mediation and Conciliation Centre.
+2. Accordingly, list before Delhi High Court Mediation and Conciliation
+Centre on 8th October, 2024 at 03:00 PM.
+3. List for reporting outcome of mediation on 9th December, 2024.
+AMIT BANSAL, J
+OCTOBER 3, 2024/ds
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:19
+
+===== ORDER =====
+
+$~25
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 910/2023 & I.A. 25670-25671/2023
+M/S REFLECT SCULPT PRIVATE LTD. & ANR. .....Plaintiffs
+Through: Mr. Siddharth Bambha and
+Mr. Nandana Menon, Advocates.
+versus
+HAFEEZ KHAN & ANR. .....Defendants
+Through: Mr. Sunny Chaudhary, Advocate for
+D-2.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 09.12.2024
+CS(COMM) 910/2023
+1. As per the report of the Delhi High Court Mediation and Conciliation
+Centre (Mediation Centre), the matter could not be settled.
+2. None has been appearing on behalf of defendant no.1 since 15th
+February, 2024, neither has any written statement been filed, despite the
+maximum permissible period of 120 days having elapsed.
+3. The right of defendant no.1 to file written statement is closed and the
+defendant no.1 is proceeded against ex parte.
+4. To be noted, pleadings qua defendant no. 2 are complete.
+5. Counsel for defendant no.2 submits that the defendant no.2 wishes to
+settle the matter with the plaintiff.
+5.1 In that event, he is free to approach the counsel for plaintiff.
+6. List before the Joint Registrar for marking of exhibits on 27th January,
+CS(COMM)910/2023 Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:19
+2025.
+I.A. 25670/2023 (under Order XXXIX Rules 1 and 2 CPC)
+7. With the consent of parties, the interim order dated 20th December,
+2023 is made absolute till the final adjudication of the case.
+8. Application stands disposed of.
+AMIT BANSAL, J
+DECEMBER 9, 2024
+PB
+CS(COMM)910/2023 Page 2 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:19
+
+===== ORDER =====
+
+$~6
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 910/2023
+M/S REFLECT SCULPT PRIVATE LTD. & ANR.
+.....Plaintiff
+Through: Mr. Siddharth Bambha (VC),
+Ms. Nandana Menon, Advocates
+versus
+HAFEEZ KHAN & ANR. ....Defendant
+Through: Mr. Sunny Chaudhary, Proxy
+Counsel for D-2.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 27.01.2025
+1. The matter has been listed today for carrying out
+admission / denial of documents. However, parties i.e. plaintiff
+and defendant no. 2 are yet to file their documents in physical
+form.
+2. Parties are now directed to file their documents in physical
+form alongwith Joint document schedule, also in physical form,
+within six weeks.
+3. Defendant no. 1 has already been proceeded against ex-
+parte.
+4. Put up for admission / denial of documents on 09.04.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 27, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:18
+
+===== ORDER =====
+
+$~32
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 910/2023
+M/S REFLECT SCULPT PRIVATE LTD. & ANR. .....Plaintiffs
+Through: Mr. Siddharth Bambha and Mr.
+Hardik Malik, Advs.
+versus
+HAFEEZ KHAN & ANR. .....Defendants
+Through: None.
+CORAM:
+HON’BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 12.02.2025
+I.A. 3696/2025
+1. By virtue of the present application, the plaintiffs seek passing of an
+ex-parte decree against the defendant no.1 in terms of the prayer clause in
+the plaint due to the factum that the said defendant, despite service, has not
+filed his written statement till date.
+2. Issue fresh notice to the defendant no.1 by all permissible modes
+returnable on 15.07.2025.
+3. Reply, if any, be filed within six weeks’ from today. Rejoinder
+thereto, if any, be filed within four weeks’ thereafter.
+4. Renotify on 15.07.2025.
+SAURABH BANERJEE, J
+FEBRUARY 12, 2025/bh
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:17
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 910/2023
+M/S REFLECT SCULPT PRIVATE LTD. & ANR.
+.....Plaintiff
+Through: Mr. Siddharth Bambha,
+Mr. Hardik Malik, Advocates
+versus
+HAFEEZ KHAN & ANR.
+.....Defendant
+Through: Mr. Sunny Chaudhary, Advocate
+for D-2
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 09.04.2025
+1. The matter has been listed today for carrying out
+admission / denial of documents on behalf of the plaintiff and
+defendant no. 2. However, ld. Counsel for the plaintiff submits
+that documents in physical form have been filed yesterday only
+and consequently, they would be under scrutiny.
+2. Defendant no. 1 is ex-parte.
+3. Ld. Counsel for defendant no. 2 submits that since he is a
+proxy counsel, he is not sure whether the documents have been
+filed physically or not. He is directed to check up with the
+Registry and if the documents have not been filed physically,
+same be also filed within six weeks. Joint document schedule be
+also filed before the next date.
+4. Put up for admission / denial of documents on 10.07.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 9, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:17
+
+===== ORDER =====
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 910/2023
+M/S REFLECT SCULPT PRIVATE LTD. & ANR.
+.....Plaintiff
+Through: Mr. Hardik Malik (VC),
+Advocate
+Versus
+HAFEEZ KHAN & ANR.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 10.07.2025
+1. The matter has been listed today for carrying out
+admission / denial of documents on behalf of the plaintiff and
+defendant no. 2.
+2. Documents in physical form have been filed on behalf of
+the plaintiff. However, there is no appearance on behalf of
+defendant no. 2 (Defendant no. 1 being ex-parte) to inform
+whether physical documents have been filed or not. Even on the
+last date proxy counsel had appeared on behalf of defendant no. 2
+but had no idea as to whether documents have been filed in
+physical form or not. Six weeks were granted on the last date to
+file the same in case they had not been filed. However, there is
+no noting of the Registry to the effect that documents in physical
+form have been filed on behalf of defendant no. 2 or not.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:16
+3. Ld. Counsel for the plaintiff submits that JDS shall be filed
+within a week.
+4. Matter is already listed before the Hon’ble Court for
+15.07.2025. Be placed before the Hon’ble Court on the date
+already fixed i.e. 15.07.2025, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 10, 2025/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:16
+
+===== ORDER =====
+
+$~20
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+I.A. 3696/2025
+IN
++ CS(COMM) 910/2023
+M/S REFLECT SCULPT PRIVATE LTD.
+& ANR. .....Plaintiffs
+Through: Mr. Siddharth Bambha, Mr. Hardik
+Malik and Ms. Nandana Menon,
+Advocates.
+versus
+HAFEEZ KHAN & ANR. .....Defendants
+Through: None.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 15.07.2025
+1. The defendant no.1 has already been proceeded against ex-parte.
+2. None appears on behalf of the defendant no.2.
+3. In the interest of justice, adverse orders are deferred.
+4. List on 27th October, 2025.
+AMIT BANSAL, J
+JULY 15, 2025
+Rzu
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:16
+
+===== ORDER =====
+
+$~229
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 910/2023
+M/S REFLECT SCULPT PRIVATE LTD. & ANR.
+.....Plaintiff
+Through: Ms. Aroshi Pal, Adv. (VC)
+versus
+HAFEEZ KHAN & ANR.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the defendant when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:15
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 910/2023 & I.A. 3696/2025
+M/S REFLECT SCULPT PRIVATE LTD. & ANR. .....Plaintiffs
+Through: Mr. Siddarth Bambha and Mr. Hardik
+Malik, Advocates
+versus
+HAFEEZ KHAN & ANR. .....Defendants
+Through: Mr. Sunny Chaudhary, Proxy Counsel
+for D-2 (Through VC)
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 27.10.2025
+1. None appears on behalf of the defendant no. 2.
+2. Learned counsel for the plaintiff states that defendant no. 2 is
+represented through Mr. Sunny Chaudhary, Advocate and the said advocate
+has not sought his discharge in these proceedings.
+3. At this stage, Mr. Sunny Chaudhary, Advocate has entered
+appearance. He states that he is a proxy counsel for Mr. Chiranjeev
+Sugandh. He states that Mr. Chiranjeev Sugandh, the main counsel, is
+unavailable as he is busy in cross-examination in another matter.
+4. Mr. Chiranjeev Sugandh, Advocate, Mr. Sunny Chaudhary, Advocate
+and defendant no. 2 are directed to remain personally present in Court on the
+next date of hearing.
+5. List on 11.12.2025.
+MANMEET PRITAM SINGH ARORA, J
+OCTOBER 27, 2025/rhc
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:15
+
+===== ORDER =====
+
+$~25
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 910/2023, I.A. 25671/2023 & I.A. 3696/2025
+M/S REFLECT SCULPT PRIVATE LTD.
+& ANR. .....Plaintiffs
+Through: Mr. Siddarth Bambha, Adv.
+versus
+HAFEEZ KHAN & ANR. .....Defendants
+Through: None
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 11.12.2025
+None appears on behalf of the defendant no. 2 despite specific orders
+passed on the last date of hearing in the presence of the counsel.
+In case there is no appearance on behalf of defendant no. 2 and its
+Advocates on the next date of hearing, this Court will initiate coercive
+proceedings against defendant no. 2 and recommend initiation of bar council
+proceedings against the Advocates appearing for defendant no. 2 for this
+wilful non-appearance, which is interfering in the administration of justice.
+In the interest of justice, list on 07.01.2026 in the supplementary list.
+MANMEET PRITAM SINGH ARORA, J
+DECEMBER 11, 2025/msh
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:14
+
+===== ORDER =====
+
+$~29
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 910/2023, I.A. 25671/2023 & I.A. 3696/2025
+M/S REFLECT SCULPT PRIVATE LTD. & ANR......Plaintiffs
+Through: Ms. Nandan Menon, Advocate.
+versus
+HAFEEZ KHAN & ANR. .....Defendants
+Through: Mr. Chiranjeev Sugandh, Advocate for
+D-2 alongwith D-2 in person.
+CORAM:
+HON'BLE MR. JUSTICE TUSHAR RAO GEDELA
+O R D E R
+% 07.01.2026
+1. In terms of the order dated 27.10.2025, Mr. Chiranjeev Sugandh, learned
+counsel appearing for defendant no.2 alongwith defendant no.2, is present in
+Court. He submits that on account of ill health of his brother, who subsequently
+passed away in the month of December, 2025, he was unable to appear on the
+said dates. He tenders unconditional apology.
+2. In view of the aforesaid situation, this Court accepts the apology.
+3. Learned counsel for the parties have submitted that so far as defendant
+no.1 is concerned, he had been proceeded ex-parte vide order dated 09.12.2024.
+Parties have shown interest to resolve the dispute by mediation process and
+request that the present matter may be referred to the Delhi High Court
+Mediation & Conciliation Centre for settlement of all disputes arising in the
+present suit.
+4. Accordingly, list the matter before the Mediation Centre on 16.01.2026
+at 4.30 p.m. where the plaintiffs alongwith their counsel and defendant no.2
+alongwith Mr. Sugandh, learned counsel are permitted to appear for settlement
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:13
+of the disputes.
+5. The Organising Secretary of the Delhi High Court Mediation &
+Conciliation Centre, is requested to appoint a Mediator in the present matter.
+6. List before the Court for awaiting the Mediation Report on 15.04.2026.
+TUSHAR RAO GEDELA, J
+JANUARY 7, 2026
+kct
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:29:13

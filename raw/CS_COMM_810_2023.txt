@@ -1,0 +1,1134 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_810_2023
+case_status: PENDING
+n_orders: 24
+
+$~26
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023, I.A. 22315/2023, 22316/2023 & 22317/2023
+TRESOR SYSTEMS PRIVATE LIMITED
+THROUGH ITS AR ..... Plaintiff
+Through: Mr. Giriraj Subramanium, Mr.
+Simar Pal Singh Sawhney, Mr. Ravi,
+Advs. (M. 9899436986)
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED ..... Defendant
+Through: None.
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 08.11.2023
+1. This hearing has been done through hybrid mode.
+2. The Hon’ble Judge is not holding the Court today.
+3. List on 9th November, 2023.
+BY ORDER
+(COURT MASTER)
+NOVEMBER 08, 2023/DK
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:15
+
+===== ORDER =====
+
+$~28
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023, I.As. 22315/2023, 22316/2023, 22317/2023
+& 22497/2023
+TRESOR SYSTEMS PRIVATE LIMITED
+THROUGH ITS AR ..... Plaintiff
+Through: Mr. Giriraj Subramanium, Mr.
+Simarpal Singh Sawhney, Mr. Joy
+Banerjee, Mr. Ravi Pathak, Mr.
+Akhilesh Talluri, Mr. Siddhant Juyal
+and Ms. Urvashi Singh, Advocates
+(M: 9899436986).
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED ..... Defendant
+Through: Mr. Naveen Nagarjuna, Mr. Rishubh
+Agarwal and Mr. Ritik
+Raghuwanshi, Advocates (M:
+9580680148).
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 09.11.2023
+1. This hearing has been done through hybrid mode.
+I.A. 22316/2023 (u/S 12A of the Commercial Courts Act)
+2. This is an application filed by the Plaintiff seeking exemption
+instituting pre-litigation mediation. Considering the facts and circumstances
+of the case, the Court is satisfied that in terms of the judgment of the
+Hon’ble Supreme Court in Yamini Manohar v. T.K.D Keerthi, SLP(C)
+023488/2023, the suit contemplates urgent interim relief. In these facts, the
+exemption under Section 12A is granted to the Plaintiff. Accordingly, the
+application is disposed of.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:14
+I.A. 22317/2023 (for exemption)
+3. This is an application filed by the Plaintiff seeking exemption from
+filing originals/certified/cleared/typed copies of documents, left side
+margins, electronic documents, etc. Original documents shall be
+produced/filed at the time of Admission/Denial, if sought, strictly as per the
+provisions of the Commercial Courts Act and the DHC (Original Side)
+Rules, 2018.
+4. Exemption is allowed, subject to all just exceptions.
+5. Accordingly, application is disposed of.
+I.A. 22497/2023 (for additional documents)
+6. This is an application filed by the Plaintiff seeking leave to file
+additional documents under the Commercial Courts, Commercial Division
+and Commercial Appellate Division of High Courts Act, 2015 (hereinafter,
+‘Commercial Courts Act’). The Plaintiff, if it wishes to file additional
+documents at a later stage, shall do so strictly as per the provisions of the
+Commercial Courts Act and the DHC (Original Side) Rules, 2018.
+7. Application is disposed of.
+CS(COMM) 810/2023 and I.A. 22315/2023
+8. Ld. Counsel for the Defendant has entered appearance and seeks a
+passover, which is not possible today due to the Farewell Reference in
+honour of the elevation of Hon’ble Chief Justice Satish Chandra Sharma to
+the Supreme Court of India.
+9. List on 21st November, 2023 on top of board for consideration of
+interim relief.
+PRATHIBA M. SINGH, J.
+NOVEMBER 09, 2023/mr/ks
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:14
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023 & I.A. 22315/2023
+TRESOR SYSTEMS PRIVATE LIMITED
+THROUGH ITS AR ..... Plaintiff
+Through: Mr. Giriraj Subramanium, Mr.
+Simarpal Singh Sawhney, Mr. Joy
+Banerjee, Mr. Akhilesh Talluri, Mr.
+Siddhant Juyal & Ms. Urvashi
+Singh, Advs. (M. 9899436986)
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED ..... Defendant
+Through: Ms. Swathi Sukumar, Mr. Naveen
+Nagarjuna, Mr. Pratyush Rao, Mr.
+Ritik Raghuwanshi & Mr. Rishubh
+Agarwal, Advs. (M: 8989518353)
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 21.11.2023
+1. This hearing has been done through hybrid mode.
+CS(COMM) 810/2023
+2. Let the plaint be registered as a suit.
+3. Issue summons to the Defendant through all modes upon filing of the
+Process Fee.
+4. The summons to the Defendant shall indicate that the written
+statement(s) to the plaint shall be positively filed within 30 days from date
+of receipt of summons. Along with the written statement(s), the Defendant
+shall also file an affidavit of admission/denial of the documents of the
+Plaintiff, without which the written statement(s) shall not be taken on record.
+CS(COMM)810/2023 Page1of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:14
+5. Liberty is given to the Plaintiff to file the replication(s) within 15 days
+of the receipt of the written statement(s). Along with the replication(s), if
+any, filed by the Plaintiff, an affidavit of admission/denial of documents of
+the Defendant, be filed by the Plaintiff, without which the replication(s)
+shall not be taken on record. If any of the parties wish to seek inspection of
+any documents, the same shall be sought and given within the timelines.
+6. List before the Joint Registrar for marking of exhibits on 16th January,
+2024. It is made clear that any party unjustifiably denying documents would
+be liable to be burdened with costs.
+7. List before Court on 27th February, 2024.
+I.A.22315/2023 (u/O XXXIX Rules 1 & 2 CPC)
+8. The present suit has been filed by the Plaintiff- Tresor Systems
+Private Limited seeking protection of the mark ‘IMAGINE’ being used by
+the Plaintiff in respect of the sale of Apple products, as a trade
+name/trademark. The case of the Plaintiff is that it adopted the mark
+‘IMAGINE’ on 1st April, 2009 and has been using the same ever since. It
+has more than 35 stores where Apple products are sold. The Plaintiff had
+filed its Trade Mark application on 4th December, 2017 with a user claim
+since 1st April, 2009 and the said mark proceeded to registration. The
+Plaintiff is thus the registered proprietor of the mark IMAGINE.
+9. The submission of Mr. Giriraj, ld. Counsel for the Plaintiff is that the
+Defendant is also using an identical mark ‘IMAGINE’ and has filed a Trade
+Mark application on 19th June, 2018 claiming user from 27th March, 2010.
+The Trade Mark application was withdrawn 10th October, 2018. However,
+after having withdrawn the first Trade Mark application, the Defendant
+sought to file a second Trade Mark application on 13th December, 2021 with
+CS(COMM)810/2023 Page2of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:14
+a user claim of 8th March, 2007. When this was published in the Trade
+Marks Journal on 3rd July, 2023, issued by the office of the Registrar of
+Trade Marks, the Plaintiff came to know of the Defendant’s use of the
+identical mark. It is his submission that since the Plaintiff is the registered
+proprietor of the mark and the use of an identical mark would constitute
+infringement and the injunction is liable to be granted.
+10. On the other hand, Ms. Swathi Sukumar, ld. Counsel appearing for
+the Defendant submits that the Defendant is a prior user of the mark. In
+support thereof she relies upon the Apple dealership agreement and a VAT
+registration certificate which according to her show use of the mark in 2008
+itself.
+11. The Court has perused the documents on record and heard ld.
+Counsels for both the parties. Clearly, there is no doubt that the Plaintiff and
+the Defendant are using an identical mark and identical logo in respect of an
+identical businesses. The only question would be as to who is the prior user
+of the mark. The said issue would have to be decided after pleadings are
+complete as the documents of both the parties would have to be analysed.
+12. Accordingly, issue notice.
+13. Let the reply be filed within 30 days. Rejoinder, thereto, within 30
+days, thereafter.
+14. It also appears to the Court that since both the parties are resellers of
+Apple India, the matter deserves to be sent to Mediation so that parties can
+attempt amicable resolution of the dispute.
+15. Accordingly, list this matter before the Delhi High Court Mediation
+and Conciliation Centre (hereinafter “Mediation Centre”) on 1st December,
+2023 at 3:00 P.M. Let a Sr. Mediator be appointed by the Mediation Centre.
+CS(COMM)810/2023 Page3of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:14
+16. Parties to appear before the Mediation Centre either virtually or
+physically, subject to convenience of all concerned. It shall be ensured that
+competent officials authorised to take decisions on behalf of the Plaintiff and
+the Defendant, be present in the Mediation proceedings.
+17. List before the Joint Registrar on 16th January, 2024.
+18. List before Court on 27th February, 2024.
+PRATHIBA M. SINGH, J.
+NOVEMBER 21, 2023
+dj/am
+CS(COMM)810/2023 Page4of4
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:14
+
+===== ORDER =====
+
+$~14
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023
+TRESOR SYSTEMS PRIVATE LIMITED THROUGH
+ITS AR ..... Plaintiff
+Through: Ms. Urvashi Singh (VC),
+Advocate
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED
+..... Defendant
+Through: Mr. Pratyush Rao, Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 16.01.2024
+CS(COMM) 810/2023 & I.A. No. 22315/2023 (under Order
+XXXIX Rules 1 & 2 CPC):
+Although appearance has been put in on behalf of
+defendant before the Hon’ble Court on 21.11.2023, Hon’ble
+Court still directed that summons be issued to the defendant.
+However, no steps have been taken by the plaintiff for service of
+the defendant. On the asking of the Court, the summons have
+been accepted today by the ld. Counsel for the defendant.
+Let the written statement be filed as per rules with an
+advance copy of the same to the opposite side. Replication
+thereto be filed as per rules thereafter.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 27.02.2024, for further directions.
+AJAY GULATI - I (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 16, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:13
+
+===== ORDER =====
+
+$~28
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023, I.A. 22315/2023
+TRESOR SYSTEMS PRIVATE LIMITED THROUGH ITS AR
+..... Plaintiff
+Through: Mr. Simarpal Singh Sawhney,
+Mr. Siddhant Juyal and Ms. Urvashi
+Singh, Advocates.
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED ..... Defendant
+Through: Mr. Rishubh Agarwal, Advocate
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 27.02.2024
+1. Counsel for the parties jointly request for an adjournment, stating that the
+mediation proceedings are still in progress.
+2. List on 1st May, 2024.
+SANJEEV NARULA, J
+FEBRUARY 27, 2024
+nk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:12
+
+===== ORDER =====
+
+$~25
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023
+TRESOR SYSTEMS PRIVATE LIMITED THROUGH
+ITS AR
+..... Plaintiff
+Through: Ms. Urvashi Singh, Advocate
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED
+..... Defendant
+Through: Mr. Naveen Nagarjuna,
+Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 20.03.2024
+I.A. No. 6572/2024 filed on behalf of the defendant seeking
+condonation of delay of 30 days in filing of written statement.
+Issue notice. Notice accepted by the ld. Counsel for the
+plaintiff.
+Ld. Counsel for the plaintiff submits that she has no
+objection if the application is allowed.
+For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the plaintiff, application is
+allowed. Delay stands condoned. Written statement is taken on
+record. Replication be filed within the period permissible, as
+worked out from today.
+IA stands disposed off.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:12
+I.A. No. 6573/2024 filed on behalf of the defendant seeking
+condonation of delay of 85 days in filing reply to I.A.
+22315/2023 (stay by plaintiff).
+Issue notice. Notice accepted by the ld. Counsel for the
+plaintiff.
+Ld. Counsel for the plaintiff submits that she has no
+objection if the application is allowed subject to some reasonable
+cost.
+For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the plaintiff, application is
+allowed subject to cost of Rs.3000/- to be paid to the plaintiff on
+or before the next date of hearing. Delay stands condoned.
+Reply to IA be taken on record. Rejoinder, if any may be filed
+atleast a week before the next date of hearing.
+IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 20, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:12
+
+===== ORDER =====
+
+$~63
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023
+TRESOR SYSTEMS PRIVATE LIMITED THROUGH ITS AR
+..... Plaintiff
+Through: Mr. Simarpal Singh Sawhney, Mr.
+Siddhant Juyal and Ms. Urvashi
+Singh, Advocates.
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED ..... Defendant
+Through: Mr. Naveen Nagarjuna, Mr. Rishubh
+Agarwal, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 22.03.2024
+I.A. 6887/2024 (on behalf of the Defendant under Order XI Rule 1 (10) read
+with Section 151 of the Code of Civil Procedure, 1908 seeking leave of the
+Hon’ble Court to file additional documents)
+1. By way of the instant application, the Defendant seeks leave to
+produce certain additional documents, which they contend could not be filed
+along with their written statement. However, it is noticed that there is no
+indication in the application as to which additional documents the Defendant
+intends to produce on record. Upon a specific query of the Court, counsel for
+Defendant states that the said documents are not yet available with them.
+2. In view of the above, let the documents sought to be produced, along
+with an affidavit, be filed within a period of two weeks from today. A copy
+thereof shall also be supplied to the counsel for Plaintiff, who shall be at
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:11
+liberty to file a reply to the application, if any, within a period of two weeks
+thereafter.
+3. Re-notify on 1st May, 2024.
+CC(COMM) No. -------/2024 (To be Numbered)
+4. Registry is directed to allocate a number to the counterclaim and place
+the same in the appropriate portfolio.
+5. Issue summons. Mr. Simarpal Singh Sawhney, counsel for Plaintiff,
+accepts summons. Plaintiff is permitted to file written statement to the
+counterclaim within 30 days from today. Replication thereto be filed within
+the permissible time limits.
+6. Re-notify on the date already fixed, i.e. 1st May, 2024.
+SANJEEV NARULA, J
+MARCH 22, 2024
+ab
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:11
+
+===== ORDER =====
+
+$~37
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023 & CC(COMM) 12/2024, I.A. 22315/2023
+TRESOR SYSTEMS PRIVATE LIMITED THROUGH ITS AR
+..... Plaintiff
+Through: Mr. Giriraj Subramanium, Mr.
+Simarpal Singh Sawhney, Mr.
+Siddhant Jugal and Ms. Urvashi
+Singh, Advocates.
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED ..... Defendant
+Through: Mr. Ritik Raghuwanshi, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 01.05.2024
+I.A. 6887/2024 (seeking leave to file additional documents)
+1. Reply to the application has not been filed. Further four weeks’ time
+is granted to do the same. Rejoinder thereto, if any, be filed within a period
+of four weeks thereafter.
+2. Renotify on 26th September, 2024.
+CS(COMM) 810/2023
+3. Counsel for the parties jointly request for an adjournment as the
+settlement talks are still ongoing before the Delhi High Court Mediation and
+Conciliation Centre, where the next meeting is scheduled today itself.
+4. Renotify on 26th September, 2024.
+SANJEEV NARULA, J
+MAY 1, 2024/as
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:11
+
+===== ORDER =====
+
+$~22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023
+TRESOR SYSTEMS PRIVATE LIMITED THROUGH
+ITS AR .... Plaintiff
+Through: Mr. Simarpal Singh Sawhney,
+Mr. Siddhant Juyal, Advocates
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED
+..... Defendant
+Through: Mr. Ritik Raghuwanshi,
+Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 09.05.2024
+I.A. No. 10572/2024 on behalf of the plaintiff seeking
+condonation of delay of 13 days in filing the replication.
+Issue notice.
+Notice accepted by ld. Counsel for the defendant.
+Ld. Counsel for the defendant submits that he has no
+objection if the application is allowed.
+For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the defendant, application is
+allowed subject to cost of Rs.500/-, to be deposited with Delhi
+High Court Bar Clerks Association, Delhi High Court. Delay
+stands condoned. Replication is taken on record. Cost be
+deposited within two weeks.
+IA stands disposed off.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:10
+I.A. No. 10573/2024 filed by the plaintiff seeking condonation
+of delay of 14 days in filing the written statement to the
+counter claim.
+Issue notice.
+Notice accepted by ld. Counsel for the defendant.
+Ld. Counsel for the defendant submits that he has no
+objection if the application is allowed.
+For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the defendant, application is
+allowed. Delay stands condoned. Written statement is taken on
+record. Replication be filed within the period permissible, as
+worked out from today.
+IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 9, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:10
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023
+TRESOR SYSTEMS PRIVATE LIMITED THROUGH ITS AR
+..... Plaintiff
+Through: Ms. Urvashi Singh, Advocate.
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED ..... Defendant
+Through: Ms. Swathi Sukumar, Mr. Naveen
+Nagarjuna, Mr. Ritik Raghuwanshi
+and Mr. Rishubh Agarwal,
+Advocates.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 22.05.2024
+I.A. 30087/2024 (seeking leave to file additional documents)
+1. Issue notice. Ms. Urvashi Singh, counsel for Plaintiff, accepts notice.
+Ms. Singh states that she has no objection to the prayer made in the
+application.
+2. In view of the above, the application is allowed and the additional
+documents mentioned in Paragraph No. 5 of the application, filed on 17th
+April, 2024 vide Diary No. E-1167635/2024, are permitted to be taken on
+record.
+3. The application is allowed and disposed of.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:10
+CS(COMM) 810/2023
+4. Plaintiff is directed to file affidavit of admission/ denial in respect of
+the additional documents produced by the Defendant, which have been taken
+on record today.
+5. List before the Joint Registrar on 29th July, 2024 for marking of
+exhibits in terms of affidavit of admission/ denial.
+SANJEEV NARULA, J
+MAY 22, 2024
+as
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:10
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023
+TRESOR SYSTEMS PRIVATE LIMITED THROUGH
+ITS AR .....Plaintiff
+Through: Mr. Simarpal Singh Sawhney,
+Mr. Siddhant Juyal, Advocates
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED
+.....Defendant
+Through: Mr. Rishubh Agarwal,
+Mr. Naveen Nagarjuna,
+Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 29.07.2024
+1. Ld. Counsel for the plaintiff prays for final opportunity to
+file affidavit of admission / denial to the additional documents
+which have been filed by the defendants, as is reflected in the
+order of the Hon’ble Court dated 22.05.2024.
+2. Let the affidavit be now filed within two weeks failing
+which the additional documents of the defendants shall be
+deemed to have been admitted.
+3. Ld. Counsel for the defendant submits that IA No.
+6887/2024 may be permitted to be withdrawn. Allowed as
+prayed.
+4. The parties are also directed to file their documents in
+physical form within six weeks alongwith Joint document
+schedule.
+5. Put up for admission / denial of documents on 12.09.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 29, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:09
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023
+TRESOR SYSTEMS PRIVATE LIMITED THROUGH
+ITS AR ....Plaintiff
+Through: Mr. Simarpal Singh Sawhney,
+Advocate
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED
+.....Defendant
+Through: Mr. Naveen Nagarjuna,
+Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 12.09.2024
+1. The matter has been listed today for carrying out
+admission / denial of documents. However, admission and denial
+of documents cannot be conducted today as documents in
+physical form have been filed by both the sides yesterday only
+and hence are not on record as on today. Joint document
+schedule has also been filed alongwith physical documents.
+2. At joint request, matter is adjourned.
+3. Put up for admission / denial of documents on 13.11.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+SEPTEMBER 12, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:08
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023
+TRESOR SYSTEMS PRIVATE LIMITED
+THROUGH ITS AR .....Plaintiff
+Through: Mr. Giriraj Subramanium,
+Mr. Akhilesh Talluri, Advocates
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED .....Defendant
+Through: Ms Swathi Sukumar, Mr Naveen
+Nagarjuna, Mr Ritik Raghuwanshi,
+Mr Rishubh Agarwal, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 26.09.2024
+1. List before the Joint Registrar (Judicial) on the date already fixed i.e.,
+13th December, 2024 for further proceedings.
+AMIT BANSAL, J
+SEPTEMBER 26, 2024
+PB
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:08
+
+===== ORDER =====
+
+$~32
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023 with CC(COMM) 12/2024 and I.A. 2315/2023
+TRESOR SYSTEMS PRIVATE LIMITED
+THROUGH ITS AR .....Plaintiff
+Through: Mr Siddhant Juyal, Advocate.
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED .....Defendant
+Through: Mr Ritik Raghuwanshi, Advocate
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 22.10.2024
+1. Matter has been listed for directions by the Registry seeking
+clarification of the date before the learned Joint Registrar.
+2. Vide order dated 12th September 2024, the matter was already directed
+to be listed before the learned Joint Registrar on 13th November, 2024.
+3. It appears that on 26th September, 2024, inadvertently, the date of 13th
+December, 2024 was given by this Court before the learned Joint Registrar.
+4. It is directed that the matter be listed before the learned Joint Registrar
+on 13th November, 2024.
+5. The date 13th December, 2024 stands cancelled.
+AMIT BANSAL, J
+OCTOBER 22, 2024
+PB
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:07
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023
+TRESOR SYSTEMS PRIVATE LIMITED THROUGH
+ITS AR .....Plaintiff
+Through: Mr. Simarpal Singh Sawhney,
+Advocate
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED
+.....Defendant
+Through: Mr. Ritik Raghuwanshi,
+Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 13.11.2024
+1. The matter has been listed today for carrying out
+admission / denial of documents. However, proxy counsel for
+the defendant submits that the arguing counsel is not available
+today for carrying out admission / denial of documents.
+Consequently, matter is further adjourned for admission / denial
+of documents.
+2. Put up for admission / denial of documents on 23.01.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+NOVEMBER 13, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:07
+
+===== ORDER =====
+
+$~9
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023
+TRESOR SYSTEMS PRIVATE LIMITED THROUGH
+ITS AR .....Plaintiff
+Through: Mr. Simarpal Singh Sawhney,
+Advocate
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED
+.....Defendant
+Through: Mr. Naveen Nagarjuna,
+Mr. Rishubh Agarwal, Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 23.01.2025
+1. The matter has been listed today for carrying out
+admission / denial of documents.
+2. Ld. Counsel for the plaintiff admits seven documents filed
+by the defendant which have been identified as Ex. D-1 to Ex. D-
+7. Rest of the documents have been denied by the plaintiff.
+3. On the other hand, ld. counsel for the defendant admits
+twelve documents filed by the plaintiff, which have been
+identified as Ex. P-1 to Ex. P-12. Rest of the documents have
+been denied by the defendant.
+4. Admission / denial of documents stands complete. Matter
+is ripe for framing of issues.
+5. Put up before the Hon’ble Court on 24.02.2025, for further
+directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 23, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:06
+
+===== ORDER =====
+
+$~32
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+I.A. 3581/2025
+IN
++ CS(COMM) 810/2023
+TRESOR SYSTEMS PRIVATE
+LIMITED THROUGH ITS AR .....Plaintiff
+Through: Mr. Giriraj Subramanium & Mr.
+Simarpal Singh Sawhney, Advocates.
+Versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED .....Defendant
+Through: Ms. Swati Sukumar, Senior Advocate
+with Mr. Naveen Nagarjuna, Mr. Ritik
+Raghuwanshi & Mr. Rishubh
+Agarwal, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 11.02.2025
+I.A. 3581/2025 (under Order XIII-A Rule 4 CPC seeking summary
+judgment)
+1. This application has been filed on behalf of the defendant under Order
+XIII-A of the Code of Civil Procedure, 1908, seeking a summary judgment in
+the present suit.
+2. Issue notice.
+3. Noticeisacceptedbycounselappearingonbehalfofthenon-applicant/
+plaintiff.
+4. Reply be filed within thirty (30) days.
+5. Rejoinder thereto, if any, be filed within two (2) weeks thereafter.
+CS(COMM)810/2023 Page 1 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:06
+6. Re-notify on 15th May, 2025.
+7. The date already fixed, i.e. 24th February, 2025, stands cancelled.
+AMIT BANSAL, J
+FEBRUARY 11, 2025/at
+CS(COMM)810/2023 Page 2 of 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:06
+
+===== ORDER =====
+
+$~44
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+I.A. 8695/2025
+In
++ CS(COMM) 810/2023
+TRESOR SYSTEMS PRIVATE LIMITED
+THROUGH ITS AR .....Plaintiff
+Through: Mr. Giriraj Subramanium & Mr.
+Simarpal Singh Sawhney, Advocates.
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED .....Defendant
+Through: Mr. Naveen Nagarjuna, Mr. Ritik
+Raghuwanshi & Mr. Rishubh
+Agarwal, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 03.04.2025
+I.A. 8695/2025 (under Order XIII-A read with Section 151 of CPC)
+1. This application has been filed on behalf of the plaintiff under Order
+XIII-A of the Code of Civil Procedure, 1908, seeking a summary judgment
+in the present suit.
+2. Issue notice.
+3. Notice is accepted by the counsel appearing on behalf of the
+defendant.
+4. Reply be filed within thirty (30) days from today.
+5. Rejoinder, if any, be filed within two (2) weeks thereafter.
+CS(COMM)810/2023 Page1of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:05
+6. List on 15th May, 2025, i.e. the date already fixed.
+I.A. 3581/2025 (under Order XIII-A Rule 4 CPC seeking summary
+judgment)
+7. Counsel for the defendant seeks and is granted two weeks’ time to file
+a rejoinder.
+8. List on 15th May, 2025, i.e. the date already fixed.
+AMIT BANSAL, J
+APRIL 3, 2025/at
+CS(COMM)810/2023 Page2of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:05
+
+===== ORDER =====
+
+$~16.
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023 and CC(COMM) 12/2024, I.A. 22315/2023
+I.A. 3581/2025 & I.A. 8695/2025
+TRESOR SYSTEMS PRIVATE
+LIMITED THROUGH ITS AR .....Plaintiff
+Through: Mr. Giriraj Subramanium, Mr. Simar
+Pal Sawhney and Ms. Bijaharini G.
+Advocates.
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED .....Defendant
+Through: Ms. Swathi Sukumar, Sr. Advocate
+with Mr. Naveen Nagarjuna, Mr.
+Ritik Raghuwanshi and Mr. Rishubh
+Agarwal, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 15.05.2025
+1. Re-notify on 10th September, 2025.
+AMIT BANSAL, J
+MAY 15, 2025
+Vivek/-
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:05
+
+===== ORDER =====
+
+$~193
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023
+TRESOR SYSTEMS PRIVATE LIMITED THROUGH ITS AR
+.....Plaintiff
+Through: None
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared on behalf of the parties.
+Let this matter be sent back to the Hon’ble Court for further
+directions.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:04
+
+===== ORDER =====
+
+$~35
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023 & CC(COMM) 12/2024 I.A. 22315/2023 I.A.
+3581/2025 I.A. 8695/2025
+TRESOR SYSTEMS PRIVATE LIMITED THROUGH ITS AR
+.....Plaintiff
+Through: Mr. Giriraj Subramanium, Ms.
+Bijaharini G, Mr. Jaisal Baath, Mr.
+Aditya Sarma, Mr. Simar Pal Singh
+Sawhney, Advs.
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED .....Defendant
+Through: Mr. Ritik Raghuwanshi, Advocate.
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 10.09.2025
+1. Learned counsel for the parties state that admission/denial of
+documents is complete, however, framing of issues will have to await the
+final hearing in the pending applications, filed for summary judgment.
+2. List for hearing of the pending applications on 08.12.2025.
+MANMEET PRITAM SINGH ARORA, J
+SEPTEMBER 10, 2025/prg
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:03
+
+===== ORDER =====
+
+$~21 & 53
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023, CC(COMM) 12/2024, I.A. 22315/2023
+TRESOR SYSTEMS PRIVATE LIMITED THROUGH ITS AR
+.....Plaintiff
+Through: Mr. Simarpal Singh Sawhney, Adv.
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED .....Defendant
+Through: Mr. Nischal Anand, Ms. Tanvi Jain &
+Mr. Sanchit Suri, Advs.
++ C.O. (COMM.IPD-TM) 164/2024
+AMPLE TECHNOLOGIES PRIVATE LIMITED.....Petitioner
+Through: Mr. Nischal Anand, Ms. Tanvi Jain &
+Mr. Sanchit Suri, Advs
+versus
+TRESOR SYSTEMS PRIVATE LIMITED & ANR......Respondents
+Through: Mr. Simarpal Singh Sawhney, Adv.
+Ms. Nidhi Raman, CGSC with Mr.
+Om Ram & Mr. Arnav Mittal, Advs.
+for R-2.
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 08.12.2025
+I.A. 3581/2025 (for summary judgment), I.A. 8695/2025 (Order XIIIA
+r/w Sec. 151 CPC) in CS(COMM) 810/2023
+1. Parties are directed to file their written submissions not exceeding 5
+pages, one (1) week prior to the next date of hearing.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:03
+2. It is directed that C.O. (COMM.IPD-TM) 164/2024 will be taken up
+for consideration after disposal of the summary judgment applications in
+CS(COMM) 810/2023 and CC(COMM) 12/2024.
+3. List on 14.01.2026 at the end of the board.
+MANMEET PRITAM SINGH ARORA, J
+DECEMBER 8, 2025
+gm
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:03
+
+===== ORDER =====
+
+$~42
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023
+TRESOR SYSTEMS PRIVATE LIMITED THROUGH ITS AR
+.....Plaintiff
+Through: Mr. Giriraj Subramanium, Mr. Simarpal
+Singh Sawhney, Ms. Bijaharini G. and
+Mr. Jaiswal Baath, Advocates.
+versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED .....Defendant
+Through: Mr. Nishchal Anand, Ms. Tanvi Jain,
+Mr. Sahcnit Suri and Mr. Shubham
+Malhotra, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE TUSHAR RAO GEDELA
+O R D E R
+% 14.01.2026
+1. Both, the plaintiff as also the defendant, have filed applications under
+Order XIII-A of the Commercial Courts Act, 2015 seeking summary judgment
+being I.A. 3581/2025 and I.A. 8695/2025.
+2. Replies are also stated to have been filed and are on record. Written
+submissions of defendant as well as the plaintiff in respect of I.A. 3581/2025
+and I.A. 8695/2025 are already on record.
+3. List on 19.03.2026.
+TUSHAR RAO GEDELA, J
+JANUARY 14, 2026
+yrj
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:02
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 810/2023
+TRESOR SYSTEMS PRIVATE LIMITED THROUGH
+ITS AR .....Plaintiff
+Through: Mr. Simarpal Singh Sawhney,
+Advocate
+Versus
+AMPLE TECHNOLOGIES PRIVATE LIMITED
+.....Defendant
+Through: Mr. Shubham Malhotra,
+Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 19.01.2026
+I.A. No. 1303/2026 on behalf of the plaintiffs seeking
+condonation of delay of 3 days in filing written submissions in
+I.A. No. 3581/2025.
+1. Issue notice. Notice accepted by ld. Counsel for the
+defendant. Ld. Counsel for the defendant submits that he has no
+objection if the application is allowed.
+2. For the reasons stated in the application, application is
+allowed. Delay stands condoned. Written submissions in IA No.
+3581/2025 are taken on record. IA stands disposed off.
+I.A. No. 1304/2026 on behalf of the plaintiffs seeking
+condonation of delay of 3 days in filing written submissions in
+I.A. No. 8695/2025.
+3. Issue notice. Notice accepted by ld. Counsel for the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:02
+defendant. Ld. Counsel for the defendant submits that he has no
+objection if the application is allowed.
+4. For the reasons stated in the application, application is
+allowed. Delay stands condoned. Written submissions in IA No.
+8695/2025 are taken on record. IA stands disposed off.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 19, 2026/sk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 21/01/2026 at 21:22:02

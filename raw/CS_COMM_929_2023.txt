@@ -1,0 +1,495 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_929_2023
+case_status: DISPOSED
+n_orders: 10
+
+$~57
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 929/2023, I.As. 25895/2023 & 25896/2023
+SAINT GOBAIN PLACO & ANR. ..... Plaintiffs
+Through: Mr. Siddhant Sharma, Mr. Abhay
+Tandon, Mr. Shreyansh Gupta,
+Advs. (M. 9557629905)
+versus
+KHUSHBU FRAMES & ANR. ..... Defendants
+Through: None.
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 10.01.2024
+1. This hearing has been done through hybrid mode.
+2. List on 11th January, 2024.
+PRATHIBA M. SINGH, J.
+JANURARY 10, 2024
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:20
+
+===== ORDER =====
+
+$~56
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 929/2023, I.As. 25895/2023 & 25896/2023
+SAINT GOBAIN PLACO & ANR. ..... Plaintiffs
+Through: Mr. Siddhant Sharma, Mr. Abhay
+Tandon, Mr. Shreyansh Gupta,
+Advs. (M. 9557629905)
+versus
+KHUSHBU FRAMES & ANR. ..... Defendants
+Through: None.
+CORAM:
+JUSTICE PRATHIBAM. SINGH
+O R D E R
+% 11.01.2024
+1. This hearing has been done through hybrid mode.
+2. Registry has put up this matter as in paragraph 27 of the order dated
+21st December, 2023. There appears to be an ambiguity whether the
+injunction has been granted or not.
+3. In view of the note of the Registry, paragraph 27 shall now reads as
+under:
+“27. Accordingly, the Plaintiffs have made out a
+prima facie case for grant of an injunction. Balance of
+convenience also lies in favour of the Plaintiffs. If an
+injunction is not granted in the present case
+irreparable loss will be caused to the Plaintiffs. The
+Defendants are accordingly restrained from
+manufacturing, selling and offering for sale the
+impugned construction elements including metal
+profile and the impugned apparatus which would be
+violative and infringing of the Plaintiffs’ patent Nos.
+IN’ 062 and IN’ 978. Ordered accordingly.
+4. Matter be listed before the Roster Bench. The present order shall be
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:19
+uploaded as a Corrigendum to order dated 21st December 2023.
+PRATHIBA M. SINGH, J.
+JANURARY 11, 2024
+Rahul/bh
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:19
+
+===== ORDER =====
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 929/2023
+SAINT GOBAIN PLACO & ANR. .... Plaintiff
+Through: Mr. Abhay Tandon, Mr. Siddhant
+Sharma (VC), Advocate
+versus
+KHUSHBU FRAMES & ANR. ..... Defendant
+Through: Mr. Pramod Kr. Jain (VC),
+Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 16.02.2024
+CS(COMM) 929/2023 & I.A. 25895/2023 fu/O XXXIX Rules
+1 & 2 CPC.
+Defendants have been served on 24.01.2024. Appearance
+has been put in on behalf of the defendants. Written statement
+had also been filed but was returned under objections. Ld.
+Counsel for the defendants submits that same has been re-filed
+today. Reply to the above IA was also returned under objections
+but shall be re-filed in due course, as per the submission of ld.
+Counsel for the defendants.
+Put up for completion of pleadings on 30.04.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 16, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:19
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 929/2023
+SAINT GOBAIN PLACO & ANR. ..... Plaintiff
+Through: Mr. Siddhant Sharma, Mr. Abhay
+Tandon, Mr. Shreyansh Gupta,
+Advocates
+versus
+KHUSHBU FRAMES & ANR. ..... Defendant
+Through: Mr. P.K.Jain (VC), Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 02.04.2024
+I.A. No. 7328/2024 filed by the plaintiff for condonation of
+delay of 14 days in filing replication qua written statement
+filed by the defendants.
+Issue notice.
+Notice accepted by ld. Counsel for the defendants.
+Ld. Counsel for the defendants submits that he has no
+objection if the application is allowed.
+For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the defendants, application is
+allowed. Delay stands condoned. Replication is taken on record.
+IA stands disposed off.
+Defendants are at liberty to file additional affidavit of
+admission / denial to any document filed alongwith the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:18
+replication, within three weeks.
+Put up for further proceedings on 30.04.2024, the date
+already fixed.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 2, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:18
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 929/2023
+SAINT GOBAIN PLACO & ANR. ..... Plaintiff
+Through: Mr. Siddhant Sharma, Mr. Abhay
+Tandon (VC), Advocates
+versus
+KHUSHBU FRAMES & ANR. ..... Defendant
+Through: Mr. P.K.Jain, Advocate
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 30.04.2024
+CS(COMM) 929/2023 & I.A. No. 25895/2023 u/o XXXIX
+Rules 1 & 2 CPC.
+Replication has been filed. Reply to IA No. 25895/2023
+has been filed. Rejoinder, if any to the reply, be filed within two
+weeks.
+Defendants are also permitted to file their additional
+affidavit of admission and denial to the document filed alongwith
+their replication, within two weeks. Since the documents in
+physical form have not been filed on either behalf, admission and
+denial of documents cannot be carried out today. Let the
+documents in physical form be filed within two weeks by both
+sides.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 17.05.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 30, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:15
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 929/2023 & I.As. 25895-25896/2023
+SAINT GOBAIN PLACO & ANR. ..... Plaintiffs
+Through: Mr. Siddhant Sharma, Mr. Abhay
+Tandon and Mr. Shreyansh Gupta,
+Advocates.
+versus
+KHUSHBU FRAMES & ANR. ..... Defendants
+Through: Mr. P.K. Jain, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 17.05.2024
+1. The Plaintiff No. 1 and 2, Saint-Gobain Placo, a French Company
+along with its Indian subsidiary, Saint-Gobain India Pvt. Ltd. have filed the
+present suit seeking an injunction restraining Defendant No. l, M/s Khushbu
+Frames, and its retailer Defendant No.2, Taj Enterprise from infringing on
+their two registered patents bearing Nos. 325062 and 3449781, related to
+corrugated construction elements, including metal profiles and associated
+apparatus.
+2. Mr. P.K. Jain, counsel for Defendants, states that they have never used
+the technology which is subject matter of the present Patent suit. Although
+he denies any allegation of infringement, Mr. Jain nonetheless states that the
+Defendants shall not infringe the Plaintiffs’ suit patent in any time in the
+future. The said statement is taken on record on behalf of Defendant No. 1.
+Furthermore, Mr. Jain states that the Defendants will also file an affidavit to
+the aforementioned undertaking.
+1 “Plaintiffs’ Patents”
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:15
+3. In light of the above statement, counsel for Plaintiffs states that he will
+take instructions from his clients on whether the present dispute can be
+resolved.
+4. The Registry is directed to supply a copy of the Local Commissioner
+report along with annexures, if any, to both the counsel for the parties.
+5. Renotify on 22nd July, 2024.
+SANJEEV NARULA, J
+MAY 17, 2024/as
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:15
+
+===== ORDER =====
+
+$~25
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 929/2023, I.A. 25895/2023 I.A. 25896/2023
+SAINT GOBAIN PLACO & ANR. ..... Plaintiffs
+Through: Mr. Siddhant Sharma, Mr. Abhay
+Tandon and Mr. Shreyansh Gupta,
+Advocates.
+versus
+KHUSHBU FRAMES & ANR. ..... Defendants
+Through: None.
+CORAM:
+HON'BLE MR. JUSTICE SANJEEV NARULA
+O R D E R
+% 31.05.2024
+1. The suit has been listed on an office note. It is clarified that copies of
+reports of both Local Commissioners be furnished to the parties.
+2. With the above directions, the office note stands discharged.
+SANJEEV NARULA, J
+MAY 31, 2024
+nk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:14
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 929/2023, I.A. 25895-25896/2023
+SAINT GOBAIN PLACO & ANR. .....Plaintiffs
+Through: Mr. Hemant Sharma, Mr. Siddhant
+Sharma, Mr. Abhay Tandon,
+Advocates.
+versus
+KHUSHBU FRAMES & ANR. .....Defendants
+Through: Mr. P.K. Jain, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 22.07.2024
+1. Learned counsel appearing for the plaintiffs drawing the attention of
+this Court to the affidavit of undertaking filed by the defendant no.1 vide
+Diary No.2200667/2024 has undertaken not to infringe the suit patent
+bearing no. “IN’062”. In view thereof, learned counsel submits that he is
+willing to forego prayers in paragraph 65 (b) to (e) of the plaint, barring
+the refund of court fees as also the fees of the two Local Commissioners
+i.e. Rs.3,00,000/-.
+2. Learned counsel appearing for the defendants seeks, and is granted
+two weeks to revert in response thereto.
+3. List on 17.09.2024.
+4. Interim orders, if any, to continue.
+SAURABH BANERJEE, J
+JULY 22, 2024/So
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:14
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 929/2023, I.A. 25895/2023-Stay, I.A. 25896/2023-O
+26 R 9
+SAINT GOBAIN PLACO & ANR. .....Plaintiffs
+Through: Mr. Siddhant Sharma, Mr. Abhay
+Tandon, Advocates
+versus
+KHUSHBU FRAMES & ANR. .....Defendants
+Through: Counsel (appearance not given)
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 17.09.2024
+1. In continuation of the last order, learned counsel for the defendant
+submits that the defendant is willing to pay a sum of Rs.3,00,000/-
+(Rupees Three Lacs Only) to the plaintiff within a period of two weeks.
+2. In turn, learned counsel for the plaintiffs submits that as recorded in
+the previous order dated 22.07.2024, the plaintiff in that case would be
+agreeable to give up the prayers made in paragraph 65 (b) to (e) of the
+plaint.
+3. Learned counsels for the parties submit that they shall be moving an
+appropriate application before this Court in furtherance thereof.
+4. Accordingly, renotify on 21.10.2024.
+SAURABH BANERJEE, J
+SEPTEMBER 17, 2024/akr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:13
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 929/2023 and I.A. Nos. 25895/2023 & 25896/2023
+SAINT GOBAIN PLACO & ANR. .....Plaintiffs
+Through: Mr. Abhay Tandon, Advocate.
+versus
+KHUSHBU FRAMES & ANR. .....Defendants
+Through: Mr P. K. Jain, Advocate.
+CORAM:
+HON'BLE MR. JUSTICE AMIT BANSAL
+O R D E R
+% 21.10.2024
+1. The present suit has been filed seeking relief of permanent injunction
+restraining the defendants from infringing the Indian patent nos. IN325062
+and IN344978, rendition of accounts/damages, delivery-up, etc.
+2. On behalf of the defendants, an undertaking by way of affidavit has
+been filed on 5th July, 2024, wherein it is stated that the defendants had
+never manufactured/sold products infringing the suit patents. Further, an
+undertaking has also been given on behalf of the defendants stating that the
+defendants will not infringe the suit patents.
+3. Accordingly, Mr P. K. Jain, counsel for the defendants submits that he
+has no objection if a decree is passed in terms of the prayer Clause (a) in
+paragraph 65 of the plaint.
+4. Hence, the suit is decreed in favour of the plaintiff in terms of prayer
+clause (a) in paragraph 65 of the plaint.
+5. In view of the above, counsel for the plaintiffs does not press for
+reliefs claimed in prayer Clauses (b), (c), (d) and (e) in paragraph 65 of the
+CS(COMM)929/2023 Page1of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:12
+plaint.
+6. It is recorded in the order passed on 17th September, 2024 that the
+defendant is agreeable to pay a sum of ₹3 lakhs towards costs to the
+plaintiffs. Hence, a decree in terms of prayer Clause (f) in paragraph 65 of
+the plaint is passed in favour of the plaintiff and against the defendants for
+costs of ₹3 lakhs to the plaintiffs. The costs shall be paid by the defendants
+to the plaintiffs within two weeks after the plaintiffs have communicated the
+bank account details of the plaintiffs to the defendants.
+7. It is further directed that the plaintiffs shall not publicise this order in
+any manner.
+8. Decree sheet be drawn up accordingly.
+9. In view of the fact that the matter has been settled between the parties
+at an early stage, the Registry is directed to refund the entire Court Fees in
+favour of the Plaintiffs in terms of Section 16 of the Court Fees Act, 1870.
+AMIT BANSAL, J
+OCTOBER 21, 2024
+PB
+CS(COMM)929/2023 Page2of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:32:12

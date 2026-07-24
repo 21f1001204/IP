@@ -1,0 +1,774 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_904_2023
+case_status: DISPOSED
+n_orders: 10
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 904/2023
+TM 25 HOLDING BV
+..... Plaintiff
+Through: Mr. Saif Khan & Mr.
+Prajjwal Kushwaha, Advs.
+versus
+AKHTAR ALI & ORS.
+..... Defendant
+Through: Mr. Ajay Goyal, for D-2 (in
+person).
+(M-9810565500).
+CORAM:
+SIDHARTH MATHUR (DHJS), JOINT REGISTRAR
+(JUDICIAL)
+O R D E R
+% 20.02.2024
+The defendant no. 1 was served on 22.01.2024 and
+remaining defendant nos. 2 to 5 were served on 18.01.2024. All the
+services were effected vide ordinary means.
+The parties shall complete the pleadings in accordance with
+the timelines provided under law.
+The parties shall then file the physical copies of their
+respective documents, if not already filed and the joint schedule of
+the documents.
+The defendant no. 6 is John Doe.
+List the matter for admission-denial and marking of exhibits
+on 20.05.2024.
+SIDHARTH MATHUR (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 20, 2024/jr
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:03
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 904/2023 & I.A. 25597/2023
+TM 25 HOLDING BV ..... Plaintiff
+Through:
+versus
+AKHTAR ALI & ORS. ..... Defendants
+Through:
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 28.03.2024
+1. Hon’ble Judge is on leave today.
+2. Renotify on 06th August, 2024.
+3. Order be uploaded on the website of this Court.
+BY ORDER
+(COURT MASTER)
+MARCH 28, 2024/kct
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:03
+
+===== ORDER =====
+
+$~11
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 904/2023
+TM 25 HOLDING BV .... Plaintiff
+Through: Mr. Prajjwal Kushwaha,
+Advocate
+versus
+AKHTAR ALI & ORS. ..... Defendant
+Through: Mr. Ajay Kumar Goyal in person
+on behalf of defendant no. 2.
+Phone no. 9810565500,
+9710565500
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 20.05.2024
+Defendant no. 2 to 5 were served on 18.01.2024. No
+written statement has been filed on their behalf even though the
+maximum permissible period to file the same has expired.
+Consequently, their respective rights to file a written statement
+stand closed.
+Defendant no. 1 has been served on 22.01.2024. Today is
+the 119th day from the date of service of summons. Since there is
+no appearance on behalf of any of the defendants and 120 days
+from service of summons shall expire tomorrow for defendant
+no. 1, put up before the Hon’ble Court on the date already fixed
+i.e. 06.08.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MAY 20, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:02
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 904/2023 & I.A. 25597/2023
+TM 25 HOLDING BV .....Plaintiff
+Through: Mr. Saif Khan, Mr. Shobhit Agarwal,
+Mr. Prajjwal Kushwaha, Advocates
+(M:7791065506)
+versus
+AKHTAR ALI & ORS. .....Defendants
+Through: Mr. Ajay Kumar Goyal in person on
+behalf of defendant no. 2
+(M: 9810565500, 9710565500)
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 06.08.2024
+1. Defendant nos. 1 to 5, have not filed their written submissions, despite
+notice and appearance.
+2. The statutory period for filing the written statement, has already
+expired. Accordingly, defendant nos. 1 to 5, are proceeded ex-parte.
+3. Mr. Ajay Kumar Goyal, defendant no. 2, who appears in person,
+submits that he has stopped the use of the words/logo ‘G-STAR’ and
+‘G-STAR RAW’. He submits that he had recently started the work, and was
+not aware about the registration in favour of the plaintiff.
+4. At this stage, learned counsel for the plaintiff submits that defendant
+no.6 is ‘John Doe’/ unknown person. However, he submits that during the
+execution of the Local Commission, it transpired that one M/s Vanshika
+Traders, having address at IX/7296, Corner Mahavir Gali, Main Gandhi
+Road, Gandhi Nagar, Delhi–110031, was carrying out the infringing
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:01
+activities. He, thus, submits that the said entity may be impleaded as
+defendant no.6.
+5. He further submits that M/s Vanshika Traders is also available at an
+another address, through Proprietor, Mr. Rajeev Deval, (M:9958003341), at
+H. No. 147, Gali No. 3, Phase 5, Shiv Vihar, Karawal Nagar, North, Delhi–
+110094.
+6. Accordingly, on oral request of the plaintiff, M/s Vanshika Traders, is
+impleaded as defendant no.6.
+7. Upon filing of the process fee, issue summons to the newly impleaded
+defendant no.6, M/s Vanshika Traders, by all permissible modes. Summons
+shall state that the written statement be filed by the defendant no.6 within
+thirty days from the date of receipt of summons. Along with the written
+statement, the defendant no.6 shall also file affidavit of admission/denial of
+the plaintiff’s documents, without which, the written statement shall not be
+taken on record.
+8. Liberty is given to the plaintiff to file replication within thirty days
+from the date of receipt of the written statement. Further, along with the
+replication, if any, filed by the plaintiff, an affidavit of admission/denial of
+documents of the defendant no.6, be filed by the plaintiff, without which, the
+replication shall not be taken on record. If any of the parties wish to seek
+inspection of the documents, the same shall be sought and given within the
+timelines.
+9. Let amended memo of parties be filed within a period of one week
+from today.
+10. List before the Joint Registrar (Judicial) for marking of exhibits, on
+27th August, 2024.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:01
+11. List before the Court, on 14th November, 2024.
+MINI PUSHKARNA, J
+AUGUST 6, 2024
+au
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:01
+
+===== ORDER =====
+
+$~10
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 904/2023
+TM 25 HOLDING BV .....Plaintiff
+Through: Mr. Prajjwal Kushwaha,
+Advocate
+versus
+AKHTAR ALI & ORS. .....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 27.08.2024
+1. Ld. Counsel for the plaintiff submits that inadvertently
+steps could not be taken for service of defendant no. 6 which was
+earlier a John Doe but subsequently the details in respect there to
+have been received and accordingly M/s Vanshika Traders was
+impleaded as defendant no. 6. Let steps be now taken within two
+weeks.
+2. Put up for completion of pleadings on 16.10.2024.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 27, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:01
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 904/2023
+TM 25 HOLDING BV ....Plaintiff
+Through: Mr. Prajjawal Kushwaha,
+Advocate
+versus
+AKHTAR ALI & ORS. .....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 16.10.2024
+1. Defendant no. 6 has been served with summons through
+the ordinary mode on 20.09.2024, on its second address.
+Additionally, as per the affidavit of service filed by the plaintiff,
+defendant no. 6 was also served on both of its addresses through
+speed post and courier on 03.10.2024 and 04.10.2024. There is
+no appearance on behalf of defendant no. 6. Written statement
+be filed as per rules. Defendant nos. 1 to 5 have been proceeded
+against ex-parte.
+2. Matter is already listed before the Hon’ble Court for
+14.11.2024. Be placed before the Hon’ble Court on the date
+already fixed i.e. 14.11.2024, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+OCTOBER 16, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:28:00
+
+===== ORDER =====
+
+$~31
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 904/2023 & I.A. 25597/2023
+TM 25 HOLDING BV .....Plaintiff
+Through: Mr. Saif Khan, Mr. Prajjwal
+Kushwaha, Advocates
+(M:7791065506)
+versus
+AKHTAR ALI & ORS. .....Defendants
+Through: None.
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 14.11.2024
+1. Learned counsel for the plaintiff points out that defendant nos. 1 to 5,
+have already been proceeded ex-parte. As regards, defendant no.6, the said
+defendant stands served, however, written statement is yet to be filed by
+defendant no.6.
+2. Learned counsel for the plaintiff further submits that the statutory
+period for filing written statement by defendant no.6, is yet to expire.
+3. He, thus, submits that appropriate steps shall be taken by the
+plaintiffs, with regard to filing an application for summary judgment.
+4. At request, re-notify on 31st January, 2025.
+MINI PUSHKARNA, J
+NOVEMBER 14, 2024/au
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:59
+
+===== ORDER =====
+
+$~27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 904/2023 & I.A. 25597/2023
+TM 25 HOLDING BV .....Plaintiff
+Through: Mr. Saif Khan, Mr. Shobhit Agarwal
+and Mr. Prajjwal Kushwaha, Advs.
+M: 7791065506
+versus
+AKHTAR ALI & ORS. .....Defendants
+Through: None
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 31.01.2025
+1. Learned counsel appearing for the plaintiff submits that defendant
+nos. 1 to 5 are already proceeded ex-parte.
+2. He submits that the statutory period for filing the written statement of
+defendant no.6 has also expired. He submits that despite the same, no
+written statement has come to be filed on behalf of defendant no.6.
+3. None appears for the defendants when the matter is called out.
+4. Accordingly, defendant no.6 is proceeded ex-parte.
+5. Accordingly, this Court shall proceed in terms of Order XVII Rule 2
+of Code of Civil Procedure, 1908 (“CPC”).
+6. Re-notify on 17th February, 2025.
+MINI PUSHKARNA, J
+JANUARY 31, 2025/kr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:59
+
+===== ORDER =====
+
+$~24
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 904/2023 & I.A. 25597/2023
+TM 25 HOLDING BV .....Plaintiff
+Through: Mr. Saif Khan, Mr. Shobhit Agarwal
+and Mr. Prajjwal Kushwaha, Advs.
+M: 7791065506
+versus
+AKHTAR ALI & ORS. .....Defendants
+Through: Mr. Nitin Mehta, Adv. for Defendant
+no.1
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 17.02.2025
+1. Re-notify on 19th February, 2025.
+MINI PUSHKARNA, J
+FEBRUARY 17, 2025
+au
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:27:58
+
+===== ORDER =====
+
+$~39
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 904/2023 & I.A. No. 25597/2023
+TM 25 HOLDING BV .....Plaintiff
+Through: Mr. Pravin Anand with Mr. Saif
+Khan, Mr. Shobhit Agarwal and
+Mr. Prajjwal Kushwaha, Advocates.
+(M): 7791065506
+versus
+AKHTAR ALI & ORS. .....Defendants
+Through: Mr. Nitin Mehta with Mr. Arpit
+Rawat, Advocates for
+defendant no. 1.
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 19.02.2025
+MINI PUSHKARNA, J (ORAL)
+1. The present suit has been filed seeking permanent injunction against
+the defendants from dealing in any manner, in any goods bearing plaintiff's
+registered „G-STAR‟ trademarks, and/ or any similar trade mark amounting
+to infringement of registered trademarks of the plaintiff.
+2. It is noted that all the defendants in the present suit, i.e., defendant
+nos. 1 to 6, have been proceeded ex parte. No written statement has come to
+be filed on behalf of any of the defendants, despite lapse of statutory period.
+3. The facts, as canvassed in the plaint, are as follows:
+CS(COMM) 904/2023 Page 1 of 12
+3.1 The plaintiff, TM 25 Holding BV, is a company incorporated under
+the laws of Netherlands and is a part of the G-Star Group of Companies (“G-
+Star RAW”). Founded in the year 1989, the plaintiff is engaged in the
+business of fashion, design and marketing of jeans, tops and other clothing
+including luxury accessories.
+3.2 The business was initially established under the brand GAPSTAR,
+which was rebranded as G-STAR in 1994. Since 1996, the plaintiff has
+continuously and uninterruptedly used its G-Star marks on its products.
+From 2002, the G-STAR name and logo became integral to its collections
+and international advertising campaigns. Variations of these trademarks
+include G-Star, G-Star RAW, RAW, G-RAW, and RAW Denim 3301. The
+said marks both in word form and logo form are reproduced as under:
+3.3 These coined marks have no ordinary meaning and are exclusively
+associated with the plaintiff‟s products. The word „STAR‟ is an essential
+feature of the mark, particularly when used as „G-STAR‟. The logo, labels,
+and distinctive typeface were developed in-house, making them unique and
+proprietary to the plaintiff.
+3.4 The plaintiff is the registered proprietor of the G-STAR marks under
+the Trade Marks Act, 1999, and holds statutory rights in the following
+trademarks:
+CS(COMM) 904/2023 Page 2 of 12
+3.5 In addition, the plaintiff also holds statutory rights in multiple
+international jurisdictions, including, the European Union, United States,
+United Kingdom, Canada, China, Japan, and several others. These
+registrations underscore the brand‟s global recognition and extensive reach.
+3.6 Beyond serving as a source identifier, the plaintiff‟s logo marks are
+original artistic works under the Copyright Act, 1957, having been uniquely
+designed and developed in-house. Created exclusively for the plaintiff in a
+distinctive script and typeface, these marks are proprietary. As the lawful
+owner, the plaintiff holds exclusive rights over their reproduction,
+communication, and replication, with the stylistic arrangement, colour
+schemes, and layout further reinforcing its ownership.
+3.7 During a market survey conducted between September-November
+2023, the plaintiff discovered the defendants‟ infringing activities. The
+defendants, comprising of defendant no. 1, identified as the manufacturer of
+CS(COMM) 904/2023 Page 3 of 12
+counterfeit garments bearing the plaintiff‟s registered trademarks, and
+defendants no. 2 to 5, who are wholesalers engaged in the distribution of
+these counterfeit goods. These defendants were found not only dealing in
+infringing products, but also supplying them to various shops and outlets,
+facilitating unauthorized sales to the public.
+3.8 By engaging in such activities, the defendants actively encourage and
+aid third parties in dealing with goods that infringe the plaintiff‟s registered
+trademarks, causing significant commercial and reputational harm to the
+plaintiff. Hence, the present suit came to be filed.
+4. This Court notes that vide order dated 19th December, 2023, an ex
+parte ad interim order was passed restraining the defendants from dealing in
+any goods bearing the plaintiff‟s registered trademark, including, the
+GSTAR, „G-STAR‟, „GSTAR RAW‟ (word/logo) or any other similar mark.
+5. Further, three Local Commissioners were also appointed on the said
+date to visit the premises of defendant nos.1 to 5. The local commissions
+were executed on 23rd December, 2023, whereafter, the learned Local
+Commissioners filed their reports.
+6. The relevant extracts of the Local Commissioner Report dated 28th
+December, 2023, with respect to the premises of defendant no.1 located at,
+D-16, Islampur Road, Jaitpur Extension, Part-I, Badarpur, New Delhi-
+110044, is reproduced as under:
+“xxx xxx xxx
+6) That thereafter, Mr. Akhtar Ali i.e. defendant no. 1 who introduced
+himself as the owner M/s Ruby Enterprises, was made aware of the
+said order and the purpose of our visit to his premise. On
+understanding the contents of the order, he said he has no objection in
+us inspecting his premise. Accordingly, we started searching for the
+impugned products of G-Star and G-Star Raw and the helper from the
+office of counsel for plaintiff started video recording the entire
+CS(COMM) 904/2023 Page 4 of 12
+premises of defendant no. 1. During the search we found some
+finished cargo pants pertaining to G-Star and number of labels
+pertaining to the said brand. The photographs of all the products with
+the tags/label of GStar and G-Star Raw which were found on the
+premise of defendant no. 1 were captured by the said helper from the
+office of counsel for plaintiff. The pen drive containing photographs
+taken at the premise of defendant no. 1 as well as video recording of
+entire proceedings is being filed in original along with my report as
+ANNEXURE LC-6. The said inspection was carried out in the
+presence of defendant no. 1 in the said premise. The copy of
+photographs taken at the premise of defendant no. 1 is annexed
+herewith as ANNEXURE LC-7 (COLLY.).
+xxx xxx xxx
+8) That thereafter, I prepared the inventory (ANNEXURE LC-4) of
+all the products found on the premises of defendant no. 1 belonging to
+the plaintiff company, as identified by the counsel for the plaintiff
+company. The said list of inventory was signed by all, namely, Mr.
+Rahul Vats, counsel for the plaintiff, Mr. Akhtar Ali, owner of
+defendant no. 1 company, and myself. Accordingly, the said products
+were sealed by me in Bags 1 to 3, containing cargo pants (90 pieces)
+in Bag 1, cargo pants (66 pieces) in Bag 2, Card board Tags/Labels
+(846 pieces), and Cloth Labels/Tags (1155 pieces) in Bag 3. The said
+list of inventory is filed in original along with my report as
+ANNEXURE LC-4.
+xxx xxx xxx
+11) That as per the directions given in Para no. 33 (i) of the order
+dated 19.12.2023 of this Hon'ble Court to seize any equipment in the
+premise intended to manufacture the infringing goods. During the
+inspection we found 37 sewing machines which were being used to
+manufacture the impugned goods as mentioned in the inventory at
+the premise of defendant no. 1. The said sewing machines could not
+be seized as it was not practically possible to seize them therefore, I
+symbolically seized those machines and specifically directed the
+defendant no. 1 not to use them without the permission of this Hon'ble
+court.
+12) That the goods mentioned in the inventory were sealed with the
+brown tape bearing my signatures on them. I have sealed the above
+mentioned materials in three different bags. Bag I contains 90
+pieces of cargo pants, Bag 2 contains 66 pieces of cargo pants and
+Bag 3 contains all types of labels in total 2001 pieces.
+xxx xxx xxx”
+(Emphasis Supplied)
+7. The relevant extracts of the Local Commissioner Report dated 28th
+CS(COMM) 904/2023 Page 5 of 12
+December, 2023, with respect to the premises of defendant no. 2 located at,
+M/s Shivam Fashion, G/F-9/501, Plot No. 345, Subhash Road, Gandhi
+Nagar, is reproduced as under:
+“xxx xxx xxx
+6. The premises were duly inspected and searched and the
+undersigned found that the owner was in possession of the Jeans
+Pants with word/logo ‘G-STAR’ and the word/logo ‘G-STAR RAW’.
+The undersigned was helped by the counsel of Plaintiff in identifying
+the infringing goods and the staff helped the undersigned in seizing
+the goods and storing in gunny bags. That, it is pertinent to mention
+that the undersigned was able to find 102 pcs of infringing goods
+with word/logo ‘G-STAR’ and word/logo ‘G-STAR RAW’ which
+were found at the said premises, however there was no other
+equipment of material used for manufacture of the impugned mark etc.
+was found. That the undersigned duly prepared the Inventory of the
+goods seized sealed the same in gunny bags and the same was
+acknowledged by the owner of the shop. That the handwritten
+Inventory Report is attached herewith as Annexure 2.
+xxx xxx xxx”
+8. Local Commission was also executed at the premises of defendant no.
+4. The relevant extract from the report of the Local Commissioner dated 28th
+December, 2023, with respect to the premises of defendant no. 4, i.e., M/s
+Guru Kirpa Creations, Shop No. 9/467, Subhash Road, Tikona Park,
+Gandhi Nagar, Delhi-110031, is reproduced as under:
+“xxx xxx xxx
+7. The premises were duly inspected and searched and the
+undersigned found that the owner was in possession of the Jeans
+Pants with word/logo 'G-STAR' or the word/logo 'G-STAR RAW'.
+The undersigned was helped by the counsel of Plaintiff in identifying
+the infringing goods and the staff helped the undersigned in seizing
+the goods and storing in gunny bags. That, it is pertinent to mention
+that the undersigned was able to find 29 pcs of infringing goods with
+word/logo 'G-STAR' and word/logo 'G-STAR RAW' which were
+found at the said premises, however there was no other equipment of
+material used for manufacture of the impugned mark etc. was found.
+That the undersigned duly prepared the Inventory of the goods seized
+sealed the same in gunny bags and the same was acknowledged by the
+CS(COMM) 904/2023 Page 6 of 12
+Manager of the shop. That the handwritten Inventory Report is
+attached herewith as Annexure 2.
+xxx xxx xxx”
+(Emphasis Supplied)
+9. The relevant extracts of the Local Commissioner Report dated 05th
+January, 2024 with respect to the premises of defendant nos. 3 and 5 located
+at, M/s JMK Shirts at 9/7015 Ashok Gali, Gandhi Nagar Delhi, and, Leibro
+Jeans at 9/7002 Prem Gali, Ashok Gali, Gandhi Nagar, Delhi respectively,
+is reproduced as under:
+“xxx xxx xxx
+2. That the undersigned reached the Police Station Gandhi Nagar,
+Delhi on 23.12.2023 at 10.45am and after taking the police personnel
+i.e. HC Shri Farman Ali along with the counsel of the plaintiff namely
+Mr. Shobhit Aggarwal, visited the shop of the Defendant No. 3 i.e.
+M/s. JMK Shirts at 9/7015 Ashok Gali, Gandhi Nagar Delhi, at
+around 12 noon. The undersigned met Mr. Gaurav Chauhan,
+proprietor of the shop. On searching the premises, the undersigned
+found 14 (fourteen) shirts bearing mark "RAW". The infringed
+products were sealed in a plastic packet and handed over to Mr.
+Gaurav Chauhan, proprietor of the shop on superdari vide
+superdarinama. The undersigned did not find any goods or material
+bearing mark G-STAR or G-STAR RAW or any equipment or other
+items in the premises intended for the manufacture of the infringing
+logo or marks or for goods on which the infringing marks are to be
+affixed. The undersigned also checked the bill books of the said shop
+and found no such traces of trade/deal with respect to the goods
+bearing the impugned marks in any manner. The undersigned asked
+Mr. Gaurav Chauhan to provide financial records, documents,
+purchase order, stock statement etc. but he informed that there are no
+such things maintained in the shop. During the search, the
+undersigned did not find anything except the bill book. Photographs of
+the infringed goods, sealed packet, bill book and aadhar card of Mr.
+Gaurav are duly taken. The undersigned also prepared attendance
+sheet and taken the signatures of the parties present during the
+commission proceedings. Execution proceedings were concluded at
+about 1p.m.
+3. That thereafter, the undersigned along with the counsel for the
+plaintiff namely Mr. Karan Bhutani and HC Baldev, visited the shop
+of the Defendant No. 5, i.e. Leibro Jeans at 9/7002 Prem Gali, Ashok
+Gali, Gandhi Nagar Delhi. The undersigned met Mr. Shabab Alam,
+CS(COMM) 904/2023 Page 7 of 12
+who introduced himself as owner of the said shop. The undersigned
+inspected the premises but did not find any infringed goods in the
+said shop. The undersigned also inspected the bill book of the shop
+but there are no such traces of the trade/deal in respect of the
+infringed goods found. The undersigned asked Mr. Shabab Alam to
+provide financial records, documents, purchase order, stock statement
+etc. but he informed that there are no such things maintained in the
+shop. Photograph of the shop and the products being sold were duly
+taken. All the parties present during the commission, signed the spot
+proceeding report. The counsel for the plaintiff complied with the
+provisions of Order 39 Rule 3 of the CPC. The execution proceedings
+were concluded at about 1.30p.m.
+xxx xxx xxx”
+(Emphasis Supplied)
+10. The relevant extract of the Local Commissioner Report dated 28th
+January, 2024 with respect to the premises of defendant no. 6 located at, M/s
+Vanshika Traders, IX/7296, Corner Mahavir Gali, Main Gandhi Road,
+Gandhi Nagar, Delhi 110031, is reproduced as under:
+“xxx xxx xxx
+6. The premises were duly inspected and searched and the
+undersigned found that the owner was in possession of the Jeans
+Pants with word/logo 'G-STAR' and the word/logo 'G-STAR RAW'.
+The undersigned was helped by the counsel of Plaintiff in identifying
+the infringing goods and the staff helped the undersigned in seizing
+the goods and storing in gunny bags. That, it is pertinent to mention
+that the undersigned was able to find 154 pcs of infringing goods
+with word/logo 'G-STAR' and word/logo 'G-STAR RAW' which
+were found at the said premises, however there was no other
+equipment of material used for manufacture of the impugned mark etc.
+was found. That the undersigned duly prepared the Inventory of the
+goods seized sealed the same in gunny bags and the same was
+acknowledged by the owner of the shop. That the handwritten
+Inventory Report is attached herewith as Annexure 2.
+xxx xxx xxx”
+(Emphasis Supplied)
+11. This Court notes that vide order dated 06th August, 2024, defendant
+nos. 1 to 5 were proceeded ex parte for failing to file their written statement
+despite multiple service of notice. Further, M/s Vanshika Traders was
+CS(COMM) 904/2023 Page 8 of 12
+impleaded as defendant no.6 on the same day, replacing the earlier John Doe
+defendant.
+12. However, the newly impleaded defendant no.6 failed to appear and
+failed file its written statement within the statutory period. Thus, vide order
+dated 31st January, 2025, the defendant no.6 was also proceeded ex parte.
+13. It is to be noted that statement of learned counsel appearing on behalf
+of defendant no. 2 has been recorded in the order dated 06th August, 2024,
+that defendant no. 2 has stopped the use of the words/logo „G-STAR‟ and
+„G-STAR RAW‟. The relevant portion of the said order is reproduced as
+under:
+“xxx xxx xxx
+3. Mr. Ajay Kumar Goyal, defendant no. 2, who appears in person,
+submits that he has stopped the use of the words/logo „G-STAR‟ and
+„G-STAR RAW‟. He submits that he had recently started the work, and
+was not aware about the registration in favour of the plaintiff.
+xxx xxx xxx”
+14. As noted above, all the defendants herein have been proceeded ex
+parte and have not been appearing as well. It is noted that defendant no. 2
+had appeared in the matter that too only on three occasions, however, after
+06th August, 2024, the said defendant stopped appearing. Appearance has
+been made on behalf of defendant no. 1 today. Thus, in the absence of any
+written statement on behalf of the defendants, this Court shall now proceed
+under Order VIII Rule 10 of CPC. In the absence of any written statement
+filed by the defendants, there is no credible defence raised by the
+defendants. Further, the reports of the Local Commissioners clearly bring
+forth the infringing activities of the defendants.
+15. Accordingly, considering the facts and circumstances of the present
+case and the undertaking given on behalf of defendant no.2, the plaintiff is
+CS(COMM) 904/2023 Page 9 of 12
+entitled to decree of permanent injunction in its favour and against the
+defendants.
+16. With respect to costs and damages, this Court observes that the
+defendants‟ adoption of the impugned marks cannot be deemed bona fide or
+honest. The defendants willfully infringed upon the plaintiff‟s trademarks
+and cannot claim ignorance of their prior existence or the established
+reputation associated with the plaintiff‟s registered trademark. The
+defendants have no plausible justification for adopting the plaintiff‟s
+trademarks, other than to ride upon the plaintiff‟s established reputation and
+goodwill.
+17. This Court takes note of the recoveries which were made by the
+learned Local Commissioners from defendant nos. 1 to 6, which are as
+follows:
+CS(COMM) 904/2023 Page 10 of 12
+18. Thus, taking into account the large quantity of infringing goods
+recovered by the learned Local Commissioners, and the submissions made
+before this Court, the plaintiff is entitled to cost and damages. Accordingly,
+the cost and damages payable by the defendants, shall be as follows:
+S. No. Defendant Amount
+1. Defendant no. 1 ₹4,00,000/-
+2. Defendant no. 2 ₹1,00,000/-
+3. Defendant no. 3 ₹10,000/-
+4. Defendant no. 4 ₹10,000/-
+5. Defendant no. 5 Nil
+6. Defendant no. 6 ₹2,00,000/-
+19. In view thereof, the decree is passed in favour of the plaintiff and
+against the defendants in terms of para 66 (i), (ii), (iii) and (iv) of the plaint.
+20. It is further directed that the infringing tags of the goods and other
+materials that were taken on Superdari by the learned Local Commissioners
+and returned to the respective defendants, shall be destroyed in the presence
+of the plaintiff or its representative.
+21. It is clarified that in case, the products of the defendants can be used
+after destroying the infringing mark/label, the same can be used by the
+defendants after the destruction of the infringing label on the said products.
+22. With respect to the products, where it is not possible to destroy the
+infringing logo/device, the same shall be handed over to the
+plaintiff/plaintiff‟s representative, who shall use the same for welfare
+purposes by donating the same to some NGO.
+CS(COMM) 904/2023 Page 11 of 12
+23. With the aforesaid directions, the present suit along with pending
+application stands disposed of.
+MINI PUSHKARNA, J
+FEBRUARY 19, 2025
+Corrected & Released on: 13th March, 2025
+CS(COMM) 904/2023 Page 12 of 12

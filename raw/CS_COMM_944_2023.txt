@@ -1,0 +1,981 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_944_2023
+case_status: PENDING
+n_orders: 21
+
+$~37
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 944/2023 & I.As. 26144-48/2023
+PARLE AGRO PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Chander M. Lall, Senior
+Advocate with Mr. Ankur Sangal,
+Ms.Pragya Mishra, Mr. Shaurya Pandey and
+Ms. Yashi Aggarwal, Advocates.
+versus
+PEPSICO INDIA HOLDINGS
+PRIVATE LIMITED & ANR. ..... Defendants
+Through: Mr. Rajiv Nayar, Senior
+Advocate with Mr. Manisha K. Jha and
+Ms.Shruti Dass, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 22.12.2023
+1. The plaintiff’s grievance is that the defendants are using “FIZZ”
+as a prominent feature of their advertising campaign, to the extent that
+it is no longer descriptive but is used in the trade mark sense. This,
+accordingly to Mr. Lall, learned senior counsel for the plaintiff,
+infringes the plaintiff’s registered trade marks, as the plaintiff is the
+proprietor of a number of registered trade marks of which “FIZZ” is a
+prominent part.
+2. Mr. Nayar, learned senior counsel for the defendants, on the
+other hand, submits that the defendants have been using “FIZZ” as
+part of their campaign since March 2022 and that some of the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:20
+advertisements cited in the plaint also date back to the said period.
+3. In any event, as the matter requires consideration, let the plaint
+be registered as a suit.
+4. Issue summons. Summons are accepted on behalf of defendants
+by Mr. Manisha K. Jha.
+5. Written statement, if any, accompanied with affidavit of
+admission and denial of the documents filed by the plaintiff be filed
+within 30 days with advance copy to learned Counsel for the plaintiff,
+who may file replication thereto, accompanied by affidavit of
+admission and denial of the documents filed by the defendants within
+30 days thereof.
+6. List before the learned Joint Registrar (Judicial) for completion
+of pleadings, admission and denial of documents and marking of
+exhibits on 11 March 2024, whereafter the matter would be placed
+before the Court for case management hearing and further
+proceedings.
+I.A. 26144/2023 (under Order XXXIX Rules 1 & 2 CPC)
+7. Given the longevity of user as stated by Mr. Nayar, I am of the
+opinion that the defendants are entitled to file a reply before this
+application is taken up for hearing. Accordingly, let a reply be filed
+within three weeks from today and rejoinder be filed within one week
+thereof.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:20
+8. List for hearing and disposal of this application on 29 January
+2024.
+9. No extension of time for filing reply and rejoinder shall be
+granted. This application shall be taken up for hearing and disposal on
+the next date of hearing.
+I.A. 26145/2023 (under Section 12A of the Commercial Courts Act,
+201.)
+10. In the facts of the case, the plaintiff is granted exemption from
+the requirement of pre-institution mediation.
+11. The application is allowed accordingly.
+I.A. 26146/2023 (Order XI Rule 1(4) of the CPC)
+12. This application seeks permission to file additional documents.
+The plaintiffs are permitted to place additional documents on record in
+accordance with Order XI Rule 1(4) of the Code of Civil Procedure,
+1908 (CPC) as amended by the Commercial Courts Act, 2015 within
+six weeks from today.
+13. The application is disposed of accordingly.
+I.A. 26147/2023 (seeking enlargement of time for filing Court fees)
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:20
+14. Subject to the plaintiff filing requisite court fee within two
+weeks, exemption is granted.
+15. The application stands disposed of accordingly.
+I.A. 26148/2023 (exemption from original/certified, typed, transalted
+and fair copies)
+16. Subject to the plaintiff filing legible copies of any dim or
+illegible documents on which it may seek to place reliance as well as
+duly notarised affidavit of which it seeks exemption, within 30 days
+from today, exemption is granted for the present.
+17. The application is disposed of.
+C.HARI SHANKAR, J
+DECEMBER 22, 2023
+kd
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:20
+
+===== ORDER =====
+
+$~56
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 944/2023 & I.As. 26144-48/2023
+PARLE AGRO PRIVATE LIMITED ..... Plaintiff
+Through: Mr. C.M. Lall, Sr. Adv. with Mr.
+Ankur Sangal, Adv.
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED
+& ANR. ..... Defendant
+Through: Mr. Manish K Jha, Mr. Dheeraj Nair
+and Ms. shruti Dass, Adv.
+CORAM:
+JUSTICE PRATHIBA M. SINGH
+O R D E R
+% 22.12.2023
+1. This hearing has been done through hybrid mode.
+2. Subject to orders of the Hon’ble Judge-in-Charge (Original Side), list
+this matter before another Bench today itself i.e. on 22nd December, 2023,
+post lunch.
+PRATHIBA M. SINGH, J.
+DECEMBER 22, 2023
+dk
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:19
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 944/2023
+PARLE AGRO PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Chander M. Lall, Senior
+Advocate with Mr. Ankur Sangal,
+Ms.Pragya Mishra, Mr. Ankit Arvind,
+Mr. Shaurya Pandey & Ms. Yashi
+Agrawal, Advocates.
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED & ANR.
+..... Defendants
+Through: Mr. Rajiv Nayar, Senior Advocate
+with Mr. Dheeraj Nair, Mr. Manish K.
+Jha & Mr. Angad Baxi, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 29.01.2024
+I.A. 26144/2023 (application under Order 39 Rules 1 & 2 CPC filed by
+the plaintiff)
+1. Pursuant to notice issued by the Court, a reply has been filed by the
+defendants. Rejoinder, it is stated by learned senior counsel for the plaintiff,
+has been filed, however, the same is not on record. The same may be placed
+on record before the next date of hearing.
+2. Counsels for the parties shall file a two-page note of arguments that
+they wish to address in this regard and citations on which they wish to place
+reliance. The same may be filed before the next date of hearing. A printed
+copy of the same be provided to the Court Master.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:18
+3. List on 19.02.2024.
+4. Oder be uploaded on the website of this Court.
+ANISH DAYAL, J
+JANUARY 29, 2024
+B.S. Rohella/vp
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:18
+
+===== ORDER =====
+
+$~18
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 944/2023, I.A. 26144/2023 & I.A. 3878/2024.
+PARLE AGRO PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Chander M Lall, Sr. Advocate with
+Mr. Ankur Sangal, Ms. Pragya Mishra
+and Mr. Shauray Pandey, Advocates.
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED & ANR.
+..... Defendant
+Through: Mr. Rajiv Nayar, Senior Advocate with
+Mr. Dayan Krishnan, Sr. Advocate, Mr.
+Manish K. Jha & Mr. Angad Baxi,
+Advocates, Mr. Manish K. Jha, Mr. C.
+Bani, Ms. Avni Sharma Mr. S. Kali,
+Advocates for defendants.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 19.02.2024
+I.A. 3878/2024 (Application seeking permission to proceed with the filing of
+rectification petition against the plaintiff’s registration).
+1. This application has been filed under Section 124 of the Trademarks Act,
+1999 read with Section 151 of Code of Civil Procedure, 1908 by defendant no.1
+seeking leave to defendant no.1 to frame an issue to the alleged invalidity of
+the plaintiff registrations nos. 2313440, 2106067, 3234037, 3234041, 3234042,
+2399563, 1668879, 3456564, 1807584, 1773672, 2313433, & 4468858.
+2. Issue notice.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:18
+3. Notice is accepted by counsel for plaintiff who shall file a reply to the
+same in the next three weeks with copy to the opposing side who may file
+rejoinder thereafter, if so necessitated, before the next date of hearing.
+4. List on 01st April, 2024.
+5. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+FEBRUARY 19, 2024/RK
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:18
+
+===== ORDER =====
+
+$~12
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 944/2023
+PARLE AGRO PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Kiratraj Sadana,
+Mr. Shaurya Pandey,
+Advocates
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED &
+ANR. ..... Defendant
+Through: Mr. Angad Baxi (VC),
+Mr. Manish Jha,
+Advocates for both the
+defendants.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 11.03.2024
+I.A. No. 5622/2024 on behalf of the plaintiff seeking
+condonation of delay of 15 days in filing the replication.
+Replication has been filed on the 45th day from the date of
+receipt of written statement. Although ld. counsel for the
+defendant objects to the condonation of delay, since the
+replication has been filed within the permissible period, delay
+stands condoned. Replication is brought on record.
+IA stands disposed off. Defendant is at liberty to file
+affidavit of admission / denial to the documents filed alongwith
+the application within 30 days from today.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:17
+CS(COMM)- 944/2023:
+Matter is already listed before the Hon’ble Court for
+01.04.2024.
+Put up before the Hon’ble Court on the date already fixed
+i.e. 01.04.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+MARCH 11, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:17
+
+===== ORDER =====
+
+$~23
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 944/2023, I.A. 26144/2023 & I.A. 3878/2024
+PARLE AGRO PRIVATE LIMITED ..... Plaintiff
+Through: Mr. Chander M. Lall, Sr. Advocate
+alongwith Mr. Ankur Sangal, Ms.
+Pragya Mishra and Mr. Shaurya
+Pandey, Advocates.
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED & ANR.
+..... Defendants
+Through: Mr. Rajeev Nayyar, Sr. Advocate
+alongwith Mr. Dayan Krishnan, Sr.
+Advocate, Mr. Dheeraj Nair, Mr.
+Manish Jha, Mr. Angad Baxi, Mr.
+Deepak, Mr. Aadhar, Mr. Sohrab Seth,
+Mr. Sreedhar and Mr. Sukrit Seth,
+Advocates.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 01.04.2024
+1. Renotify on 19th July, 2024.
+2. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+APRIL 1, 2024/kct
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:17
+
+===== ORDER =====
+
+Not Available (Error: Could not read PDF)
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 944/2023
+PARLE AGRO PRIVATE LIMITED .....Plaintiff
+Through: Mr. Shaurya Pandey, Ms. Pragya
+Mishra, Advocates
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED &
+ANR. .....Defendant
+Through: Mr. Angad Baxi (VC), Advocate
+for D-1
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 22.07.2024
+I.A. 33896/2024 filed by the plaintiff to condone the delay of
+128 days in filing reply to I.A. 3878/ 2024 filed by D-1 (for
+framing of an issue as to the validity of the plaintiff's
+registrations and seeking permission to proceed with the
+filing of rectification petition against the plaintiff's
+registrations).
+1. Issue notice.
+2. Notice accepted by ld. Counsel for defendant no. 1.
+3. For the reasons stated in the application, application is
+allowed. Delay stands condoned. Reply is taken on record.
+4. IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 22, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:16
+
+===== ORDER =====
+
+$~34
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 944/2023, I.A. 26144/2023 & I.A. 3878/2024
+PARLE AGRO PRIVATE LIMITED .....Plaintiff
+Through: Ms. Pragya Mishra, and Ms. Amira
+Dhawan, Advocates
+Mob: 9910113028
+Email:
+amika.dhawan@khaitanco.com
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED
+& ANR. .....Defendants
+Through: Ms. Avni Sharma, Adv. (Through
+VC)
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 08.10.2024
+1. Learned counsel appearing for the defendants submits that the main
+counsel, who has to advance arguments, is not available.
+2. At request, re-notify on 03rd February, 2025.
+MINI PUSHKARNA, J
+OCTOBER 8, 2024/kr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:15
+
+===== ORDER =====
+
+$~28
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 944/2023, I.A. No. 26144/2023 & I.A. No. 3878/2024
+PARLE AGRO PRIVATE LIMITED .....Plaintiff
+Through: Mr. Chander M. Lall, Sr. Adv. with
+Mr. Ankur Mishra, Ms. Pragya
+Mishra and Mr. Shaurya Pandey,
+Advs.
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED & ANR.
+.....Defendants
+Through: Mr. Rajiv Nayar, Sr. Adv. and Mr.
+Dayan Krishnan, Sr. Adv. with Mr.
+Angad Baxi, Ms. Avni Sharma, Mr.
+Aadhar Nautiyal and Ms. Aparna
+Singh, Advs.
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 03.02.2025
+1. The Parties point out that admission and denial of documents, is yet to
+take place.
+2. Accordingly, list before the Joint Registrar (Judicial) for admission
+and denial of documents, and marking of exhibits, on 25th February, 2025.
+3. List before the Court on 25th April, 2025.
+MINI PUSHKARNA, J
+FEBRUARY 3, 2025/p
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:15
+
+===== ORDER =====
+
+$~21
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 944/2023
+PARLE AGRO PRIVATE LIMITED
+.....Plaintiff
+Through: Mr. Raghu Vinayak Sinha (VC),
+Advocate
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED &
+ANR.
+.....Defendant
+Through: Mr. Angad Baxi, Ms. Aparna
+Singh, Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 25.02.2025
+1. The matter has been listed today for carrying out
+admission / denial of documents.
+2. Plaintiff has filed its documents in physical form.
+However, defendants are yet to file the same. Let the same be
+now filed within four weeks failing which cost shall be imposed.
+3. Additionally, defendants are yet to file affidavit of
+admission / denial to the documents filed by the plaintiff
+alongwith the replication. Let the same be also done within four
+weeks.
+4. Put up for admission / denial of documents on 23.04.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+FEBRUARY 25, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:14
+
+===== ORDER =====
+
+$~13
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 944/2023
+PARLE AGRO PRIVATE LIMITED
+.....Plaintiff
+Through: Appearance not given.
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED &
+ANR.
+.....Defendant
+Through: Mr. Angad Baxi, Ms. Aparna
+Singh, Advocates for D-1 & 2
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 23.04.2025
+1. The matter has been listed today for carrying out
+admission / denial of documents.
+2. The documents in physical form have been filed on behalf
+of both the sides. However, affidavit of admission / denial of
+documents on behalf of defendant no. 2 and Joint document
+schedule is yet to be filed. Let the same be now filed within four
+weeks. Ld. Counsels jointly submit that admission / denial of
+documents may be carried out after the affidavit and Joint
+document schedule has been filed.
+3. Matter is already listed before the Hon’ble Court for
+25.04.2025. Be placed before the Hon’ble Court on the date
+already fixed i.e. 25.04.2025, for further directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 23, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:13
+
+===== ORDER =====
+
+$~17
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 944/2023, I.A. 26144/2023-Stay, I.A. 3878/2024-By
+D-1 U/S 124 of TM Act r/w O 14 R 1
+PARLE AGRO PRIVATE LIMITED .....Plaintiff
+Through: Ms. Sucheta Roy, Adv.
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED & ANR.
+.....Defendants
+Through: Ms. Avni Sharma, Adv
+CORAM:
+HON'BLE MR. JUSTICE SAURABH BANERJEE
+O R D E R
+% 25.04.2025
+1. Learned counsel for the plaintiff has moved an adjournment slip,
+which is not opposed by learned counsel for the defendants.
+2. Accordingly, renotify before the learned Joint Registrar on
+07.07.2025.
+SAURABH BANERJEE, J
+APRIL 25, 2025/Ab
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:13
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 944/2023
+PARLE AGRO PRIVATE LIMITED
+.....Plaintiff
+Through: Ms. Nidhi Pathak, Advocate
+Versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED &
+ANR.
+.....Defendant
+Through: Mr. Angad Baxi, Ms. Aparna
+Singh, Advocates
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 07.07.2025
+1. The matter has been listed today for carrying out
+admission / denial of documents.
+2. Ld. Counsel for the plaintiff admits seven documents filed
+by the defendants which have been identified as Ex. D-1 to Ex.
+D-7. Rest of the documents have been denied by the plaintiff.
+3. On the other hand, ld. counsel for the defendants admits
+four documents filed by the plaintiff, which have been identified
+as Ex. P-1 to Ex. P-4. Rest of the documents have been denied by
+the defendant.
+4. Admission / denial of documents stands complete. Matter
+is ripe for framing of issues. Joint document schedule is lying
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:12
+under objections. Plaintiff is directed to bring the Joint document
+schedule on record before the next hearing before the Hon’ble
+Court.
+5. Put up before the Hon’ble Court on 18.08.2024, for further
+directions.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JULY 7, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:12
+
+===== ORDER =====
+
+$~246
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 944/2023
+PARLE AGRO PRIVATE LIMITED
+.....Plaintiff
+Through: Ms. Amika Dhawan, Adv. (VC)
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED & ANR.
+.....Defendant
+Through: None
+CORAM:
+JOINT REGISTRAR (JUDICIAL) AMITABH RAWAT(DHJS)
+O R D E R
+% 14.08.2025
+The present matter is listed before the undersigned under the Special
+Mediation Drive: Mediation ‘For the Nation’.
+None has appeared for the defendant when the matter was called.
+Hence the matter be sent back to the Hon’ble Court for further
+direction.
+AMITABH RAWAT (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 14, 2025/NI
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:12
+
+===== ORDER =====
+
+$~26
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 944/2023 & I.As. 26144/2023, 3878/2024, 20025/2025
+PARLE AGRO PRIVATE LIMITED .....Plaintiff
+Through: Mr. Chander M. Lall, Sr. Advocate
+with Mr. Ankur Sangal, Mr. Ankit
+Arvind, Mr. Shashwat Rakshit and
+Ms. Nidhi Pathak, Advocates
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED & ANR.
+.....Defendants
+Through: Mr. Dayan Krishnan, Sr. Advocate
+with Mr. Dheeraj Nair, Mr. Angad,
+Ms. Avni Sharma, Mr. Sukrit Seth,
+Mr. Aadhar Nautiyal and Mr.
+Shreedhar, Advocates
+CORAM:
+HON'BLE MS. JUSTICE MANMEET PRITAM SINGH ARORA
+O R D E R
+% 18.08.2025
+1. Learned counsels for the parties jointly request that this matter be
+placed before the Bench of Hon’ble Mr. Justice Tejas Karia where another
+suit i.e., CS(COMM) 837/2025 is part-heard. They state that common issues
+of fact and law arise for consideration in the said suit and the captioned suit.
+2. Subject to the orders of Hon’ble the Judge-In-Charge (Original Side),
+list the matter before the Hon’ble Mr. Justice Tejas Karia on 04.09.2025.
+MANMEET PRITAM SINGH ARORA, J
+AUGUST 18, 2025/rhc
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:11
+
+===== ORDER =====
+
+$~33 & 34
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
+(33)
++ CS(COMM) 944/2023 & I.A. 3878/2024
+PARLE AGRO PRIVATE LIMITED .....Plaintiff
+Through: Mr. Chander M. Lall, Senior
+Advocate along with Mr. Ankur
+Sangal, Mr. Ankit Arvind, Mr.
+Shashwa Rakshit & Ms. Nidhi
+Pathak, Advocates.
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED
+& ANR. .....Defendants
+Through: Mr. Rajiv Nayar, Senior Advocate
+(through VC) & Mr. Dayan Krishnan,
+Senior Advocate along with Mr.
+Dheeraj Nair, Mr. Angad Bani, Ms.
+Avni Sharma, Mr. Sukrit Seth, Ms.
+Ananya Sharma, Mr. Deepak Gogia
+& Mr. Aadhar Nautiyal, Advocates.
+AND
+(34)
++ CS(COMM) 837/2025
+PARLE AGRO PRIVATE LIMITED .....Plaintiff
+Through: Mr. Chander M. Lall, Senior
+Advocate along with Mr. Ankur
+Sangal, Mr. Ankit Arvind, Mr.
+Shashwa Rakshit & Ms. Nidhi
+Pathak, Advocates.
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED
+& ANR. .....Defendants
+Through: Mr. Rajiv Nayar, Senior Advocate
+(through VC) & Mr. Dayan Krishnan,
+Senior Advocate along with Mr.
+Dheeraj Nair, Mr. Angad Bani, Ms.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:10
+Avni Sharma, Mr. Sukrit Seth, Ms.
+Ananya Sharma, Mr. Deepak Gogia
+& Mr. Aadhar Nautiyal, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 04.09.2025
+I.A. 20025/2025 in CS(COMM) 944/2023
+1. This is an Application on behalf of the Defendant under Order XI
+Rule 10 read with Section 151 of the Code of Civil Procedure, 1908
+(“CPC”) seeking leave to bring on record the additional documents being (i)
+Certificate/Declaration under Order XI Rule 6(3) of the Commercial Courts
+Act, 2015 (“CC Act”) read with Section 151 of the CPC and (ii)
+Certificate/Declaration under Section 63(4) of the Bhartiya Sakshya
+Adhiniyam, 2023 on behalf of Defendants' Investigator Mr. Dhirendra
+Rawat.
+2. For the reasons stated in the Application, it is allowed. The
+Defendants are permitted to bring on record the above-mentioned two
+documents. The learned Senior Counsel for the Plaintiff does not object to
+this.
+3. The Application stands disposed of.
+I.A. 19771/2025 (Exemption from pre-institution Mediation) in
+CS(COMM) 837/2025
+4. This is an Application filed by the Plaintiff seeking exemption from
+instituting pre-litigation Mediation under Section 12A of the CC Act.
+5. In view of the averments made in the Pleadings, this Application does
+not survive.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:10
+6. Accordingly, this Application stands disposed of.
+I.A. 21972/2025 in CS(COMM)-837/2025
+7. This is an Application on behalf of the Defendants under Section 10
+of the CPC seeking stay of the present Suit.
+8. Issue Notice. The learned Senior Counsel for the Plaintiff accepts
+Notice.
+9. Let the Reply be filed within a period of two weeks. Rejoinder thereto
+may be filed within a period of one week thereafter.
+10. List on 09.10.2025.
+I.A. 21973/2025 in CS(COMM)-837/2025
+11. This is an Application on behalf of Defendant No. 2 under Section
+151 of the CPC seeking exemption from filing Notarised and Apostilled
+Affidavit in response to Plaintiff's Application, i.e., I.A. 19770/2025 and
+Defendants' Application under Section 10 of the CPC.
+12. Exemption is allowed, subject to all just exceptions.
+13. The Application stands disposed of.
+I.A. 26144/2023 in CS(COMM) 944/2023
+I.A. 19770/2025 in CS(COMM)-837/2025
+14. The learned Senior Counsel for the Plaintiff has concluded his
+submissions.
+15. List for hearing of the submissions on behalf of the Defendants along
+with I.A. Nos. being I.A. 3878/2024 in [CS(COMM) 944/2023] and I.A.
+21972/2025 in [CS(COMM)-837/2025] on 09.10.2025.
+TEJAS KARIA, J
+SEPTEMBER 4, 2025/ ‘A’
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:10
+
+===== ORDER =====
+
+$~18 & 19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 944/2023 & I.A. 3878/2024
+PARLE AGRO PRIVATE LIMITED .....Plaintiff
+Through: Mr. Chander M. Lall, Senior Advocate
+along with Mr. Ankur Sangal, Mr.
+Ankit Arvind, Mr. Shashwat Rakshit
+& Ms. Nidhi Pathak, Advocates.
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LTD.
+& ANR. …..Defendants
+Through: Mr. Dayan Krishnan, Senior Advocate
+with Mr. Angad Bani, Ms. Avni
+Sharma, Ms. Aparna Singh, Mr.
+Shreedhar, Mr. Deepak Gogia and Mr.
+Aadhar Nautiyal, Advocates.
++ CS(COMM) 837/2025 & I.A. 21972/2025
+PARLE AGRO PRIVATE LIMITED .....Plaintiff
+Through: Mr. Chander M. Lall, Senior Advocate
+along with Mr. Ankur Sangal, Mr.
+Ankit Arvind, Mr. Shashwat Rakshit
+& Ms. Nidhi Pathak, Advocates.
+versus
+PEPSICO INDIA HOLDINGS PVT. LTD. & ANR. .....Defendants
+Through: Mr. Angad Bani, Ms. Avni Sharma
+and Ms. Aparna Singh, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 09.10.2025
+I.A. 25083/2025 in CS(COMM) 837/2025
+1. This is an Application filed on behalf of Defendant No. 1 under Section
+124 of the Trade Marks Act, 1999 read with Order XIV Rule 1 of the Code of
+Civil Procedure, 1908.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:10
+2. Issue Notice. The learned Counsel for the Plaintiff accepts Notice.
+3. Let the Reply be filed within a period of four weeks from date.
+Rejoinder thereto, if any, be filed within a period of two weeks thereafter.
+I.A. 26144/2023 in CS(COMM) 944/2023
+4. Mr. Dayan Krishnan, the learned Senior Counsel for the Defendants
+has concluded his submissions.
+I.A. 19770/2025 in CS(COMM) 837/2025
+5. List for hearing the submissions on behalf of the Defendants on
+11.11.2025.
+TEJAS KARIA, J
+OCTOBER 9, 2025/sms
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:10
+
+===== ORDER =====
+
+$~21 & 22
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 944/2023, I.A. 26144/2023 & I.A. 3878/2024
++ CS(COMM) 837/2025, I.A. 19770/2025, I.A. 21972/2025 & I.A.
+25083/2025
+PARLE AGRO PRIVATE LIMITED .....Plaintiff
+Through: Mr.Chander M.Lall,Senior Advocate
+with Mr. Ankur Sangal, Mr. Ankit
+Arvind,Mr.ShashwatRakshitandMs.
+Nidhi Pathak, Advocates.
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED
+& ANR. .....Defendants
+Through: Mr. Rajiv Nayar, Senior Advocate
+with Mr. Angad Baxi, Ms. Aparna
+Singh, Mr. Deepak Gogoia and Mr.
+Aadhar Nautiyal, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 11.11.2025
+List for further arguments on 14.11.2025 at 3:30 PM.
+TEJAS KARIA, J
+NOVEMBER 11, 2025
+ap
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:09
+
+===== ORDER =====
+
+$~26 & 27
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 944/2023, I.A. 26144/2023 & I.A. 3878/2024
++ CS(COMM) 837/2025, I.A. 19770/2025, I.A. 21972/2025 & I.A.
+25083/2025
+PARLE AGRO PRIVATE LIMITED .....Plaintiff
+Through: Mr. C.M. Lall, Senior Advocate with
+Mr. Ankur Sangal, Mr. Ankit Arvind,
+Mr. Shashwat Rakshit and Ms. Nidhi
+Pathak, Advocates.
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED
+& ANR. .....Defendants
+Through: Mr. Rajiv Nayar, Senior Advocate
+with Mr. Angad Baxi, Ms. Aparna
+Singh, Mr. Deepak Gogoia and Mr.
+Aadhar Nautiyal, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+O R D E R
+% 14.11.2025
+List for further arguments on 12.12.2025.
+TEJAS KARIA, J
+NOVEMBER 14, 2025/sms
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:09
+
+===== ORDER =====
+
+$~14 & 15
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 944/2023, I.A. 26144/2023 & I.A. 3878/2024
+PARLE AGRO PRIVATE LIMITED .....Plaintiff
+Through: Mr. Ankur Sangal, Mr. Ankit Arvind,
+Mr. Shashwat Rakshit and Ms. Nidhi
+Pathak, Advocates.
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED
+& ANR. .....Defendants
+Through: Mr. Dayan Krishnan, Senior
+Advocate with Mr. Angad Baxi, Mr.
+Aparna Singh, Mr. Deepak Gogoia
+and Mr. Aadhar Nautiyal, Advocates.
++ CS(COMM) 837/2025, I.A. 19770/2025, I.A. 21972/2025 & I.A.
+25083/2025
+PARLE AGRO PRIVATE LIMITED .....Plaintiff
+Through: Mr. Ankur Sangal, Mr. Ankit Arvind,
+Mr. Shashwat Rakshit and Ms. Nidhi
+Pathak, Advocates.
+versus
+PEPSICO INDIA HOLDINGS PRIVATE LIMITED
+& ANR. .....Defendants
+Through: Mr. Rajiv Nayyar, Senior Advocate
+with Mr. Angad Baxi, Mr. Aparna
+Singh, Mr. Deepak Gogoia and Mr.
+Aadhar Nautiyal, Advocates.
+CORAM:
+HON'BLE MR. JUSTICE TEJAS KARIA
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:08
+O R D E R
+% 12.12.2025
+1. Due to Special Bench, it is not possible to take up the matter today.
+2. Accordingly, list on 20.01.2026.
+TEJAS KARIA, J
+DECEMBER 12, 2025/sms
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:34:08

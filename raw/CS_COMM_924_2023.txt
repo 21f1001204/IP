@@ -1,0 +1,1036 @@
+You are coding a single case from the Delhi High Court commercial docket for an empirical legal-research dataset. You do TWO things, at the CASE level, for the whole case (not per order):
+  (1) decide whether this is an intellectual-property (IP) dispute at all, and
+  (2) if it is, identify which IP rights the plaintiff actually ASSERTS.
+You output ONE JSON object. Do NOT assume the case is an IP case — decide it from the evidence in the orders.
+
+You receive all orders of one case in chronological order, separated by `=== ORDER N ===` headers (each with order_filename and order_date). Output valid JSON and nothing else.
+
+==============================================================
+STEP 1 — IS THIS AN IP CASE?  (decide first; do not assume)
+==============================================================
+
+Read the orders and classify ip_status as exactly one of "yes", "no", "unclear".
+
+- "yes" — there is AFFIRMATIVE evidence this is an IP dispute. Any ONE suffices:
+    * a claim, prayer, or judicial finding on an IP right (infringement of a trade mark / copyright / patent / design / GI; passing off; personality rights; trade-secret / confidential-information / source-code misappropriation), OR
+    * unambiguous IP-suit markers: "registered trade mark", registration numbers for the plaintiff's suing mark, "infringement", "deceptively similar", a Local Commissioner appointed to seize infringing goods, John Doe / dynamic injunction / website-blocking relief, or linkage to an IP-Division matter (e.g. "C.O.(COMM.IPD-TM)", "IPD-PAT", "IPD-CR").
+
+- "no" — there is AFFIRMATIVE evidence it is NOT an IP dispute: the suit is plainly something else (recovery of money / contract, defamation, oppression-mismanagement, arbitration, tenancy, a pure commercial claim) and no IP right is in issue anywhere in the orders.
+
+- "unclear" — you cannot tell from the supplied orders. Typically every supplied order is procedural (summons, exemptions, condonation, pleadings management, mediation, adjournments) and NONE states the plaint's subject, any prayer, or any finding. Do NOT default to "yes" because the suit is a CS(COMM) number or because of the parties' industry — absence of the plaint/opening order means "unclear", not "yes".
+
+Put a short verbatim quote (or a one-line reason for "no"/"unclear") in ip_evidence.
+
+If ip_status is "no" or "unclear": set rights_asserted = [], rights_evidence = {}, and STOP — do not code rights. Only proceed to Step 2 when ip_status = "yes".
+
+==============================================================
+STEP 2 — WHICH RIGHTS ARE ASSERTED?  (only if ip_status = "yes")
+==============================================================
+
+A right is ASSERTED only when the text shows (1) the plaintiff SEEKS A REMEDY on that basis, OR (2) the court makes a FINDING on it. A right is NOT asserted when the text only describes what the plaintiff OWNS (portfolio recital), or uses a word in passing. Owning a copyright registration is not a copyright claim; "patent-filed software" is not a patent claim. If you cannot quote a prayer or a finding, do not code the flag.
+
+Anchor on the FIRST SUBSTANTIVE ORDER (the one that sets out the plaint / prayers / dispute). Combine early orders if needed. rights_asserted is one case-level array.
+
+CLOSED LIST — per-flag test (code true only if you can answer YES and quote it):
+- "trademark" — relief for / finding of infringement of a REGISTERED mark. Look for "registered trade mark/mark", registration no. of the suing mark. Trade dress/packaging/shape = trademark ONLY if asserted registered.
+- "passing_off" — passing off pleaded or found; OR (where registration is not stated) relief on goodwill/reputation/deception/get-up/prior-user grounds. Captures all common-law misrepresentation incl. unregistered marks, trade dress, get-up, unregistered designs framed as passing off, character merchandising, domain/website impersonation.
+- "copyright" — relief for / finding of copyright INFRINGEMENT (artistic/literary/software work). Owning a copyright registration is NOT enough.
+- "patent" — relief for / finding of patent infringement, or the Patents Act as the basis. "patent-filed" descriptors do not count.
+- "designs" — REGISTERED-design infringement (Designs Act). Unregistered designs framed as passing off = passing_off.
+- "GI" — geographical-indication claim (GI Act, s.16/22).
+- "personality_rights" — publicity / personality-rights claim (name, image, voice, likeness).
+- "other_ip" — trade secrets, confidential information, source-code misappropriation, plant varieties, semiconductor layouts.
+
+TRADEMARK vs PASSING_OFF (registration decides):
+- Registered mark, infringement only → trademark true, passing_off FALSE.
+- Registered mark AND passing off pleaded together → BOTH true (modal Delhi HC pattern; do not drop the passing_off limb).
+- Unregistered mark / trade dress, passing off → trademark FALSE, passing_off true.
+- Registration not stated → passing_off true if the language fits; trademark only if registration is affirmatively indicated.
+- Plaintiff owns a registration but sues only on common-law rights → passing_off true; trademark only if a registered-mark infringement claim is actually made.
+
+==============================================================
+OUTPUT FORMAT  (one JSON object, no prose, no fences)
+==============================================================
+
+{
+  "case_id": "<case_id from input>",
+  "ip_status": "yes" | "no" | "unclear",
+  "ip_evidence": "<short verbatim quote showing it is/ isn't IP, or a one-line reason for 'unclear'>",
+  "rights_asserted": ["<closed-list values; [] unless ip_status='yes'>"],
+  "rights_evidence": {
+    "<each right coded true>": "<verbatim quote showing a prayer for relief or a judicial finding on that right>"
+  },
+  "rights_anchor_order": "<order_filename(s) relied on, or empty>",
+  "notes": "<one line: ambiguity, missing opener, non-IP subject, or close call; else empty string>"
+}
+
+HARD RULES:
+- Decide ip_status from evidence; NEVER assume "yes" from the docket type or the parties alone.
+- Every right in rights_asserted MUST have a matching verbatim quote in rights_evidence showing a CLAIM or FINDING (not mere ownership). No evidence, no flag.
+- If ip_status != "yes": rights_asserted = [] and rights_evidence = {}.
+- Closed-list values only. Booleans/enums as specified.
+
+==============================================================
+WORKED EXAMPLES
+==============================================================
+
+E1 — IP yes, registered mark + passing off:
+Text: "...infringed the plaintiff's registered trade mark and has also sought to pass off its goods... The plaintiff seeks a permanent injunction."
+{"case_id":"CS_COMM_11_2023","ip_status":"yes","ip_evidence":"infringed the plaintiff's registered trade mark",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"infringed the plaintiff's registered trade mark","passing_off":"sought to pass off its goods as those of the plaintiff"},
+ "rights_anchor_order":"CS_COMM_11_2023_2023-05-01.pdf","notes":""}
+
+E2 — IP yes; copyright OWNED but not sued on (portfolio trap):
+Text: "...registered proprietor of the trade mark 'TSL'... has also secured a copyright registration for the artistic work in its label... primarily invoking its common-law rights to pursue a passing-off action... defendant is restrained from using 'MM'."
+{"case_id":"CS_COMM_12_2023","ip_status":"yes","ip_evidence":"registered proprietor of the trade mark 'TSL'",
+ "rights_asserted":["passing_off","trademark"],
+ "rights_evidence":{"trademark":"registered proprietor ... restrained from using 'MM'","passing_off":"primarily invoking its common-law rights to pursue a passing-off action"},
+ "rights_anchor_order":"CS_COMM_12_2023_2023-06-10.pdf","notes":"Owns a copyright registration but does not sue on it; copyright not coded."}
+
+E3 — IP yes; source code, not patent/copyright:
+Text: "...injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff and to recover access credentials. The AWS account held its patent-filed source code."
+{"case_id":"CS_COMM_13_2023","ip_status":"yes","ip_evidence":"restrain the defendants from misappropriating the source code belonging to the plaintiff",
+ "rights_asserted":["other_ip"],
+ "rights_evidence":{"other_ip":"injunction to restrain the defendants from misappropriating the source code belonging to the plaintiff"},
+ "rights_anchor_order":"CS_COMM_13_2023_2023-11-10.pdf","notes":"'patent-filed' is descriptive, not a patent claim; coded other_ip."}
+
+E4 — NOT an IP case:
+Text: "The suit is for recovery of Rs. 40,00,000 due under a supply agreement. No intellectual-property right is in issue."
+{"case_id":"CS_COMM_16_2023","ip_status":"no","ip_evidence":"suit is for recovery of Rs. 40,00,000 due under a supply agreement",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"CS_COMM_16_2023_2023-03-02.pdf","notes":"Contractual money-recovery suit."}
+
+E5 — UNCLEAR (opener missing, all procedural):
+Text: Every supplied order is a 2024+ Joint Registrar pleadings/mediation order; no plaint, prayer, or finding anywhere; no IP markers.
+{"case_id":"CS_COMM_17_2023","ip_status":"unclear","ip_evidence":"all supplied orders are procedural (pleadings/mediation); no plaint, prayer, or IP marker present",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"Opening/plaint order not in supplied text; cannot determine IP status or rights."}
+
+E6 — UNCLEAR upgraded to YES by an IP marker despite no plaint text:
+Text: Procedural orders only, BUT one recites "...listed with C.O.(COMM.IPD-TM) 175/2021..." (a trade-mark rectification petition).
+{"case_id":"CS_COMM_18_2023","ip_status":"yes","ip_evidence":"listed with C.O.(COMM.IPD-TM) 175/2021 (trade-mark rectification)",
+ "rights_asserted":[],"rights_evidence":{},"rights_anchor_order":"","notes":"IP (trademark) inferred from IPD-TM linkage, but no supplied order states the prayer, so specific rights not coded."}
+
+==============================================================
+Now code the case below. Output ONLY the JSON object.
+
+CASE INPUT:
+case_id: CS_COMM_924_2023
+case_status: DISPOSED
+n_orders: 22
+
+$~47
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 924/2023 and I.A. 25835-840/2023
+HAVELLS INDIA LIMITED & ANR. ..... Plaintiffs
+Through: Mr. Sudeep Chatterjee,
+Mr.Kunal Vats and Ms. Tanya Arora,
+Advocates.
+versus
+COSMIC COMMUNICATION & ORS. ..... Defendants
+Through: Ms. Swathi Sukumar, Mr. S.
+Santanam S. And Mr. Kartik Malhotra,
+Advocates for defendant No. 1.
+Mr. Vivek Ayyagari, Mr.Angad Singh
+Makkar and Ms. Sanidhya Maheshwari,
+Advocates for defendant No. 3.
+CORAM:
+HON'BLE MR. JUSTICE C.HARI SHANKAR
+O R D E R
+% 20.12.2023
+1. The Hon’ble Judge is not holding the Court today.
+2. Re-notify on 22 December 2023.
+BY ORDER
+COURT MASTER
+DECEMBER 20, 2023/kd
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:32
+
+===== ORDER =====
+
+$~28
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 924/2023 & I.A. 25835/2023, I.A. 25836/2023,
+I.A. 25837/2023, I.A. 25838/2023, I.A. 25839/2023, I.A.
+25840/2023
+HAVELLS INDIA LIMITED & ANR. ..... Plaintiffs
+Through: Mr. Sudeep Chatterjee, Mr.
+Kunal Vats and Ms. Tanya Arora, Advs.
+versus
+COSMIC COMMUNICATION & ORS. ..... Defendants
+Through: Mr. Vivek Ayyagari, Mr. Angad
+Singh Makkar and Ms. S. Maheshwari,
+Advs. for D-3
+Mr. Aditya Gupta, Adv. for D-4
+CORAM:
+HON'BLE MR. JUSTICE C. HARI SHANKAR
+O R D E R
+% 22.12.2023
+1. Re-notify on 4 January 2024 in order to enable the plaintiff to
+effect advance service on the defendants.
+2. In the meanwhile, given the allegations contained in the plaint,
+on the plaintiff’s providing to Amazon the URLs relating to the
+defendants’ allegedly infringing listings, Amazon would place on
+record, by way of an affidavit before the next date of hearing, the
+locations where the infringing products of the defendants are stored by
+them, if any, as well as the quantum of sales of the defendants’
+products bearing the ‘HEVALLS’ mark which have been adopted by
+them, till date.
+CS(COMM)924/2023 Page1of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:31
+3. Let the affidavit be placed on record on or before the next date
+of hearing with advance copy to Mr. Chatterjee.
+4. Defendant 3 is also directed to disclose the details of Defendant
+2, if known to them.
+C. HARI SHANKAR, J.
+DECEMBER 22, 2023
+dsn
+Click here to check corrigendum, if any
+CS(COMM)924/2023 Page2of2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:31
+
+===== ORDER =====
+
+$~7
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 924/2023
+HAVELLS INDIA LIMITED & ANR. ..... Plaintiffs
+Through: Mr. Sudeep Chatterjee,
+Mr. Kunal Vats and Ms. Tanya Arora,
+Advs.
+versus
+COSMIC COMMUNICATION & ORS. ..... Defendants
+Through: Mr. Gaurav Gupta on behalf of
+defendants no.1 & 2
+Mr. Vivek Ayyagari, Mr. Angad
+Singh Makkar and Ms. S.
+Maheshwari, Advs. for D-3
+Mr. Aditya Gupta, Adv. for D-4
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 04.01.2024
+I.A. 25837/2023 (exemption)
+1. Exemption is granted, subject to all just exceptions.
+2. Applicant shall file legible, clear, and original copies of the documents
+on which the applicant may seek to place reliance within four weeks from
+today.
+3. Application stands disposed of accordingly.
+I.A. 25838/2023 (exemption from pre-litigation mediation)
+1. This application has been filed seeking exemption from pre-litigation
+mediation, as the same will defeat the very purpose of the relief claimed by
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:30
+the plaintiffs.
+2. Having regard to the facts of the present case and in light of the
+judgement of Division Bench of this Court in FAO (COMM) 128/2021 titled
+Chandra Kishore Chaurasia v. R.A. Perfumery Works Private Ltd.,
+exemption from attempting pre-institution mediation is allowed.
+3. Accordingly, the application stands disposed of.
+I.A. 25389/2023 (seeking leave to file additional documents)
+1. By this application under Order XI Rule 1(4) read with Section 151,
+Code of Civil Procedure, 1908 (“CPC”) as applicable to commercial suits
+under the Commercial Courts Act, 2015, plaintiffs seek time to place on
+record additional documents.
+2. Plaintiffs, if they wish to file additional documents at a later stage, shall
+do so strictly as per the provisions of the Commercial Courts Act, 2015 and
+the Delhi High Court (Original Side) Rules, 2018.
+3. Application stands disposed of accordingly.
+I.A. 25840/2023 (seeking exemption from service to defendants)
+1. Since Mr. Gaurav Gupta has appeared on behalf of defendant nos. 1 and
+2 and defendant nos.3 and 4 are already represented through their respective
+counsel, this application has become infructuous and is disposed of
+accordingly.
+I.A. 25835/2023 (Under Order XXXIX Rules 1 and 2, CPC)
+1. Pursuant to previous order of this Court dated 22nd December, 2023,
+when directions were given to enable the plaintiff to effect service on the
+defendants, Mr. Gaurav Gupta appears on behalf of defendant nos. 1 and 2
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:30
+stating that he is the brother of defendant no.2 Mr. Raj Kumar Garg. He
+states that he was informed about the present suit only yesterday and wishes
+to file a reply.
+2. However, counsel for the plaintiff has pressed for relief in the present
+application on the ground that there is serious infringement of the well-known
+trademark of the plaintiffs.
+3. The plaintiffs are aggrieved by manufacturing, marketing, and sale of
+counterfeit electronic goods being CCTV (Closed Circuit Television) security
+cameras by defendant nos.1 and 2 under the impugned mark ‘HEVALLS’,
+resulting in infringement of plaintiffs’ registered and well-known trademark
+‘HAVELLS’. In support of his plaint, counsel for the plaintiff has pointed out
+that defendant nos.1 and 2 adopted the impugned mark for identical goods
+inasmuch as plaintiffs, through their various brands including ‘Crabtree’ are
+also selling multiple types of security cameras. Moreover, the plaintiffs are
+renowned for manufacturing multiple electrical products including wires and
+cables for CCTV cameras. The sales figure for such wires and cables for
+CCTV cameras is approximately Rs.2.5 crores for the year 2022-2023.
+4. The following has been asserted by the counsel for the plaintiffs in
+respect of the impugned products of the defendant no. 1 and 2, on the basis of
+documents filed on record:
+A. Photograph of the defendant’s products is of a CCTV Camera
+disguised as a bulb with a sticker of the defendant’s mark
+‘HEVALLS’ on it, which is phonetically and substantially similar
+to the plaintiff’s registered trademark ‘HAVELLS’.
+B. The product has also been handed over in Court today which was
+examined and it is noted that there is only a sticker pasted on the
+product packaging with ‘HEVALLS 360 Degree’ written on it
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:30
+whereas the rest of the packaging does not have any reference to a
+trademark or tradename.
+C. Screenshots of the product pages of defendant nos. 1 and 2, listed
+on platform of defendant no.3 (Amazon) show that it has been sold
+by ‘SONATA Gold India’ thereby indicating a clear connection
+between the infringing product and the other product admittedly
+sold by defendant nos. 1 and 2 under ‘SONATA Gold India’.
+D. The product under the name ‘SONATA’ has been handed over
+today in context of the fact that listing of the products on defendant
+no.3 platform (Amazon) shows that it is being sold by the company
+called ‘SONATA’, allegedly controlled by defendant nos.1 and 2.
+This is not disputed by Mr. Gaurav Gupta who appears on behalf of
+defendant nos. 1 and 2.
+E. A screenshot of defendant no.3 platform (Amazon) showing that
+search result for ‘HEVALLS’ elicits a clarification from the said
+platform in the manner “did you mean ‘HAVELLS’?”. As per the
+counsel for the plaintiffs, this would indicate a clear confusion that
+may be caused in the mind of a potential consumer.
+F. Screenshot of defendant no.4 platform (Google) in a search for
+‘HEVALLS CCTV Camera’ directs the user to Amazon platform
+showing ‘HAVELLS Security Camera’ whereas the product which
+is arrayed on the platform is of defendant nos. 1 and 2.
+G. Screenshot of review by one of the customers on Google Play Store,
+a platform managed by defendant no.4 shows that the user of the
+product apprehends that the defendant’s product is trying to access
+the Wi-Fi camera installed through actual phone camera and
+therefore creates a security problem in respect of the same.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:30
+H. Invoices of December, 2023 issued with regard to a decoy purchase
+by the plaintiffs of the defendants’ product show that they were sold
+by ‘Cosmic Communications’.
+5. The plaintiff has filed a list of its registered trademarks in various
+classes along with a copy of the status as well as the trademark registration
+obtained by it in foreign jurisdictions. Further documents have been filed by
+the plaintiff in support of their established and well-known trademark inter
+alia its brochures and catalogues, copy of CA certificates, year-wise revenue,
+invoices of plaintiffs’ products sold in domestic market and international
+market, promotional material, etc.
+6. It is also noted that counsel for defendant nos. 3 and 4, who are
+appearing for their respective platforms, have stated that there are about 109
+URLs / listings on Amazon platform as of 28th December, 2023. The search
+on Google also directs a user to these URLs on Amazon.
+7. The reference images of the plaintiffs’ trademark and the infringing
+product trademark are extracted hereunder.
+Plaintiffs’ Trademark Infringing Mark
+8. The Court has perused the products which have been handed up in
+Court today as well as documents on record and is of the prima facie view
+that use of the mark ‘HEVALLS’ is intended to cause confusion in the minds
+of the consumers and has no connection with the company ‘Cosmic
+Communications’ and other products sold under the brand name ‘Sonata’.
+Furthermore, the representative of the company Mr. Gaurav Gupta has no
+explanation to offer for use of the mark ‘HEVALLS’ for their products;
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:30
+though he says that they have applied for the mark ‘HEVALLS 360 Degree’.
+9. In view of the above facts and circumstances, particularly since the
+products under the mark ‘HEVALLS’ are being sold by the defendants on
+online platforms of defendant nos. 3 and 4, defendant nos. 1 and 2 are
+restrained from any further sale of the said products. Accordingly, defendant
+nos. 1 and 2 are restrained from using the mark ‘HEVALLS’ or any other
+mark which is identical or similar to the plaintiffs’ trademark ‘HAVELLS’,
+including the device and logo used by plaintiffs’ products in manufacture and
+sale of products of defendant nos. 1 and 2.
+10. This is not to state that there is an embargo on sale of defendant nos. 1
+and 2’s products under any other brand name which does not come within the
+zone of creating confusion or deceptive similarity with the brand name of the
+plaintiffs.
+11. Defendant nos. 1 and 2 may file reply to the said application within a
+period of 4 weeks with a copy to the opposing counsel who may file a
+rejoinder thereto, if need be, before the next date of hearing. These directions
+shall operate till the next date of hearing.
+12. In relation to the sales already made by defendant nos. 1 and 2, in
+addition to directions given by this Court on 22nd December, 2023 to
+defendant no.3 to place on record an affidavit regarding the quantum of sales
+of defendants’ products, defendant nos. 1 and 2 shall also file details of their
+sales on all possible online and offline platforms, as part of their reply.
+13. The direction given by this Court on 22nd December, 2023 as regards
+the details of location where infringing products were sold on the platform by
+defendant nos. 1 and 2, may not be necessary in view of the directions already
+passed above.
+14. Additionally, the defendant no. 3, which is an e-commerce platform is
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:30
+directed to take down the listings as communicated to them by the plaintiff
+through communication dated 28th December, 2023, which has also been
+handed over to the Court, containing a list of 109 URLs. The said
+communication along with an affidavit be filed by the plaintiff on the record
+of this Court. Defendant no.3 shall comply by taking down the said listings
+within 72 hours of receipt of this order.
+15. Plaintiffs will also be at liberty to address a communication to
+defendant no.4, after the deletion of listings by defendant no.3, in case there
+is any residual presence of the infringing products, as sold by defendant nos.
+1 and 2, found pursuant to search on platform/website of defendant no.4.
+Defendant no.4 is expected to take appropriate action in consonance with the
+letter and spirit of the order passed by this Court, and take down any specific
+URL which may be related to the products of defendant nos. 1 and 2.
+16. Plaintiff will be at liberty to address subsequent communications to
+defendant no.3 as well, in case they chance upon additional URLs which list
+the products of defendant nos. 1 and 2.
+17. It is made clear that if defendant nos. 3 and 4 are of the view that the
+contents of the URLs as communicated by the plaintiff, are not with respect
+to the injunction granted, they may communicate the same to the plaintiff who
+may approach this Court in that regard, if so needed.
+CS(COMM) 924/2023
+1. Let the plaint be registered as a suit.
+2. Upon filing of process fee, issue summons to the defendants by all
+permissible modes. Summons shall state that the written statement(s) be filed
+by the defendants within 30 days from the date of receipt of summons. Along
+with the written statement(s), the defendants shall also file affidavit(s) of
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:30
+admission/denial of the documents of the Plaintiff, without which the written
+statement shall not be taken on record.
+3. Liberty is given to the plaintiff to file replication(s) within 15 days of
+the receipt of the written statement(s). Along with the replication(s), if any,
+filed by the plaintiff, affidavit(s) of admission/denial of documents of the
+defendants, be filed by the plaintiff, without which the replication(s) shall not
+be taken on record. If any of the parties wish to seek inspection of any
+documents, the same shall be sought and given within the timelines.
+4. List before the Joint Registrar for marking of exhibits on 3rd April,
+2024. It is made clear that any party unjustifiably denying documents would
+be liable to be burdened with costs.
+5. List before Court on 8th February, 2024.
+6. Order be uploaded on the website of this Court.
+I.A. 25836/2023 (appointment of Local Commissioner)
+1. This application has been filed for appointment of Local
+Commissioner.
+2. In view of the order passed hereinabove, counsel for the plaintiff does
+not press this application at this stage.
+3. Application is dismissed as not pressed.
+ANISH DAYAL, J
+JANUARY 4, 2024/sm/sc
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:30
+
+===== ORDER =====
+
+$~26
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 924/2023
+HAVELLS INDIA LIMITED & ANR. ..... Plaintiffs
+Through: Mr. Sudeep Chatterjee,
+Mr. Kunal Vats and Ms. Tanya Arora,
+Advocates.
+versus
+COSMIC COMMUNICATION & ORS. ..... Defendants
+Through: Mr. Anuj Saxena, Mr. Anuj Ruhela,
+Mr. Prince Gupta & Mr. Abhishek
+Mishra, Advs. for D-1 & 2
+Mr. Saikrishna Rajagopal, Mr. Vivek
+Ayyagari, Mr. Angad Singh Makkar
+and Ms. Sanidhya Maheshwari,
+Advocates for defendant No. 3.
+Mr. Raunaq Kamath & Mr. Sauhard
+Alung, Advs. for D-4
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 23.01.2024
+I.A. No. 1693/2024 (Under Order XXXIX Rule 2A CPC)
+1. This application has been filed by the plaintiffs alleging wilful
+disobedience and breach of order dated 4th January, 2024 passed by this Court.
+By the said order, an ad interim injunction was granted including various
+directions as is evident from paragraph nos. 9, 12, and 14 to 17 of the said order.
+Essentially, defendant nos.1 and 2 had been injuncted from using the mark
+‘HEVALLS 360 DEGREE’ or any other mark which is identical or deceptively
+similar to the plaintiffs’ trademark ‘HAVELLS’ including the device and logo
+used by them. Furthermore, e-commerce platform of defendant no.3 (Amazon
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:30
+Seller Services Pvt. Ltd.) was directed to delete the listings as communicated
+to them by the plaintiffs regarding the products of defendant nos. 1 and 2.
+2. It is stated in the application that pursuant to the said order, certain
+products with mark ‘HEVALLS 360 DEGREE’ are still being listed on
+defendant no.3’s e-commerce website. Evidence of the same has been
+produced along with application in terms of screenshots, tracking report of
+purchase, and photographs of the product itself.
+3. At the very outset, Mr. Saikrishna Rajagopal, counsel for defendant no.3,
+states that they are fully compliant with the said order and have absolutely no
+intention of violating the orders passed by this Court. The presence of this
+particular product and listing must have been due to inadvertence and they have
+since taken down all the additional listings. He states that they are in
+compliance and shall continue to be so with paragraphs 14 and 15 of the said
+order dated 4th January, 2024 passed by this Court.
+4. Accordingly, in the event that the plaintiffs discover any further listing
+of the product of defendant nos. 1 and 2 on defendant no.3’s website, they will
+be at liberty to address a communication to defendant no.3 mentioning the
+specific URL pursuant to which, defendant no.3 shall be obliged to take off
+such listings. In case there is any reservation on said URL being not relatable
+to subject matter of this suit and order dated 4th January, 2024, defendant no.3
+shall respond with reasons to the plaintiffs, who then will be at liberty to
+approach this Court for further directions.
+5. Counsel for defendant nos.1 and 2 states that they are also fully
+compliant with the said order and have stopped using the mark ‘HEVALLS 360
+DEGREE’ pursuant to passing of the said order by this Court. He further states
+on instructions of Mr. Gaurav Gupta, who is present in the Court today, that no
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:30
+product with the mark ‘HEVALLS 360 DEGREE’ has been dispatched nor any
+product was in the market after this Court’s order dated 4th January, 2024. He
+shall accordingly file an undertaking by way of an affidavit in this regard.
+Further, directions which were given by this Court in paragraph 12 of the said
+order regarding disclosure, may be complied with and said information be
+provided as part of the said affidavit.
+6. Further it may be necessary in light of these circumstances that defendant
+no.1 and 2 take steps to recall all their products which were out in the market
+by taking steps to inform entities to whom such products had been dispatched
+prior to passing of order dated 4th January, 2024. Details of the steps taken
+shall also be provided as part of the aforesaid affidavit and communications to
+the entities (to whom they had sold their products) may also be appended with
+the said affidavit. Affidavit be filed before the next date fixed before this Court
+i.e. 8th February, 2024.
+7. Counsel for the plaintiffs further points out that listing of the impugned
+products has been proliferating on other e-commerce websites. It is noted that
+those e-commerce websites are not parties to the present proceedings. Plaintiffs
+are at liberty to implead them, if considered necessary. However, in the
+meantime, the plaintiffs shall be at liberty to communicate to these e-commerce
+sites, through writing or email, enclosing a copy of order dated 4th January,
+2024 as well as this order, informing them of the injunction passed against to
+protect infringing products using the mark ‘HEVALLS 360 DEGREE’
+DEGREE’ or any other mark which is identical or deceptively similar to the
+plaintiffs’ trademark ‘HAVELLS’ including the device and logo used by them.
+8. The application is disposed of in terms of the above directions.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:30
+CS(COMM) 924/2023
+1. Counsel for plaintiffs and defendant nos. 1 and 2 state that they are open
+to resolving the matter through mediation. Accordingly, the counsel for the
+parties may appear before Delhi High Court Mediation & Conciliation Centre
+on 30th January, 2024 at 4:00 p.m.
+2. Needless to state that mediation proceedings shall be convened between
+plaintiffs and defendant nos. 1 and 2; defendant nos. 3 and 4 are not required to
+participate in the mediation proceedings.
+3. List before this Court on 8th February, 2024, the date already fixed.
+4. In the event the parties are able to arrive at an amicable settlement before
+the date fixed, they will be at liberty to approach this Court by way of an
+appropriate application in this behalf along with settlement agreement.
+5. Interim orders to continue till then.
+6. Order be uploaded on the website of this Court.
+ANISH DAYAL, J
+JANUARY 23, 2024/sm/sc
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:30
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 924/2023 & I.A. 25835/2023.
+HAVELLS INDIA LIMITED & ANR. ..... Plaintiffs
+Through: Mr. Sudeep Chatterjee and Mr. Kunal
+Vats, Advocates.
+versus
+COSMIC COMMUNICATION & ORS. ..... Defendants
+Through: Mr. Anuj Saxena, Mr. Anuj Ruhela,
+Mr. Prince Gupta and Mr. Abhishek
+Mishra, Advocates for D-1 & D-2.
+Mr. Saikrishna Rajagopal, Mr. Vivek
+Ayyagari and Mr. S. Maheshwari,
+Advocates for D-3.
+CORAM:
+HON'BLE MR. JUSTICE ANISH DAYAL
+O R D E R
+% 08.02.2024
+1. Pursuant to the order dated 23.01.2024, it is stated by learned counsel
+for the defendant nos. 1 & 2 that they have filed an affidavit as they had
+been directed; however, the same is not on record. Let the same be placed
+on record. Copy of the same has been supplied to counsel for the plaintiff.
+2. Counsel for the plaintiff states that the affidavit is still not in
+accordance with the direction contained in paragraph 6 of the said order.
+3. Counsel for the defendant nos. 1 and 2 will look into this and assure
+that the affidavit has been filed as per directions contained in paragraph 6 of
+the aforesaid order.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:29
+4. It is pointed out by counsel for the plaintiff that as per report of
+affidavit in compliance filed on behalf of the defendant no.3 (Amazon Seller
+Services Pvt. Ltd.), it transpires that regards listing of infringing products on
+02.02.204 on Amazon the ASIN (Amazon Standard Identification Number)
+was of two entities viz. Cosmic Communication and Nityansh Telecom.
+Counsel for the plaintiff contends that the defendants are still supplyinh
+through the other entity, Nityansh Telecom. The same is refuted by counsel
+for the defendants. Copy of the said affidavit has been supplied to counsel
+for defendant nos. 1 and 2 today in Court, who shall respond to it, if
+necessary.
+5. In the meantime, the parties are already before the Mediator and
+settlement talks are underway. As per the mediation report received, further
+time is required for the parties.
+6. Accordingly, renotify on 11.07.2024.
+7. In the meantime, if the parties arrive at an amicable settlement, they
+are at liberty to file an appropriate application.
+8. Counsel for the plaintiff is at liberty to address a written
+communication/email to counsel for the defendant nos. 1 and 2 in the event
+they come across any listing of the infringing product, on any platform
+whatsoever.
+9. It is expected that counsel for the defendant nos. 1 and 2, upon
+receiving that communication, will take immediate steps to find out the
+reason why said listings are still visible. Accordingly, defendant nos. 1 and 2
+shall ensure that necessary steps are taken for complete compliance with the
+orders passed by this Court. If there is any grievance of the plaintiff even
+after this exercise, they are at liberty to approach this Court by way of an
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:29
+appropriate application.
+10. List on 11th July 2024.
+ANISH DAYAL, J
+FEBRUARY 8, 2024/ssc/ig
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:29
+
+===== ORDER =====
+
+$~8
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 924/2023
+HAVELLS INDIA LIMITED & ANR. ..... Plaintiff
+Through: Mr. Jaydeep Roy, Advocate
+versus
+COSMIC COMMUNICATION & ORS. ..... Defendant
+Through: Ms. Anju Saxena, Mr. Prince
+Gupta, Advocates for D-1 & 2.
+Mr. Angad S. Makkar (VC),
+Mr. Sanidhya Maheshwari,
+Advocates for D-3.
+Mr. Rahul Bajaj, Advocate for
+D-4/Goggle LLC.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 03.04.2024
+Ld. Counsel for the plaintiff and defendant nos. 1 & 2 have
+entered into talks for a settlement before the Mediation Centre.
+Ld. Counsel for defendant nos. 1 & 2 submits that if
+required written statement shall be filed, as per rules.
+Ld. Counsel for defendant no. 3 states that written
+statement had been filed but the same has been put under
+objections. Ld. Counsel is directed to take steps to bring the
+written statement on record before the next date of hearing.
+Ld. Counsel for defendant no. 4 seek time to file written
+statement, as per rules.
+Matter is already listed before the Hon’ble Court for
+11.07.2024.
+In view of the efforts for a mediated settlement, put up
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:29
+before the Hon’ble Court on the date already fixed i.e.
+11.07.2024, for further directions.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 3, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:29
+
+===== ORDER =====
+
+$~36
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 924/2023
+HAVELLS INDIA LIMITED & ANR. ... Plaintiff
+Through: Mr. Jaydeep Roy, Advocate
+versus
+COSMIC COMMUNICATION & ORS. ..... Defendant
+Through: Mr. Angad Singh Makkar,
+Mr. Sanidhya Maheshwari,
+Advocates for D-3
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY
+GULATI (DHJS)
+O R D E R
+% 08.04.2024
+I.A. No. 7896/2024 on behalf of defendant no. 3 seeking
+condonation of delay of 02 days in filing the written
+statement.
+Issue notice.
+Notice accepted by ld. Counsel for the plaintiff.
+Ld. Counsel for the plaintiff submits that he has no
+objection if the application is allowed.
+For the reasons stated in the application and in view of the
+‘no objection’ of ld. Counsel for the plaintiff, application is
+allowed. Delay stands condoned. Written statement is taken on
+record. Replication be filed within the period permissible, as
+worked out from today.
+IA stands disposed off.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:28
+I.A. No. 7894/2024 on behalf of defendant no. 3 seeking
+condonation of delay of 02 days in filing the written
+statement.
+Heard.
+Ld. Counsel for defendant no. 3 submits that the present
+IA is duplicate of IA No. 7896/2024 and wishes to withdraw the
+present application.
+In view of the submissions of ld. Counsel for defendant no.
+3, present IA stands withdrawn.
+IA stands disposed off.
+Dr. AJAY GULATI (DHJS),
+JOINT REGISTRAR (JUDICIAL)
+APRIL 8, 2024/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:28
+
+===== ORDER =====
+
+$~19
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 924/2023 & I.A. 25835/2023
+HAVELLS INDIA LIMITED & ANR. .....Plaintiffs
+Through: Mr. Kunal Vats, Mr. Jaydeep Roy and
+Mr. Tushar Tanwar, Advs.
+versus
+COSMIC COMMUNICATION & ORS. .....Defendants
+Through: Mr. Anuj Saxena, Mr. Anuj Ruhela
+and Mr. Prince Gupta, Advs. for D-1
+& 2.
+M: 8586059409
+Mr. Angad Singh Makkar and Ms.
+Sanidhya Maheshwari, Advs.
+M: 9950018832
+Mr. Raunaq Kamath and Mr. Sauhard
+Alung, Advs. for D-4.
+M: 9425341404
+CORAM:
+HON'BLE MS. JUSTICE MINI PUSHKARNA
+O R D E R
+% 11.07.2024
+I.A. 25835/2023 (Application under Order XXXIX Rules 1 & 2 read
+with Section 151 of Code of Civil Procedure, 1908)
+1. Vide order dated 04th January, 2024, injunction was passed in favour
+of the plaintiff and against the defendant, in the following manner:
+“xxxxxxxxx
+9. In view of the above facts and circumstances, particularly since the
+productsunderthe mark‘HEVALLS’are beingsoldby thedefendants on
+online platforms of defendant nos. 3 and 4, defendant nos. 1 and 2 are
+restrained from any further sale of the said products. Accordingly,
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:27
+defendant nos. 1 and 2 are restrained from using the mark ‘HEVALLS’
+or any other mark which is identical or similar to the plaintiffs’
+trademark ‘HAVELLS’, including the device and logo used by plaintiffs’
+productsinmanufactureandsaleofproductsofdefendantnos.1and2.
+xxxxxxxxx”
+2. Learned counsel appearing for the defendant nos. 1 and 2 submits that
+the aforesaid injunction order is being complied with, and that the
+defendants are not manufacturing or selling the products, which infringe the
+registered trademark of the plaintiff. The said statement is recorded.
+3. Accordingly, the injunction order dated 04th January, 2024 is made
+absolute, during the pendencyof the present suit.
+4. In case, the plaintiffs find the presence of the infringing products on
+any website or portal, an appropriate application shall be filed, before this
+Court in regard, thereto. However, in case there is a specific communication
+bythe plaintiff with respect to infringement bythe defendants, the same may
+be brought to the notice of defendant nos. 3 and 4 accordingly, and requisite
+action shall be taken in that regard, by the defendant nos. 3 and 4. In case of
+any doubt by defendant nos. 3 and 4 with respect to any communication that
+may be made by the plaintiff, the defendant nos. 3 and 4 shall inform the
+plaintiffs, who have the liberty to approach this Court, for appropriate
+orders.
+5. With the aforesaid directions, the present application is disposed of.
+CS(COMM) 924/2023
+6. Learned counsel appearing for respondent no.3 submits that he is
+willing to comply with the directions dated 04th January, 2024, passed by
+this Court. He further submits that since the matter is now proceeding for
+trial, the presence of defendant no. 3, may be exempted for the time being.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:27
+7. However, it is directed that if presence of defendant no.3 is needed at
+anystage of trial, the defendant no. 3 would be present, accordingly.
+8. List before the Joint Registrar for completion of pleadings and further
+proceedings on 12th August, 2024.
+MINI PUSHKARNA, J
+JULY 11, 2024/kr
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:27
+
+===== ORDER =====
+
+$~2
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 924/2023
+HAVELLS INDIA LIMITED & ANR.
+.....Plaintiffs
+Through: Mr. Jaydeep Roy, Adv.
+versus
+COSMIC COMMUNICATION & ORS.
+.....Defendants
+Through: Mr. Anuj Saxena, Mr. Prince Gupta,
+Mr. Anuj Ruhela, Advs. for D1 & 2
+(M: 8586059409, Email:
+pg2084@gmail.com)
+Mr. Sauhard Alung, Adv. for D4
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 12.08.2024
+Written statement with affidavit of admission / denial has already
+been filed on behalf of defendant no. 3. Written statement with affidavit of
+admission / denial filed on behalf of defendant no. 1, 2 & 4 is lying under
+objections.
+Let appropriate steps be taken on behalf defendants to place the same
+on record and put up for completion of pleadings in accordance with law and
+thereafter for completion of process of filing of Joint Document Schedule in
+terms of Rule7A of Chapter VII of The Delhi High Court (Original Side)
+Rules, 2018 physically by plaintiffs after getting it signed from defendants,
+admission / denial of documents and marking of Exhibits in accordance with
+law on 10.12.2024.
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:27
+Documents, if e-filed be filed physically by parties so as to mark the
+Exhibits.
+DR. JAGMINDER SINGH (DHJS)
+JOINT REGISTRAR (JUDICIAL)
+AUGUST 12, 2024/sms
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:27
+
+===== ORDER =====
+
+$~3
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 924/2023
+HAVELLS INDIA LIMITED & ANR. .....Plaintiffs
+Through: Ms. Tanya Arora, Advocate. (M:
+9953068877)
+versus
+COSMIC COMMUNICATION & ORS. .....Defendants
+Through: Mr. Prince Gupta, Mr. Harsh Gautam,
+Advocates for D-1 & D-2.
+Mr. Sauhard Alung, Advocate for D-
+4.
+CORAM:
+DR. JAGMINDER SINGH (DHJS) JOINT REGISTRAR (JUDICIAL)
+O R D E R
+% 10.12.2024
+Learned Presiding Officer is on leave today.
+As per directions, put up for the purpose already fixed on 23.01.2025.
+READER TO JR(JUDICIAL)
+DECEMBER 10, 2024/Ni
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:26
+
+===== ORDER =====
+
+$~5
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 924/2023
+HAVELLS INDIA LIMITED & ANR. ....Plaintiff
+Through: Mr. Kunal Vats, Mr. Jaydeep
+Roy, Advocates
+versus
+COSMIC COMMUNICATION & ORS. .....Defendant
+Through: Mr. Anju Saxena, Mr. Prince
+Gupta (VC), Advocates for D-1
+& 2.
+Mr. Sauhard Alung, Advocate
+for D-4.
+CORAM:
+JOINT REGISTRAR (JUDICIAL) Dr. AJAY GULATI
+O R D E R
+% 23.01.2025
+I.A. No. 1856/2025 on behalf of defendant no. 4 seeking
+condonation of delay in filing the written statement.
+1. Issue notice. Notice accepted by ld. Counsel for the
+plaintiff. For the reasons stated in the application, application is
+allowed subject to cost of Rs. 5000/-, to be deposited with Bharat
+Ke Veer Fund, (online portal), within three weeks failing which
+the written statement shall be deemed to have been taken off the
+record. Delay stands condoned. Written statement is taken on
+record. Replication be filed within the period permissible, as
+worked out from today. IA stands disposed off.
+CS(COMM) 924/2023
+2. Written statement on behalf of defendant no. 3 is on
+record. So far as written statement of defendant nos. 1 & 2 is
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:26
+concerned, the same has been placed on record by the Registry.
+However, ld. Counsel for the plaintiff submits that the same
+suffers from a number of discrepancies and Registry should not
+have placed it on record. Consequently, the concerned official
+from the Registry was called and he confirmed there were certain
+objections / discrepancies which needed to be removed by
+defendant nos. 1 & 2, and that the written statement has been
+wrongly placed on record. Consequently, he has been directed to
+take down the written statement and thereafter, list the defects
+which need to be removed by defendant nos. 1 & 2.
+3. Ld. Counsel for defendant nos. 1 & 2 is directed to get in
+touch with the Registry and take steps to bring the written
+statement on record within four weeks. Replication to written
+statement of defendant no. 3 be filed as per rules.
+4. Put up for completion of pleadings on 04.04.2025.
+Dr. AJAY GULATI
+(DHJS),
+JOINT REGISTRAR (JUDICIAL)
+JANUARY 23, 2025/sk
+Click here to check corrigendum, if any
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:26
+
+===== ORDER =====
+
+$~4
+* IN THE HIGH COURT OF DELHI AT NEW DELHI
++ CS(COMM) 924/2023
+HAVELLS INDIA LIMITED & ANR. .....Plaintiffs
+Through: Mr. Rajit Ghosh, Advocate.
+versus
+COSMIC COMMUNICATION & ORS. .....Defendants
+Through: Mr. Prince Gupta and Mr. Harsh
+Gautam, Advocates for D-1 & 2.
+Mr. Sauhard Alung, Advocate for D-4
+CORAM:
+JOINT REGISTRAR (JUDICIAL) SH. AJAY GULATI
+O R D E R
+% 04.04.2025
+Regular Stenographer is on leave today.
+1. Written statement on behalf of defendant nos. 1 & 2 continues to be
+under objection. On 23.01.2025, Registry was directed to take down the
+written statement of defendant nos. 1 & 2 since it had admittedly been
+placed on record by the Registry despite there being a number of objections
+to the written statement. Registry was further directed to notify to the
+defendant nos. 1 & 2 regarding the objections to be removed. Defendant nos.
+1 & 2 were directed to remove the objections within four weeks and re-file
+the written statement.
+2. Post the hearing on 23.01.2025, on 19.02.2025, written statement was
+re-filed on behalf of defendant nos. 1 & 2 but same was again put under
+defects on 11.03.2025. Since then, objections have not been removed, as per
+the e-filing log. In response, ld. Counsel for defendant no. 1 & 2 submits
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:25
+that after 11.03.2025, his collegue had again visited the Registry and was
+informed that all objections stand removed. Ld. Counsel has prayed for yet
+another opportunity to remove the defects.
+3. Ld. Counsel for the plaintiff has however strongly objected to any
+further opportunity being granted to defendant nos. 1 & 2 to bring their
+written statement on record. It is the submission on behalf of the plaintiff
+that e-filing log would show that no written statement was filed within the
+120 days period deadline from the date of service of summons, which was
+24 January, 2024. At this stage, the e-filing log was checked which shows
+that for the first time, a ‘Reply’ was filed on behalf of defendant nos. 1 & 2
+on 26th April, 2024 i.e. on the 93rd day from the day of service of summons.
+The same was marked as defective on 30th April, 2024. Subsequently, on 3rd
+July 2024, ‘written submissions’ were re-filed. On 5th July 2024, ‘written
+submissions’ on behalf of defendant nos. 1 & 2 were taken on record subject
+to Court orders. Thereafter, on 23rd January 2025, after orders were passed
+by this Court, filing was marked for ‘re-scrutiny’ by the Registry with the
+remark that there were no directions to file written submissions. Thereafter,
+written statement was ‘re-filed’ on 19.02.2025, as already highlighted.
+4. Ld. Counsel for the plaintiff thus argued that e-filing log would
+patently shows that it wasn’t until 19.02.2025 that a ‘written statement’
+came to be actually filed which also is under objections even as on today.
+One of the objections raised is that written statement has to be signed on
+each page. Ld. Counsel says that in view of this objection, the filing has to
+be treated as non-est since signing on each page of the written statement is a
+mandatory requirement to supply authenticity to the written statement.
+5. In response, ld. Counsel for defendant nos. 1 & 2 submitted that the
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:25
+initial filing on 26.04.2024 under the heading of ‘Reply’ and then on
+03.07.2024 under the heading of ‘Written Submissions’, was only a wrong
+nomenclature but since Registry had taken it on record, they did not take any
+further steps.
+6. In regard to this submission, ld. Counsel for the plaintiff highlighted
+the order dated 12.08.2024 of the court of concerned Joint Registrar which
+records that ‘written statement of defendant nos. 1 & 2 continues to be under
+objections’. Presence of counsel for defendant nos. 1 & 2 was marked on
+12.08.2024 and despite this, no steps were taken to bring the written
+statement on record. Ld. Counsel thus concluded that there is a patent lack
+of intention on behalf of defendant nos. 1 & 2 to complete the pleadings.
+7. I have carefully considered the submissions in the backdrop of the
+factual sketch drawn up in the preceding paras.
+8. Date of service of summons on defendant nos. 1 & 2 is not in dispute
+i.e. 24 January, 2024. As worked out from the said date, no written
+statement was filed within the 120 day deadline. The said period expired
+sometime in the end of May 2024.
+9. Contentions of the defendants’ counsel that written statement was
+infact filed on 26.04.2024 under a wrong heading cannot be accepted. A
+counsel ought to know the basic differences between a ‘Reply’ and a
+‘written statement’. Further, this ‘mistake’ (if at all it can be so considered)
+was then followed up by yet another ‘mistake’ when on 3rd July 2024,
+‘written submissions’ instead of a written statement was filed. Filing on
+03.07.2024 was in any case beyond the deadline period. Ld. Counsel for the
+plaintiff is correct in arguing that since filing on 26.04.2024 was of a
+‘Reply’, the same cannot be considered to be a ‘written statement’ merely on
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:25
+the oral submission of ld. Counsel for defendant nos. 1 & 2. It has further
+been argued that even though ‘written submissions’ were taken on record by
+the Registry on 05.07.2024, same was subject to court orders. Ld. Counsel
+for defendant nos. 1 & 2 was thus very well aware that the correct pleading
+i.e. written statement had not been filed and yet, they took no steps to file
+the written statement. Plaintiff’s argument gathers much strength from the
+order dated 12.08.2024 of the concerned Joint Registrar which clearly
+records the factum of written statement of defendant nos. 1 & 2 being under
+objections. The ‘written statement’ was thereafter ‘re-filed’ on 19.02.2025
+and that too, after it was pointed out by counsel for the plaintiff that written
+statement had a number of defects and thus, has wrongly been placed on
+record by the Registry. Having carefully assessed the rival submissions, this
+Court is of the best understanding that rights of defendant nos. 1 & 2 to
+bring the written statement on record should be closed. First, defendant nos.
+1 & 2 failed to file a written statement within the maximum permissible
+period. Second, as an alternative ground, even if the filing of ‘Reply’ or
+‘written submissions’ is to be treated as a written statement, no steps were
+taken between 05.07.2024 to 19.02.2025 to remove the objections for which,
+as per the High Court Rules of 2018 (Original Side), maximum period is 30
+days. Till date, neither application for condonation of delay in filing has
+been moved nor application for condonation of delay in re-filing has been
+moved.
+10. This Court is unable to also accept the oral submission of counsel for
+defendant nos. 1 & 2 that after 11.03.2025, they were verbally assured by
+the Registry that all defects stand removed. To the best of understanding of
+this Court, Registry officials would not give any such oral confirmations,
+This is a digitally signed order.
+The authenticity of the order can be re-verified from Delhi High Court Order Portal by scanning the QR code shown above.
+The Order is downloaded from the DHC Server on 19/01/2026 at 22:31:25
+especially when the concerned litigant is aware that they have not taken
+steps for re
+
+[TRUNCATED — rights are established in the opening orders above]
